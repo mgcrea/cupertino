@@ -365,7 +365,8 @@ struct ShellCheck {
     check("a signal is named", ShellPane.row(killed).outcome == "ended by SIGKILL")
     var unstarted = base
     unstarted.exitCode = nil
-    check("an approved run with no exit says so", ShellPane.row(unstarted).outcome == "no exit code")
+    check(
+      "an approved run with no exit says so", ShellPane.row(unstarted).outcome == "no exit code")
 
     let decisions: [ShellRecord.Decision] = [
       .approved, .approvedForSession, .notAsked, .declined, .noAnswer, .cooldown, .busy,
@@ -377,7 +378,9 @@ struct ShellCheck {
 
     let copy =
       labels
-      + ShellPolicy.Before.allCases.flatMap { [ShellPane.Copy.choice($0), ShellPane.Copy.caption($0)] }
+      + ShellPolicy.Before.allCases.flatMap {
+        [ShellPane.Copy.choice($0), ShellPane.Copy.caption($0)]
+      }
       + [
         ShellPane.Copy.enableTitle, ShellPane.Copy.enableBody, ShellPane.Copy.enableSafeguard,
         ShellPane.Copy.enableConfirm, ShellPane.Copy.dontAskTitle, ShellPane.Copy.dontAskBody,
@@ -526,7 +529,7 @@ struct ShellCheck {
       ShellRunner.argv(
         .init(
           script: "echo hi", interpreter: .zsh, cwd: URL(fileURLWithPath: "/"), stdin: nil,
-          timeout: 1), scriptFile: nil) == ["/bin/zsh", "-l", "-c", "echo hi"])
+          timeout: 1), scriptFile: nil) == ["/bin/zsh", "-f", "-c", "echo hi"])
     check(
       "argv jxa",
       ShellRunner.argv(
@@ -534,7 +537,7 @@ struct ShellCheck {
           script: "1", interpreter: .jxa, cwd: URL(fileURLWithPath: "/"), stdin: nil, timeout: 1),
         scriptFile: URL(fileURLWithPath: "/t/s"))
         == [
-          "/bin/zsh", "-l", "-c", "exec \"$0\" \"$@\"", "osascript", "-l", "JavaScript", "/t/s",
+          "/bin/zsh", "-f", "-c", "exec \"$0\" \"$@\"", "osascript", "-l", "JavaScript", "/t/s",
         ])
     check(
       "argv python3",
@@ -543,18 +546,25 @@ struct ShellCheck {
           script: "1", interpreter: .python3, cwd: URL(fileURLWithPath: "/"), stdin: nil,
           timeout: 1),
         scriptFile: URL(fileURLWithPath: "/t/s"))
-        == ["/bin/zsh", "-l", "-c", "exec \"$0\" \"$@\"", "python3", "/t/s"])
+        == ["/bin/zsh", "-f", "-c", "exec \"$0\" \"$@\"", "python3", "/t/s"])
     check(
       "env has only the base keys",
       Set(ShellRunner.baseEnvironment(home: "/h", user: "u", tmp: "/t").keys)
         == ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "PATH"])
     check(
       "env values",
-      ShellRunner.baseEnvironment(home: "/h", user: "u", tmp: "/t")
+      ShellRunner.baseEnvironment(home: "/h", user: "u", tmp: "/t", path: ["/p", "/q"])
         == [
           "HOME": "/h", "USER": "u", "LOGNAME": "u", "SHELL": "/bin/zsh", "TMPDIR": "/t",
-          "LANG": "en_US.UTF-8", "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+          "LANG": "en_US.UTF-8", "PATH": "/p:/q",
         ])
+    check(
+      "PATH is the system's search path by default",
+      ShellRunner.baseEnvironment(home: "/h", user: "u", tmp: "/t")["PATH"]
+        == ShellRunner.searchPath().joined(separator: ":"))
+
+    try searchPathChecks()
+    try startupFileChecks()
 
     print("\nShellRunner: a run")
     let a = try run("echo out; echo err >&2; exit 3")
@@ -698,7 +708,7 @@ struct ShellCheck {
       check("an empty list returns at once", Date().timeIntervalSince(emptyStart) < 0.1)
     }
 
-    print("\nShellRunner: interpreters through the login shell")
+    print("\nShellRunner: interpreters through zsh, with no startup files")
     for i in [ShellRunner.Interpreter.python3, .node, .bash, .osascript, .jxa] {
       guard ShellRunner.resolve(i) != nil else {
         print("  skip \(i) not installed")
@@ -709,7 +719,7 @@ struct ShellCheck {
         "osascript": "6*7", "jxa": "6*7",
       ][i.rawValue]!
       check(
-        "\(i) runs through the login shell",
+        "\(i) runs through zsh with no startup files",
         try run(script, i).stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "42")
     }
     let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("cupertino-shell")
@@ -835,6 +845,148 @@ final class FakeConsent: ShellConsenting, @unchecked Sendable {
     let owner: FakeConsent
     init(owner: FakeConsent) { self.owner = owner }
     func ended() { owner.noticeEnded() }
+  }
+}
+
+extension ShellCheck {
+  /// A scratch folder standing in for `/` or for a home folder, emptied first.
+  static func scratchFolder(_ name: String) throws -> String {
+    let path = scratch(name)
+    try? FileManager.default.removeItem(atPath: path)
+    try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+    return path
+  }
+
+  static func write(_ text: String, to path: String, mode: Int = 0o644) throws {
+    try FileManager.default.createDirectory(
+      atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+    try text.write(toFile: path, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: mode], ofItemAtPath: path)
+  }
+
+  /// PATH from root-owned files only, read the way `path_helper` reads them, and finding an
+  /// interpreter on it without starting anything. A lookup that started a shell would run
+  /// whatever a same-user process put in that shell's startup files.
+  static func searchPathChecks() throws {
+    print("\nShellRunner: the search path, from /etc only")
+    let root = try scratchFolder("root")
+    defer { try? FileManager.default.removeItem(atPath: root) }
+    check(
+      "no /etc/paths falls back to the four system folders",
+      ShellRunner.searchPath(root: root) == ["/usr/bin", "/bin", "/usr/sbin", "/sbin"])
+    try write("\n  \n", to: root + "/etc/paths")
+    check(
+      "an /etc/paths that lists nothing, with nothing else, falls back too",
+      ShellRunner.searchPath(root: root) == ["/usr/bin", "/bin", "/usr/sbin", "/sbin"])
+    try FileManager.default.removeItem(atPath: root + "/etc/paths")
+    try write("/x\n", to: root + "/etc/paths.d/extra")
+    check(
+      "and /etc/paths.d still follows the fallback",
+      ShellRunner.searchPath(root: root) == ["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/x"])
+
+    try write("/a\n/b\n\n/a\n", to: root + "/etc/paths")
+    try write("/c\n/b\n", to: root + "/etc/paths.d/b-file")
+    try write("/d\n", to: root + "/etc/paths.d/a-file")
+    try write("/e", to: root + "/etc/paths.d/10-x")
+    try write("/f\n", to: root + "/etc/paths.d/100-y")
+    try FileManager.default.removeItem(atPath: root + "/etc/paths.d/extra")
+    check(
+      "/etc/paths, then /etc/paths.d by file name, each folder once",
+      ShellRunner.searchPath(root: root) == ["/a", "/b", "/e", "/f", "/d", "/c"])
+
+    try FileManager.default.createDirectory(
+      atPath: root + "/opt/homebrew/bin", withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(
+      atPath: root + "/usr/local/bin", withIntermediateDirectories: true)
+    check(
+      "Homebrew's folders follow, only those that exist",
+      ShellRunner.searchPath(root: root)
+        == ["/a", "/b", "/e", "/f", "/d", "/c", "/opt/homebrew/bin", "/usr/local/bin"])
+    try write("/usr/local/bin\n/a\n/b\n", to: root + "/etc/paths")
+    check(
+      "and a folder already listed keeps its place",
+      ShellRunner.searchPath(root: root)
+        == ["/usr/local/bin", "/a", "/b", "/e", "/f", "/d", "/c", "/opt/homebrew/bin"])
+
+    let systemPaths = ((try? String(contentsOfFile: "/etc/paths", encoding: .utf8)) ?? "")
+      .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { !$0.isEmpty }
+    if !systemPaths.isEmpty {
+      check(
+        "this Mac's search path starts with its /etc/paths",
+        Array(ShellRunner.searchPath().prefix(systemPaths.count)) == systemPaths)
+    }
+
+    print("\nShellRunner: finding an interpreter starts nothing")
+    // The first lookup of each in this process, so none is answered from the cache. A watcher
+    // looks at `live` throughout: a lookup through `start` would show there while it ran.
+    let stop = Tally()
+    let seen = Tally()
+    let watched = DispatchSemaphore(value: 0)
+    Thread {
+      while stop.count == 0 {
+        if !ShellRunner.live.isEmpty { _ = seen.next() }
+      }
+      watched.signal()
+    }.start()
+    var found: [ShellRunner.Interpreter: String] = [:]
+    for i in ShellRunner.Interpreter.allCases { found[i] = ShellRunner.resolve(i) }
+    _ = stop.next()
+    watched.wait()
+    check("resolving every interpreter starts no process", seen.count == 0)
+    check("zsh is found", found[.zsh]?.hasSuffix("/zsh") == true)
+    check("jxa is found as osascript", found[.jxa] == found[.osascript])
+
+    // Nothing else in the fake root, so only the fake folders are searched.
+    for gone in ["/opt", "/usr", "/etc/paths.d"] {
+      try FileManager.default.removeItem(atPath: root + gone)
+    }
+    let bin1 = root + "/bin1"
+    let bin2 = root + "/bin2"
+    try write("/nowhere\n\(bin1)\n\(bin2)\n", to: root + "/etc/paths")
+    try write("#!/bin/sh\n", to: bin1 + "/osascript", mode: 0o755)
+    try write("#!/bin/sh\n", to: bin2 + "/osascript", mode: 0o755)
+    try write("not executable\n", to: bin1 + "/python3")
+    try write("#!/bin/sh\n", to: bin2 + "/python3", mode: 0o755)
+    try FileManager.default.createDirectory(
+      atPath: bin1 + "/node", withIntermediateDirectories: true)
+    let fake = ShellRunner.searchPath(root: root)
+    check("the fake path is the fake /etc's alone", fake == ["/nowhere", bin1, bin2])
+    check(
+      "a fake /etc's path finds the fake interpreter placed there, the first one",
+      ShellRunner.find(ShellRunner.Interpreter.jxa.command, in: fake) == bin1 + "/osascript")
+    check(
+      "a file that is not executable is passed over",
+      ShellRunner.find("python3", in: fake) == bin2 + "/python3")
+    check("a folder is not an interpreter", ShellRunner.find("node", in: fake) == nil)
+    check(
+      "a relative entry is never searched",
+      ShellRunner.find("osascript", in: ["bin1", ""]) == nil)
+  }
+
+  /// A run reads none of the shell startup files in its home folder: `~/.zshenv` and the rest
+  /// are writable by any process running as the person, and the window never shows them.
+  static func startupFileChecks() throws {
+    print("\nShellRunner: no shell startup files")
+    let home = try scratchFolder("home")
+    defer { try? FileManager.default.removeItem(atPath: home) }
+    let files = [".zshenv", ".zprofile", ".zshrc", ".zlogin", ".zlogout"]
+    for file in files { try write("touch \(home)/read\(file)\n", to: home + "/" + file) }
+    for i in [ShellRunner.Interpreter.zsh, .bash] {
+      let outcome = try ShellRunner.start(
+        .init(
+          script: "echo $HOME", interpreter: i, cwd: URL(fileURLWithPath: "/"), stdin: nil,
+          timeout: 10),
+        home: home
+      ).wait()
+      let read = files.filter { FileManager.default.fileExists(atPath: home + "/read" + $0) }
+      check("a \(i) run gets the home folder it was given", outcome.stdout == home + "\n")
+      check(
+        "and reads none of its startup files"
+          + (read.isEmpty ? "" : " (read \(read.joined(separator: ", ")))"),
+        read.isEmpty)
+      for file in read { try? FileManager.default.removeItem(atPath: home + "/read" + file) }
+    }
   }
 }
 
@@ -1549,7 +1701,8 @@ extension ShellCheck {
     check(
       "a keystroke a process builds with a HID-state source is not hardware: it carries its pid",
       key(.hidSystemState).map(ShellInput.isHardware) == false)
-    check("a keystroke with no source is not hardware", key(nil).map(ShellInput.isHardware) == false)
+    check(
+      "a keystroke with no source is not hardware", key(nil).map(ShellInput.isHardware) == false)
     let click = CGEvent(
       mouseEventSource: CGEventSource(stateID: .hidSystemState), mouseType: .leftMouseDown,
       mouseCursorPosition: .zero, mouseButton: .left)
@@ -1604,7 +1757,8 @@ extension ShellCheck {
     let c1 = UUID()
     queue.cancel(connection: c1, requestId: "i1")
     let early = Date()
-    check("an ask whose cancel came first answers cancelled", queue.ask(prompt(c1, "i1")) == .cancelled)
+    check(
+      "an ask whose cancel came first answers cancelled", queue.ask(prompt(c1, "i1")) == .cancelled)
     check("at once, with no window", Date().timeIntervalSince(early) < 0.1 && queue.front == nil)
     check("its tombstone is used up", queue.tombstones(c1) == 0)
     for n in 0..<40 { queue.cancel(connection: c1, requestId: "x\(n)") }

@@ -88,10 +88,9 @@ nonisolated protocol ShellNoticeToken: Sendable {
 ///
 /// ## Four at once
 ///
-/// The count of runs in flight is this server's own, app-wide, and never `ShellRunner.live`:
-/// `ShellRunner.resolve` runs its lookups through `start` too, and a diagnostics call must not
-/// take a run's slot. A slot is taken under the same lock as the decision, so two requests that
-/// were both approved cannot make five.
+/// The count of runs in flight is this server's own, app-wide, and never `ShellRunner.live`, so
+/// it counts only requests this server let run. A slot is taken under the same lock as the
+/// decision, so two requests that were both approved cannot make five.
 ///
 /// Foundation only, so `make shell-check` drives it with a fake window.
 nonisolated enum ShellServer {
@@ -284,8 +283,10 @@ nonisolated enum ShellServer {
               "enum": ShellRunner.Interpreter.allCases.map(\.rawValue),
               "default": "zsh",
               "description":
-                "What runs the script, started through a login shell so PATH matches Terminal's. "
-                + "jxa is JavaScript for Automation.",
+                "What runs the script. jxa is JavaScript for Automation. It starts through zsh "
+                + "without the person's shell startup files, so PATH is the system's plus "
+                + "Homebrew's, and a version manager such as nvm is not set up unless the script "
+                + "does it, for example with source ~/.nvm/nvm.sh.",
             ],
             "cwd": [
               "type": "string",
@@ -318,7 +319,7 @@ nonisolated enum ShellServer {
         "name": "apple_shell_diagnostics",
         "description":
           "Report the \"Before running\" setting in force, whether Cupertino holds Full Disk "
-          + "Access, which interpreters the login shell finds, how many runs are in flight, and "
+          + "Access, which interpreters a script's PATH finds, how many runs are in flight, and "
           + "whether the run record is intact. Runs nothing of the caller's.",
         "inputSchema": [
           "type": "object", "properties": [String: Any](), "required": [Any](),
@@ -712,7 +713,7 @@ nonisolated enum ShellServer {
   // MARK: - Diagnostics
 
   static func diagnostics() -> [String: Any] {
-    // First: resolving the interpreters below spawns lookups, which take no slot but take time.
+    // Finding the interpreters starts no process: it reads PATH's folders.
     let running = inFlight
     var interpreters: [String: Any] = [:]
     for interpreter in ShellRunner.Interpreter.allCases {
@@ -786,8 +787,11 @@ nonisolated enum ShellServer {
 
     ## What a script gets
 
-    - A login zsh (`/bin/zsh -l -c`), so PATH is Terminal's. Other interpreters start
-      through it.
+    - zsh without the person's shell startup files (`/bin/zsh -f -c`): `~/.zshenv`,
+      `~/.zprofile` and `~/.zshrc` are not read. Other interpreters start through it.
+    - PATH is the system's, from `/etc/paths` and `/etc/paths.d`, then Homebrew's folders.
+      A script that needs a version manager sets it up itself, for example
+      `source ~/.nvm/nvm.sh`, and the person sees that line in the window with the rest.
     - Its own process group. At the timeout, or when the call is cancelled, the whole group
       is stopped, backgrounded children too.
     - No terminal and no typed input: `sudo` and anything interactive fail.

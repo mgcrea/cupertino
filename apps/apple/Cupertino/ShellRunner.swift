@@ -19,13 +19,23 @@ import Foundation
 /// is the unreaped leader answers EPERM (measured 2026-10-27 on macOS 27), so an obliging group
 /// ends at once rather than after the whole grace. `make shell-check` pins both halves.
 ///
-/// ## Why everything starts through `/bin/zsh -l -c`
+/// ## Why everything starts through `/bin/zsh -f -c`, and where PATH comes from
 ///
-/// So that `PATH` is the one Terminal has. The servers get `PATH=/usr/bin:/bin`, which hides
-/// Homebrew's `node` and `python3`. For `zsh` the script is the `-c` argument; for the others it
-/// is written to a 0600 file and the login shell `exec`s the interpreter on it, so the leader is
-/// the interpreter itself. The environment is `baseEnvironment` and nothing else: no variable of
-/// this app's own, and none of the `APPLE_*` server settings, reaches the script.
+/// `-f` is NO_RCS: zsh reads none of the person's startup files, only a root-owned
+/// `/etc/zshenv` if there is one. `~/.zshenv`, `~/.zprofile`, `~/.zshrc` and `~/.zlogin` are
+/// writable by any process running as the person, Full Disk Access or not, and the window never
+/// shows them. Read by a run, they would run code nobody approved under every grant this app
+/// holds. A script that needs a version manager sets it up itself, where the window shows it.
+///
+/// For `zsh` the script is the `-c` argument; for the others it is written to a 0600 file and
+/// zsh `exec`s the interpreter on it, so the leader is the interpreter itself. The environment
+/// is `baseEnvironment` and nothing else: no variable of this app's own, and none of the
+/// `APPLE_*` server settings, reaches the script.
+///
+/// PATH is `searchPath`: `/etc/paths`, then `/etc/paths.d`, as `/usr/libexec/path_helper`
+/// reads them for Terminal, then Homebrew's folders. Without it the servers' `/usr/bin:/bin`
+/// would hide Homebrew's `node` and `python3`. `resolve` walks the same PATH in Swift and starts
+/// nothing, so a diagnostics call runs no process at all.
 ///
 /// ## What the child inherits, and what it must not
 ///
@@ -47,7 +57,7 @@ nonisolated enum ShellRunner {
   enum Interpreter: String, CaseIterable, Sendable {
     case zsh, bash, python3, node, osascript, jxa
 
-    /// What the login shell `exec`s on the script file. Empty for `zsh`, whose script is the
+    /// What zsh `exec`s on the script file. Empty for `zsh`, whose script is the
     /// `-c` argument itself.
     var prefix: [String] {
       switch self {
@@ -105,16 +115,19 @@ nonisolated enum ShellRunner {
   }
 
   static func argv(_ request: Request, scriptFile: URL?) -> [String] {
-    let login = ["/bin/zsh", "-l", "-c"]
-    guard request.interpreter != .zsh else { return login + [request.script] }
+    // `-f`: no startup file of the person's is read. See the type's comment.
+    let shell = ["/bin/zsh", "-f", "-c"]
+    guard request.interpreter != .zsh else { return shell + [request.script] }
     guard let scriptFile else {
       preconditionFailure("\(request.interpreter) runs from a script file")
     }
-    return login + ["exec \"$0\" \"$@\""] + request.interpreter.prefix + [scriptFile.path]
+    return shell + ["exec \"$0\" \"$@\""] + request.interpreter.prefix + [scriptFile.path]
   }
 
-  /// The whole environment the login shell starts with. It extends `PATH` itself.
-  static func baseEnvironment(home: String, user: String, tmp: String) -> [String: String] {
+  /// The whole environment zsh starts with. Nothing reads a startup file to extend it.
+  static func baseEnvironment(
+    home: String, user: String, tmp: String, path: [String] = searchPath()
+  ) -> [String: String] {
     [
       "HOME": home,
       "USER": user,
@@ -122,35 +135,95 @@ nonisolated enum ShellRunner {
       "SHELL": "/bin/zsh",
       "TMPDIR": tmp,
       "LANG": "en_US.UTF-8",
-      "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+      "PATH": path.joined(separator: ":"),
     ]
   }
 
+  /// Stands in for `/etc/paths` when it cannot be read, or when nothing at all is listed.
+  static let fallbackPath = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+  /// Appended when they exist, so Homebrew's tools are found where its installer added no file
+  /// to `/etc/paths.d`.
+  static let homebrewPath = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin"]
+
+  /// The folders a script's PATH lists, from root-owned files only, never a shell's startup
+  /// files: the lines of `/etc/paths`, then those of each file in `/etc/paths.d` in file name
+  /// order, as `path_helper` reads them (blank lines skipped, spaces around a line dropped,
+  /// each folder once, kept where it first appears); then each of `homebrewPath` that exists
+  /// and is not listed yet.
+  ///
+  /// `root` stands in for `/` when reading those files and asking whether a Homebrew folder
+  /// exists, so the checks can give it a fake `/etc`. The folders it returns are as written.
+  static func searchPath(root: String = "/") -> [String] {
+    let base = URL(fileURLWithPath: root, isDirectory: true)
+    let etc = base.appendingPathComponent("etc", isDirectory: true)
+    func lines(_ file: URL) -> [String]? {
+      guard let text = try? String(contentsOf: file, encoding: .utf8) else { return nil }
+      return text.components(separatedBy: .newlines)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+        .filter { !$0.isEmpty }
+    }
+
+    var listed = lines(etc.appendingPathComponent("paths")) ?? fallbackPath
+    let drop = etc.appendingPathComponent("paths.d", isDirectory: true)
+    // Byte order, as `path_helper`'s strcmp sorts them.
+    let names = ((try? FileManager.default.contentsOfDirectory(atPath: drop.path)) ?? [])
+      .sorted { $0.utf8.lexicographicallyPrecedes($1.utf8) }
+    for name in names {
+      var isDirectory: ObjCBool = false
+      let file = drop.appendingPathComponent(name)
+      guard FileManager.default.fileExists(atPath: file.path, isDirectory: &isDirectory),
+        !isDirectory.boolValue
+      else { continue }
+      listed += lines(file) ?? []
+    }
+    for folder in homebrewPath {
+      var isDirectory: ObjCBool = false
+      let there = base.appendingPathComponent(String(folder.dropFirst())).path
+      if FileManager.default.fileExists(atPath: there, isDirectory: &isDirectory),
+        isDirectory.boolValue
+      {
+        listed.append(folder)
+      }
+    }
+
+    var seen = Set<String>()
+    let path = listed.filter { seen.insert($0).inserted }
+    return path.isEmpty ? fallbackPath : path
+  }
+
+  /// The first `<folder>/<command>` on `path` that is an executable file, as `command -v`
+  /// finds it, without starting a shell to ask. Relative entries are skipped.
+  static func find(_ command: String, in path: [String]) -> String? {
+    for folder in path where folder.hasPrefix("/") {
+      let candidate = (folder as NSString).appendingPathComponent(command)
+      var isDirectory: ObjCBool = false
+      if FileManager.default.fileExists(atPath: candidate, isDirectory: &isDirectory),
+        !isDirectory.boolValue, FileManager.default.isExecutableFile(atPath: candidate)
+      {
+        return candidate
+      }
+    }
+    return nil
+  }
+
   /// Starts the script and returns at once. The run is in `live` until it has been waited out,
-  /// whether or not anybody calls `wait`.
-  static func start(_ request: Request) throws -> Running {
+  /// whether or not anybody calls `wait`. `home` is for the checks, which give it a scratch
+  /// folder; the app leaves it alone.
+  static func start(_ request: Request, home: String = NSHomeDirectory()) throws -> Running {
     let scriptFile = request.interpreter == .zsh ? nil : try writeScript(request.script)
     do {
-      return try spawn(request, scriptFile: scriptFile)
+      return try spawn(request, scriptFile: scriptFile, home: home)
     } catch {
       if let scriptFile { try? FileManager.default.removeItem(at: scriptFile) }
       throw error
     }
   }
 
-  /// The interpreter's path as the login shell finds it, or nil when it is not installed.
-  /// Asked once per interpreter; an answer that timed out is not kept.
+  /// The interpreter's path on a script's PATH, or nil when it is not installed. Starts no
+  /// process. Asked once per interpreter.
   static func resolve(_ interpreter: Interpreter) -> String? {
     if let known = resolved.withLock({ $0[interpreter] }) { return known }
-    let lookup = try? start(
-      Request(
-        script: "command -v \(interpreter.command)", interpreter: .zsh,
-        cwd: URL(fileURLWithPath: NSHomeDirectory()), stdin: nil, timeout: 10)
-    ).wait()
-    guard let lookup, !lookup.timedOut else { return nil }
-    // The last line, in case a profile prints something of its own first.
-    let line = lookup.stdout.split(separator: "\n").last.map(String.init) ?? ""
-    let path = lookup.exitCode == 0 && line.hasPrefix("/") ? line : nil
+    let path = find(interpreter.command, in: searchPath())
     resolved.withLock { $0[interpreter] = .some(path) }
     return path
   }
@@ -348,7 +421,7 @@ nonisolated enum ShellRunner {
   private static let registry = Locked<[Running]>([])
   private static let resolved = Locked<[Interpreter: String?]>([:])
 
-  private static func spawn(_ request: Request, scriptFile: URL?) throws -> Running {
+  private static func spawn(_ request: Request, scriptFile: URL?, home: String) throws -> Running {
     var opened: [Int32] = []
     func pipePair(_ step: String) throws -> (read: Int32, write: Int32) {
       var ends: [Int32] = [0, 0]
@@ -405,7 +478,7 @@ nonisolated enum ShellRunner {
     }
 
     let environment = baseEnvironment(
-      home: NSHomeDirectory(), user: NSUserName(), tmp: NSTemporaryDirectory()
+      home: home, user: NSUserName(), tmp: NSTemporaryDirectory()
     ).map { "\($0.key)=\($0.value)" }.sorted()
     let arguments = argv(request, scriptFile: scriptFile)
     let started = DispatchTime.now().uptimeNanoseconds
