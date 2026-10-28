@@ -1,13 +1,13 @@
 ---
 /**
- * The real app, photographed — five of the six captures.
+ * The real app, photographed — six of the seven captures.
  *
  * The sixth, `surface`, is promoted into `SurfacePane.astro` one scroll below
  * the hero. The drawings this section exists to be checked against all sit
  * above it, so something photographic has to come before them; that shot is the
  * one, because it is the pane where the Apple apps are the subject. What is
  * left here is what earns a slot this far down: the log twice, the connection
- * list, the settings window and the write gate — panes a reader wants after the
+ * list, the settings window, the write gate and Shell's approval window — panes a reader wants after the
  * page has made its argument, not before.
  *
  * Everything else on this page that looks like macOS is drawn in HTML —
@@ -36,6 +36,7 @@ import chatShot from "../assets/shots/chat.png";
 import connectionsShot from "../assets/shots/connections.png";
 import promptShot from "../assets/shots/prompt.png";
 import settingsShot from "../assets/shots/settings.png";
+import shellPromptShot from "../assets/shots/shell-prompt.png";
 import writesShot from "../assets/shots/writes.png";
 import SectionHeader from "./SectionHeader.astro";
 
@@ -95,8 +96,15 @@ const shots = [
     image: writesShot,
     id: "writes",
     title: "Writes are a separate switch",
-    body: "The Mail pane from the top of the page, on a surface with writes off. Notes reports seven tools where Mail reports twenty: the mutating tools, and the prompts that end in one, are not registered at all. An agent is not refused — it is never told they exist.",
+    body: "The Mail pane from the top of the page, on a surface with writes off. Notes reports seven tools where Mail reports twenty-two: the mutating tools, and the prompts that end in one, are not registered at all. An agent is not refused — it is never told they exist.",
     alt: "Cupertino's Notes pane with Allow writes unchecked, its capabilities card reading seven tools, one prompt and three resources, and Safari dimmed in the sidebar as a switched-off surface.",
+  },
+  {
+    image: shellPromptShot,
+    id: "shell-prompt",
+    title: "A script waits for your click",
+    body: "What Shell shows before anything runs: the name the client gave itself, the agent's reason in its own words, the whole script, and what that script could reach. Don't run is the default, so Return and Escape both refuse, and Run once answers only a click by hand.",
+    alt: "Cupertino's Shell window: claude-code wants to run a command with Cupertino's access. The agent's reason is converting the HEIC photos on the Desktop to JPEG, the script is five lines of zsh, then the interpreter, folder and timeout, a bold warning that the script can read everything Cupertino can, and Run once beside Don't run, the default.",
   },
 ] as const;
 

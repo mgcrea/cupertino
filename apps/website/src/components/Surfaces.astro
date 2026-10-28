@@ -96,7 +96,9 @@ const capSpelled = SPELLED[capabilities.length] ?? String(capabilities.length);
       matters. Each arrives <strong class="font-semibold text-fg-dim">off</strong> until you switch
       it on, each needs its <strong class="font-semibold text-fg-dim">own</strong> permission rather
       than the shared one, and none of them is an npm package — nor could be. The grant lives in the
-      app, so a published package would hold nothing.
+      app, so a published package would hold nothing. Shell is the exception to the second rule: it
+      holds no permission of its own and runs with every one Cupertino has, which is why each script
+      waits for your click.
     </SectionHeader>
 
     <div class="reveal grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-3">
