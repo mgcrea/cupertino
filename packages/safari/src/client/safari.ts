@@ -694,6 +694,7 @@ export class AppleSafariClient {
         );
       }
     }
+    const sentAt = Date.now();
     try {
       return await runCommand(
         {
@@ -705,7 +706,7 @@ export class AppleSafariClient {
         { ...input, page, includeCodes: this.#config.allowCodes },
       );
     } catch (error) {
-      throw this.#explainSilence(error, input.url);
+      throw this.#explainSilence(error, input.url, sentAt);
     }
   }
 
@@ -856,13 +857,14 @@ export class AppleSafariClient {
    * this is only the wiring, to keep this file from carrying it.
    */
   #runNet = async (command: Omit<Command, "id" | "expiresAt">): Promise<CommandResult> => {
+    const sentAt = Date.now();
     try {
       return await runCommand(
         { pagesDirectory: this.pagesDirectory, timeoutMs: this.#config.actionTimeoutMs },
         command,
       );
     } catch (error) {
-      throw this.#explainSilence(error, command.url);
+      throw this.#explainSilence(error, command.url, sentAt);
     }
   };
 
@@ -915,7 +917,7 @@ export class AppleSafariClient {
    * grant may have lapsed or the tab closed after it. The tab's own version
    * evidence is more specific, so it is checked first.
    */
-  #explainSilence(error: unknown, url: string | undefined): unknown {
+  #explainSilence(error: unknown, url: string | undefined, sentAt: number): unknown {
     // Only a timeout is silence. Anything else — the command directory
     // unwritable, say — failed before any tab was asked, and blaming Safari
     // would send someone there for a problem on this side.
@@ -939,7 +941,8 @@ export class AppleSafariClient {
 
     // Heartbeats, where the extension writes them, answer the question the
     // captures below can only guess at: is anything running, and where.
-    const diagnosis = answeringDiagnosis(this.heartbeatStatus(), url);
+    const now = Date.now();
+    const diagnosis = answeringDiagnosis(this.heartbeatStatus(now), url, { sentAt, now });
     if (diagnosis !== null) return new PageCommandTimeoutError(`${error.message} ${diagnosis}`);
 
     const status = this.pagesStatus();
@@ -995,8 +998,8 @@ export class AppleSafariClient {
   }
 
   /** Which open pages have polled lately; see `heartbeatStatus`. */
-  heartbeatStatus(): HeartbeatStatus {
-    return heartbeatStatus(this.pagesDirectory);
+  heartbeatStatus(now?: number): HeartbeatStatus {
+    return heartbeatStatus(this.pagesDirectory, now);
   }
 
   /** Everything diagnostics needs, with no lane allowed to fail the whole call. */
