@@ -35,7 +35,13 @@ struct ChatPane: View {
   /// a sentence about turning it back on, which is a fine sentence to read
   /// after a mistake and a poor one to reach by picking the row the app just
   /// offered you.
-  private var picks: [Surface] { Surface.all.filter { SurfaceSettings.isEnabled($0) } }
+  ///
+  /// Never Shell, even when it is on: the on-device model must not ask to run
+  /// scripts, and a call from here reaches the Shell window naming Cupertino
+  /// itself as the client.
+  private var picks: [Surface] {
+    Surface.all.filter { $0.id != ShellPane.surfaceID && SurfaceSettings.isEnabled($0) }
+  }
 
   var body: some View {
     Group {

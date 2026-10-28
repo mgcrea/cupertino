@@ -414,6 +414,7 @@ shell-check: ## Assert the shell surface's runner, seal, run record and server, 
 		apps/apple/Cupertino/CallCapture.swift \
 		apps/apple/Cupertino/ShellRunner.swift \
 		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPane.swift \
 		apps/apple/Cupertino/ShellPolicy.swift \
 		apps/apple/Cupertino/ShellRecord.swift \
 		apps/apple/Cupertino/AuditChain.swift \
@@ -443,6 +444,7 @@ shell-window-check: ## Assert only a person's click presses the Shell window's r
 		apps/apple/Cupertino/CallCapture.swift \
 		apps/apple/Cupertino/ShellRunner.swift \
 		apps/apple/Cupertino/ShellSeal.swift \
+		apps/apple/Cupertino/ShellPane.swift \
 		apps/apple/Cupertino/ShellPolicy.swift \
 		apps/apple/Cupertino/ShellRecord.swift \
 		apps/apple/Cupertino/AuditChain.swift \

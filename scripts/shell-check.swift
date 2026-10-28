@@ -251,6 +251,151 @@ struct ShellCheck {
       unentitled.key() == nil && unentitled.rotate() == nil && ShellSeal.lastKeyError != nil)
   }
 
+  /// What the Shell pane decides: which way a switch goes, when a sheet is needed, and what a
+  /// line of the run record says. Against a scratch suite and a key held in memory, as
+  /// `sealChecks` is.
+  static func paneChecks() {
+    print("\nShellPane: the switches, \"Before running\" and the recent runs")
+    let suite = "shell-check-pane"
+    let store = UserDefaults(suiteName: suite)!
+    store.removePersistentDomain(forName: suite)
+    defer { store.removePersistentDomain(forName: suite) }
+    ShellSeal.domain = suite
+    ShellSeal.source = MemoryKey()
+
+    typealias Step = ShellPane.SwitchStep
+    check(
+      "off, asked on: the sheet",
+      ShellPane.switchStep(isOn: false, wantsOn: true, sealProblem: nil) == Step.confirmOn)
+    check(
+      "off, asked on with no seal to be had: stays off, says why",
+      ShellPane.switchStep(isOn: false, wantsOn: true, sealProblem: "x") == Step.cannotSeal)
+    check(
+      "on, asked off: off at once, with no sheet",
+      ShellPane.switchStep(isOn: true, wantsOn: false, sealProblem: nil) == Step.turnOff)
+    check(
+      "and a seal problem does not stand in the way of off",
+      ShellPane.switchStep(isOn: true, wantsOn: false, sealProblem: "x") == Step.turnOff)
+    check(
+      "asked for what is in force: nothing",
+      ShellPane.switchStep(isOn: true, wantsOn: true, sealProblem: nil) == Step.none
+        && ShellPane.switchStep(isOn: false, wantsOn: false, sealProblem: nil) == Step.none)
+
+    // A forged plain value is not "on" to a switch: it still draws off, and asking for on
+    // still needs the sheet.
+    store.set(true, forKey: ShellSeal.enabledKey)
+    let forgedOn = ShellSeal.isEnabled(store)
+    check(
+      "a forged \"Shell is on\" draws off, and asking on still opens the sheet",
+      !forgedOn
+        && ShellPane.switchStep(isOn: forgedOn, wantsOn: true, sealProblem: nil) == Step.confirmOn)
+
+    typealias Before = ShellPane.BeforeStep
+    check(
+      "ask to once per session applies at once",
+      ShellPane.beforeStep(current: .ask, chosen: .session) == Before.apply(.session))
+    check(
+      "once per session to ask applies at once",
+      ShellPane.beforeStep(current: .session, chosen: .ask) == Before.apply(.ask))
+    check(
+      "Don't ask to ask applies at once",
+      ShellPane.beforeStep(current: .none, chosen: .ask) == Before.apply(.ask))
+    check(
+      "Don't ask needs the warning, from either",
+      ShellPane.beforeStep(current: .ask, chosen: .none) == Before.confirmDontAsk
+        && ShellPane.beforeStep(current: .session, chosen: .none) == Before.confirmDontAsk)
+    check(
+      "the setting in force: nothing",
+      ShellPolicy.Before.allCases.allSatisfy {
+        ShellPane.beforeStep(current: $0, chosen: $0) == Before.none
+      })
+    ShellSeal.setEnabled(true, store)
+    store.set("none", forKey: ShellPolicy.key)
+    let forgedNone = ShellSeal.effectiveBefore(store)
+    check(
+      "a forged Don't ask shows as ask, and choosing Don't ask still needs the warning",
+      forgedNone == .ask
+        && ShellPane.beforeStep(current: forgedNone, chosen: .none) == Before.confirmDontAsk)
+
+    // A build with no application identifier of its own, as this binary is: the reason is
+    // found before anybody confirms a sheet for a seal that could never hold. No Keychain call
+    // is made for it: there is no access group to query.
+    ShellSeal.source = ShellSeal.Keychain()
+    let problem = ShellPane.sealProblem()
+    check("with no access group, the pane has a reason Shell cannot go on", problem != nil)
+    check(
+      "and the switch stays off",
+      ShellPane.switchStep(isOn: false, wantsOn: true, sealProblem: problem) == Step.cannotSeal)
+    ShellSeal.source = MemoryKey()
+
+    let hash = AuditChain.digest("echo hi")
+    let base = ShellRecord.Entry(
+      at: Date(), client: "Claude Code", connection: UUID(), purpose: "List the folder.",
+      interpreter: "zsh", cwd: "/", scriptBytes: 7, scriptSHA256: hash, stdinBytes: nil,
+      stdinSHA256: nil, decision: .approved, exitCode: 0, signal: nil, timedOut: false,
+      durationMs: 12)
+    let ran = ShellPane.row(base)
+    check(
+      "a run: client, decision and exit code",
+      ran.client == "Claude Code" && ran.decision == "Approved" && ran.outcome == "exit 0")
+    check(
+      "the first 12 hex digits of the hash",
+      hash.count == 64 && ran.hash.count == 12 && hash.hasPrefix(ran.hash))
+    check("purpose is the help text", ran.help == "List the folder.")
+    var failed = base
+    failed.exitCode = 2
+    check("a failing exit code is shown", ShellPane.row(failed).outcome == "exit 2")
+    var declined = base
+    declined.decision = .declined
+    declined.exitCode = nil
+    declined.durationMs = nil
+    check(
+      "a refusal says so, and that nothing ran",
+      ShellPane.row(declined).decision == "Declined"
+        && ShellPane.row(declined).outcome == "did not run")
+    var timedOut = base
+    timedOut.exitCode = nil
+    timedOut.signal = "SIGTERM"
+    timedOut.timedOut = true
+    check("a timeout says timed out", ShellPane.row(timedOut).outcome == "timed out")
+    var killed = base
+    killed.exitCode = nil
+    killed.signal = "SIGKILL"
+    killed.decision = .cancelled
+    check("a signal is named", ShellPane.row(killed).outcome == "ended by SIGKILL")
+    var unstarted = base
+    unstarted.exitCode = nil
+    check("an approved run with no exit says so", ShellPane.row(unstarted).outcome == "no exit code")
+
+    let decisions: [ShellRecord.Decision] = [
+      .approved, .approvedForSession, .notAsked, .declined, .noAnswer, .cooldown, .busy,
+      .cancelled, .invalid,
+    ]
+    let labels = decisions.map(ShellPane.label)
+    check("every decision has a label of its own", Set(labels).count == decisions.count)
+    check("twenty runs are listed", ShellPane.recentLimit == 20)
+
+    let copy =
+      labels
+      + ShellPolicy.Before.allCases.flatMap { [ShellPane.Copy.choice($0), ShellPane.Copy.caption($0)] }
+      + [
+        ShellPane.Copy.enableTitle, ShellPane.Copy.enableBody, ShellPane.Copy.enableSafeguard,
+        ShellPane.Copy.enableConfirm, ShellPane.Copy.dontAskTitle, ShellPane.Copy.dontAskBody,
+        ShellPane.Copy.dontAskCard, ShellPane.Copy.dontAskConfirm, ShellPane.Copy.cancel,
+        ShellPane.Copy.sealProblem, ShellPane.Copy.beforeLabel, ShellPane.Copy.recentTitle,
+        ShellPane.Copy.recentEmpty, ShellPane.Copy.recentFooter,
+      ]
+    check("no em dash in the pane's copy", !copy.contains { $0.contains("\u{2014}") })
+    check(
+      "the three choices, in the spec's words",
+      ShellPolicy.Before.allCases.map(ShellPane.Copy.choice)
+        == ["Ask every time", "Ask once per session", "Don't ask"])
+    check(
+      "the Don't ask warning names the injection risk",
+      ShellPane.Copy.dontAskBody.contains("web page")
+        && ShellPane.Copy.dontAskBody.contains("only safeguard"))
+  }
+
   /// The run record, in a scratch directory of its own. The app's own `shell-runs` is never
   /// touched.
   static func recordChecks() throws {
@@ -574,6 +719,8 @@ struct ShellCheck {
         .filter { $0.hasPrefix("\(getpid())-") }.isEmpty)
     try serverChecks()
     check("nothing left live at the end", ShellRunner.live.isEmpty)
+
+    paneChecks()
 
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {

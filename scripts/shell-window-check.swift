@@ -56,6 +56,7 @@ struct ShellWindowCheck {
   @MainActor static func main() {
     _ = NSApplication.shared
     buttonChecks()
+    sheetChecks()
     noScreenChecks()
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
@@ -210,6 +211,54 @@ struct ShellWindowCheck {
     check("arming disables it at once", !button.isEnabled)
     RunLoop.main.run(until: Date().addingTimeInterval(0.2))
     check("and leaves it disabled when its window is not on screen", !button.isEnabled)
+  }
+
+  /// The sheets that turn Shell on and choose "Don't ask": only the confirming button lowers
+  /// the bar, nothing a program reaches presses it, and every key means Cancel.
+  @MainActor static func sheetChecks() {
+    print("\nShellConfirmSheet: the sheets that lower the bar")
+    var confirmed = 0
+    var cancelled = 0
+    let sheet = ShellConfirmSheet(
+      title: ShellPane.Copy.enableTitle,
+      paragraphs: [ShellPane.Copy.enableBody, ShellPane.Copy.enableSafeguard],
+      confirmTitle: ShellPane.Copy.enableConfirm, onConfirm: { confirmed += 1 },
+      onCancel: { cancelled += 1 })
+    check("the confirming button's cell is the refusing one", sheet.confirm.cell is HandPressedButton.Cell)
+    check(
+      "it has no key equivalent and never takes focus",
+      sheet.confirm.keyEquivalent.isEmpty && sheet.confirm.refusesFirstResponder)
+    check(
+      "Cancel is the default button, so Return cancels",
+      sheet.panel.defaultButtonCell === sheet.cancel.cell && sheet.cancel.keyEquivalent == "\r")
+    check("and Cancel has the focus", sheet.panel.initialFirstResponder === sheet.cancel)
+
+    let elements = accessible(under: sheet.panel.contentView!) + [sheet.confirm, sheet.confirm.cell!]
+    pressNew(elements.filter { ($0 as AnyObject) !== sheet.cancel && ($0 as AnyObject) !== sheet.cancel.cell })
+    pressLegacy(elements.filter { ($0 as AnyObject) !== sheet.cancel && ($0 as AnyObject) !== sheet.cancel.cell })
+    sheet.confirm.performClick(nil)
+    _ = sheet.confirm.sendAction(sheet.confirm.action, to: sheet.confirm.target)
+    check("no Accessibility press, performClick or sent action confirms it", confirmed == 0)
+
+    sheet.panel.cancelOperation(nil)
+    check("Escape cancels", cancelled == 1 && confirmed == 0)
+    sheet.cancel.performClick(nil)
+    check("and the sheet answers once only", cancelled == 1)
+
+    var dontAskConfirmed = 0
+    var dontAskCancelled = 0
+    let dontAsk = ShellConfirmSheet(
+      title: ShellPane.Copy.dontAskTitle,
+      paragraphs: [ShellPane.Copy.dontAskBody, ShellPane.Copy.dontAskCard],
+      confirmTitle: ShellPane.Copy.dontAskConfirm, onConfirm: { dontAskConfirmed += 1 },
+      onCancel: { dontAskCancelled += 1 })
+    pressNew(accessible(under: dontAsk.confirm) + [dontAsk.confirm, dontAsk.confirm.cell!])
+    dontAsk.confirm.performClick(nil)
+    check("the Don't ask sheet's confirm refuses the same", dontAskConfirmed == 0)
+    dontAsk.cancel.performClick(nil)
+    check(
+      "and its Cancel is an ordinary button: any press can only leave things as they were",
+      dontAskCancelled == 1 && dontAskConfirmed == 0)
   }
 
   /// A panel with a window number, never ordered on screen.

@@ -949,6 +949,11 @@ struct GateToggle: View {
 /// surfaces exist. Not a literal `true`: Screen and Sound default off, and a
 /// hardcoded `true` here would draw their switch on while the relay served
 /// nothing.
+///
+/// Shell is the exception, and draws and sets nothing through `@AppStorage`: it
+/// reads the sealed value from `ShellSwitch` and hands every flip to it. Off is
+/// at once; on opens the Shell pane with the confirming sheet up, which is the
+/// only place a seal is made.
 struct SurfaceSwitch: View {
   enum Style {
     /// Under the surface it belongs to, in the main window's detail pane.
@@ -969,9 +974,27 @@ struct SurfaceSwitch: View {
     _enabled = AppStorage(wrappedValue: surface.defaultEnabled, SurfaceSettings.enabledKey(surface))
   }
 
+  private var isShell: Bool { surface.id == ShellPane.surfaceID }
+
+  /// The plain preference, or for Shell the sealed value and its one way in.
+  private var isOn: Binding<Bool> {
+    guard isShell else { return $enabled }
+    let shell = ShellSwitch.shared
+    return Binding(get: { shell.isOn }, set: { shell.set(on: $0) })
+  }
+
   var body: some View {
+    // Read in the body, so Shell's switch redraws when the seal moves, and after a
+    // flip that changed nothing because a sheet now waits for the click.
+    if isShell {
+      let _ = ShellSwitch.shared.isOn
+      let _ = ShellSwitch.shared.revision
+    }
     control
       .onChange(of: enabled) { _, isOn in
+        // Shell's switch does both of these itself, and its raw value is not
+        // what is in force.
+        guard !isShell else { return }
         // Off means off now, not at the next editor restart. An MCP host opens
         // one stdio connection when it launches and keeps it for the life of
         // that editor, so refusing new connections alone would leave the tools
@@ -989,15 +1012,15 @@ struct SurfaceSwitch: View {
   @ViewBuilder private var control: some View {
     switch style {
     case .inline:
-      Toggle("Enabled", isOn: $enabled)
+      Toggle("Enabled", isOn: isOn)
         .toggleStyle(.switch)
         .controlSize(.small)
         .labelsHidden()
     case .row:
-      Toggle(isOn: $enabled) {
+      Toggle(isOn: isOn) {
         SurfaceLabel(
           surface: surface,
-          caption: enabled ? nil : "off — not served, and not written to clients")
+          caption: isOn.wrappedValue ? nil : "off — not served, and not written to clients")
       }
       .help(
         "Turn this off to stop serving \(surface.displayName). Clients you have already "

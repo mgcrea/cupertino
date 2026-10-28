@@ -399,6 +399,115 @@ final class HandPressedButton: NSButton {
   nonisolated override func accessibilityPerformAction(_ action: NSAccessibility.Action) {}
 }
 
+/// A sheet that lowers the bar: turning Shell on, and "Don't ask".
+///
+/// A `ShellPanel`, so a posted click or key never reaches it, with the confirming button a
+/// `HandPressedButton`, so neither Accessibility nor `performClick` presses it. A SwiftUI
+/// `.sheet` with a `Button` would take all three. Cancel is an ordinary button and the default:
+/// Return and Escape both mean Cancel, and pressing it any way at all can only leave the setting
+/// where it was.
+///
+/// `onConfirm` and `onCancel` are called at most once between them, and the sheet does not take
+/// itself down: the caller ends it in both.
+@MainActor
+struct ShellConfirmSheet {
+  let panel: ShellPanel
+  let confirm: HandPressedButton
+  let cancel: NSButton
+
+  static let width: CGFloat = 460
+  static let inset: CGFloat = 20
+
+  init(
+    title: String, paragraphs: [String], confirmTitle: String,
+    onConfirm: @escaping () -> Void, onCancel: @escaping () -> Void
+  ) {
+    let content = Self.width - Self.inset * 2
+    var answered = false
+    let once: (@escaping () -> Void) -> () -> Void = { action in
+      {
+        guard !answered else { return }
+        answered = true
+        action()
+      }
+    }
+    let confirmOnce = once(onConfirm)
+    let cancelOnce = once(onCancel)
+
+    var views: [NSView] = [PromptWindow.label(title, width: content, size: 15, bold: true)]
+    for paragraph in paragraphs { views.append(PromptWindow.label(paragraph, width: content)) }
+
+    let cancel = ShellButton.make(ShellPane.Copy.cancel) { cancelOnce() }
+    cancel.keyEquivalent = "\r"
+    let confirm = HandPressedButton.make(confirmTitle) { confirmOnce() }
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let row = NSStackView(views: [spacer, confirm, cancel])
+    row.orientation = .horizontal
+    row.spacing = 8
+    row.translatesAutoresizingMaskIntoConstraints = false
+    row.widthAnchor.constraint(equalToConstant: content).isActive = true
+    views.append(row)
+
+    let stack = NSStackView(views: views)
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 10
+    stack.setCustomSpacing(16, after: views[views.count - 2])
+    stack.edgeInsets = NSEdgeInsets(
+      top: Self.inset, left: Self.inset, bottom: Self.inset, right: Self.inset)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+
+    let panel = ShellPanel(
+      contentRect: NSRect(x: 0, y: 0, width: Self.width, height: 200), styleMask: [.titled],
+      backing: .buffered, defer: false)
+    panel.title = title
+    panel.isReleasedWhenClosed = false
+    // Out of `apple_screen_capture`, as the window is: an agent has no business watching the
+    // sheet it would like confirmed.
+    panel.sharingType = .none
+    panel.onEscape = { cancelOnce() }
+    let container = NSView()
+    container.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+      stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+      stack.topAnchor.constraint(equalTo: container.topAnchor),
+      stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+      stack.widthAnchor.constraint(equalToConstant: Self.width),
+    ])
+    panel.contentView = container
+    panel.setContentSize(container.fittingSize)
+    panel.defaultButtonCell = cancel.cell as? NSButtonCell
+    panel.initialFirstResponder = cancel
+
+    self.panel = panel
+    self.confirm = confirm
+    self.cancel = cancel
+  }
+
+  /// Attached to `window` as a sheet, or on its own in the middle of the screen when there is no
+  /// window to attach it to. The confirming button is armed first, so a click already on its
+  /// way lands on nothing.
+  func present(on window: NSWindow?) {
+    confirm.arm(after: ShellConsent.armDelay)
+    if let window, window.isVisible {
+      window.beginSheet(panel)
+    } else {
+      panel.center()
+      panel.makeKeyAndOrderFront(nil)
+    }
+  }
+
+  func dismiss() {
+    if let parent = panel.sheetParent {
+      parent.endSheet(panel)
+    } else {
+      panel.orderOut(nil)
+    }
+  }
+}
+
 /// The confirmation window for one request, in the spec's order: who is asking, what the agent
 /// says, the script, how it would run, the risk, and the buttons.
 @MainActor
