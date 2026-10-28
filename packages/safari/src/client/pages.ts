@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /**
  * The extension lane: pages the Safari extension captured.
@@ -192,4 +192,171 @@ export const ageSeconds = (page: CapturedPage, now: number = Date.now()): number
   const at = Date.parse(page.capturedAt);
   if (Number.isNaN(at)) return Number.POSITIVE_INFINITY;
   return Math.max(0, Math.round((now - at) / 1000));
+};
+
+/**
+ * One open page's proof of life, as the native handler records it.
+ *
+ * Every allowed page polls the handler for commands, about once a second while
+ * visible and once every ten while hidden, and the handler stamps a file per
+ * ORIGIN when it does (rewritten at most every five seconds). That is the one
+ * signal that says the extension is running NOW: a capture only happens when a
+ * page loads, so a healthy extension and a dead one look the same from captures
+ * alone whenever nothing has loaded for half an hour.
+ */
+export type Heartbeat = { origin: string; ageSeconds: number; extensionVersion: string | null };
+
+export type HeartbeatStatus = {
+  /**
+   * The directory exists, so this extension writes heartbeats and their
+   * absence means something. An extension from before them writes none, and
+   * then nothing here can say whether a page is answering.
+   */
+  supported: boolean;
+  /** Origins whose page polled within `ANSWERING_WINDOW_SECONDS`, freshest first. */
+  answering: Heartbeat[];
+};
+
+/**
+ * How recent a heartbeat must be to count as a page answering now.
+ *
+ * A hidden tab polls every ten seconds and the handler rewrites a heartbeat at
+ * most every five, so a live hidden page is never more than about fifteen
+ * seconds old. Twice that leaves room for a busy page without keeping a closed
+ * one alive for long.
+ */
+export const ANSWERING_WINDOW_SECONDS = 30;
+
+/** Beside `pages/`, as the handler creates it (`channelDirectory` in the Swift). */
+export const heartbeatDirectory = (pagesDirectory: string): string =>
+  join(dirname(pagesDirectory), "heartbeat");
+
+export const heartbeatStatus = (
+  pagesDirectory: string,
+  now: number = Date.now(),
+): HeartbeatStatus => {
+  const directory = heartbeatDirectory(pagesDirectory);
+  let names: string[];
+  try {
+    names = readdirSync(directory).filter((n) => n.endsWith(".json"));
+  } catch {
+    return { supported: false, answering: [] };
+  }
+  const answering: Heartbeat[] = [];
+  for (const name of names) {
+    try {
+      const parsed = JSON.parse(readFileSync(join(directory, name), "utf8")) as {
+        origin?: unknown;
+        at?: unknown;
+        extensionVersion?: unknown;
+      };
+      if (typeof parsed.origin !== "string" || typeof parsed.at !== "string") continue;
+      const at = Date.parse(parsed.at);
+      if (Number.isNaN(at)) continue;
+      const age = Math.max(0, Math.round((now - at) / 1000));
+      if (age > ANSWERING_WINDOW_SECONDS) continue;
+      answering.push({
+        origin: parsed.origin,
+        ageSeconds: age,
+        extensionVersion:
+          typeof parsed.extensionVersion === "string" ? parsed.extensionVersion : null,
+      });
+    } catch {
+      // Torn or not ours. Skip it, as readPages does.
+    }
+  }
+  return { supported: true, answering: answering.toSorted((a, b) => a.ageSeconds - b.ageSeconds) };
+};
+
+/**
+ * The lane in one word, from the two things this process can measure.
+ *
+ * - `never-ran`: no store at all. The extension has never written anything.
+ * - `never-captured`: the store exists and holds nothing.
+ * - `stale`: there are captures, all older than the extension keeps one.
+ * - `capturing`: a capture inside that window.
+ * - `answering`: a page polled within the last half minute, so a command sent
+ *   now has somewhere to go. Only an extension that writes heartbeats can say so.
+ */
+export type ExtensionState = "never-ran" | "never-captured" | "stale" | "capturing" | "answering";
+
+export const extensionState = (
+  pages: PagesStatus,
+  beats: HeartbeatStatus,
+): { state: ExtensionState; working: boolean; answering: boolean | null } => {
+  const answering = beats.supported ? beats.answering.length > 0 : null;
+  const state: ExtensionState =
+    answering === true
+      ? "answering"
+      : !pages.exists
+        ? beats.supported
+          ? "never-captured"
+          : "never-ran"
+        : pages.newestAgeSeconds === null
+          ? "never-captured"
+          : isQuiet(pages)
+            ? "stale"
+            : "capturing";
+  // Working means a page could answer now. Without heartbeats the best evidence
+  // is a capture inside the TTL; with them, only a heartbeat counts, because a
+  // capture from five minutes ago is a page that may have closed since.
+  const working = answering ?? state === "capturing";
+  return { state, working, answering };
+};
+
+/** An origin, or null for something that is not an absolute URL. */
+const originOf = (url: string | undefined): string | null => {
+  if (url === undefined) return null;
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+};
+
+/** At most three, then a count: an agent needs a sample, not every tab. */
+const listOrigins = (beats: Heartbeat[]): string => {
+  const shown = beats.slice(0, 3).map((b) => b.origin);
+  const more = beats.length - shown.length;
+  return more > 0 ? `${shown.join(", ")} and ${more} more` : shown.join(", ");
+};
+
+/**
+ * What the heartbeats say about a page that did not answer, or null when this
+ * extension writes none and they can say nothing.
+ *
+ * Three answers, and each sends someone somewhere different: nothing running
+ * anywhere is Safari's Extensions pane (or a relaunch), running elsewhere but
+ * not here is this site's permission, and running here is the tab itself.
+ */
+export const answeringDiagnosis = (
+  beats: HeartbeatStatus,
+  url: string | undefined,
+): string | null => {
+  if (!beats.supported) return null;
+  if (beats.answering.length === 0) {
+    return (
+      `No open page has polled the extension in the last ${ANSWERING_WINDOW_SECONDS} seconds, ` +
+      `on any site, so it is not running in Safari: switched off, allowed on no open page, or ` +
+      `loaded but broken. If Safari > Settings > Extensions shows it ticked, look there for a ` +
+      `second Cupertino row — two copies of Cupertino.app on this Mac can leave Safari with an ` +
+      `extension it never runs — then quit and reopen Safari and reload the tab.`
+    );
+  }
+  const origin = originOf(url);
+  const here = origin === null ? undefined : beats.answering.find((b) => b.origin === origin);
+  if (here) {
+    return (
+      `The extension is running on ${origin} right now, so it is allowed there, but no page on ` +
+      `this exact URL took the command: the tab may be on a slightly different address ` +
+      `(apple_safari_list_tabs gives the one Safari holds), still loading, or closed.`
+    );
+  }
+  return (
+    `The extension is running — pages on ${listOrigins(beats.answering)} are answering — ` +
+    (origin === null
+      ? `but no page took the command.`
+      : `but not on ${origin}: it is not allowed on this site, or this tab has not loaded since ` +
+        `it was allowed (reload it), or the tab is not open.`)
+  );
 };

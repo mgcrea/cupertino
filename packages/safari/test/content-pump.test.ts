@@ -76,4 +76,42 @@ describe("content.js pump", () => {
     await flush();
     expect(delays).toEqual([0, 1000]);
   });
+
+  /**
+   * Each poll names the page's origin, as the page itself computes it. The
+   * native handler stamps a heartbeat per origin from it, and the server matches
+   * a URL to it with `new URL(url).origin` — so the browser's own serialization,
+   * not one rebuilt in Swift, is what keeps the two sides agreeing on default
+   * ports, IPv6 hosts and punycode.
+   */
+  it("sends the page's origin with every poll", async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const context: Record<string, any> = {
+      browser: {
+        runtime: {
+          getManifest: () => ({ version: "1.0.0" }),
+          sendMessage: async (message: Record<string, unknown>) => {
+            sent.push(message);
+            return message.kind === "poll" ? { commands: [] } : undefined;
+          },
+        },
+      },
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+      addEventListener: () => {},
+      MutationObserver: class {
+        observe() {}
+        disconnect() {}
+      },
+      document: { hidden: false, title: "", documentElement: { outerHTML: "" } },
+      history: { pushState: () => {} },
+      location: { href: "https://gallica.bnf.fr:443/SRU?x=1", origin: "https://gallica.bnf.fr" },
+    };
+    context.window = context;
+    createContext(context);
+    runInContext(SOURCE, context);
+    await flush();
+    const poll = sent.find((m) => m.kind === "poll");
+    expect(poll?.origin).toBe("https://gallica.bnf.fr");
+  });
 });

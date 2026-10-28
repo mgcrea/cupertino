@@ -223,6 +223,12 @@
       const response = await browser.runtime.sendMessage({
         kind: "poll",
         url: location.href,
+        // The handler stamps a heartbeat per origin from this, which is how the
+        // server tells "running here", "running elsewhere" and "running
+        // nowhere" apart. The browser's own serialization, so it matches what
+        // the server gets from `new URL(url).origin` without either side
+        // reimplementing it.
+        origin: location.origin,
         // Which page load is asking. A click or fill names the load that
         // handed out its element id, and the handler gives it to that load
         // and no other — two tabs on one URL each have an `e12`, and routing

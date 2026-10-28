@@ -64,6 +64,9 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     case "capture":
       payload = ["stored": store(message ?? [:])]
     case "poll":
+      recordHeartbeat(
+        origin: message?["origin"] as? String,
+        version: message?["extensionVersion"] as? String)
       // The command channel's only inbound step. Commands are claimed as they
       // are handed out — see `claimCommands` — so two tabs on the same URL
       // cannot both run one, and one that names a page load goes to that load
@@ -176,6 +179,60 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     return claimed
   }
 
+  // MARK: - Heartbeats
+
+  /// How often one origin's heartbeat is rewritten.
+  ///
+  /// A visible page polls every second, so stamping every poll would be a
+  /// write per second per tab for a fact that changes far more slowly. The
+  /// server counts a heartbeat as live for 30 s (`ANSWERING_WINDOW_SECONDS` in
+  /// packages/safari/src/client/pages.ts); a hidden tab polls every 10 s, so
+  /// even with this delay a live page is never more than ~15 s old there.
+  private static let heartbeatInterval: TimeInterval = 5
+
+  /// Stamp that a page on this origin is open, allowed, and polling.
+  ///
+  /// The only signal the server has that the extension is running NOW. A
+  /// capture is written when a page loads and not again, so on 2026-10-27 a
+  /// lane that had been dead for seven hours and one that nobody had used for
+  /// seven hours looked identical. One file per origin, named by its digest so
+  /// the origin cannot name a path; the origin itself comes from the page's
+  /// own `location.origin`, so it is serialized exactly as the server's
+  /// `new URL(url).origin` would. Origins only, never full URLs: this says
+  /// which sites are answering, not what is on them.
+  private func recordHeartbeat(origin: String?, version: String?) {
+    guard let origin, !origin.isEmpty, origin.count <= 512, origin != "null",
+      let dir = channelDirectory("heartbeat")
+    else { return }
+    let digest = SHA256.hash(data: Data(origin.utf8)).map { String(format: "%02x", $0) }.joined()
+    let file = dir.appendingPathComponent(digest + ".json")
+
+    let now = Date()
+    if let modified =
+      (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+      now.timeIntervalSince(modified) < Self.heartbeatInterval
+    {
+      return
+    }
+
+    var entry: [String: Any] = [
+      "origin": origin,
+      "at": ISO8601DateFormatter().string(from: now),
+    ]
+    if let version { entry["extensionVersion"] = version }
+    guard let data = try? JSONSerialization.data(withJSONObject: entry) else { return }
+    do {
+      try data.write(to: file, options: .atomic)
+    } catch {
+      os_log(
+        .error, "cupertino: could not store a heartbeat: %{public}@", String(describing: error))
+      return
+    }
+    // Same TTL as a capture: an origin nobody has had open for half an hour
+    // is browsing history, and has no business staying on disk.
+    pruneChannel(dir, olderThan: Self.ttl)
+  }
+
   /// Record what a page did, for the server to collect.
   private func storeResult(_ message: [String: Any]) -> Bool {
     guard let dir = channelDirectory("results"),
@@ -214,7 +271,9 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
   /// Results are collected by a server that may have gone away. Age them out on
   /// the same reasoning as a capture: an answer nobody came back for is not
   /// worth keeping, and this one describes a page too.
-  private func pruneChannel(_ dir: URL) {
+  private func pruneChannel(
+    _ dir: URL, olderThan ttl: TimeInterval = SafariWebExtensionHandler.channelTTL
+  ) {
     let fm = FileManager.default
     guard
       let files = try? fm.contentsOfDirectory(
@@ -225,7 +284,7 @@ final class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
       let modified =
         (try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate)
         ?? .distantPast
-      if now.timeIntervalSince(modified) > Self.channelTTL { try? fm.removeItem(at: file) }
+      if now.timeIntervalSince(modified) > ttl { try? fm.removeItem(at: file) }
     }
   }
 

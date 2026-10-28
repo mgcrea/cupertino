@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterEach, describe, expect, it } from "vitest";
@@ -199,6 +199,40 @@ describe("a lane that has gone quiet", () => {
     const body = r.json() as { ageSeconds: number; stale: string };
     expect(body.ageSeconds).toBeGreaterThan(10_000);
     expect(body.stale).toContain("minutes ago");
+  });
+});
+
+/** A heartbeat as the native handler stamps one: a file per origin, named by its digest. */
+const beat = (pages: string, origin: string, at = new Date().toISOString()) => {
+  const dir = join(dirname(pages), "heartbeat");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(
+    join(dir, `${createHash("sha256").update(origin).digest("hex")}.json`),
+    JSON.stringify({ origin, at, extensionVersion: "1.33.0" }),
+  );
+};
+
+/**
+ * With heartbeats on disk the miss stops guessing from the captures' age: it
+ * says whether anything is running, and whether it is running on this site.
+ */
+describe("a miss read against the heartbeats", () => {
+  it("names this site when other sites are answering", async () => {
+    const pages = store([capture({ capturedAt: hoursAgo(3) })]);
+    beat(pages, "https://example.com");
+    const r = await read(pages, { url: "https://gallica.bnf.fr/SRU?query=x" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("not on https://gallica.bnf.fr");
+    expect(r.text).toContain("not allowed on this site");
+  });
+
+  it("says nothing is running when no heartbeat is fresh", async () => {
+    const pages = store([capture({ capturedAt: hoursAgo(7) })]);
+    beat(pages, "https://example.com", hoursAgo(7));
+    const r = await read(pages, { url: "https://gallica.bnf.fr/" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("No open page has polled");
+    expect(r.text).toContain("second Cupertino");
   });
 });
 
