@@ -29,6 +29,18 @@ summary.
   measured before its text was laid out, so it opened at its least height whatever the script's
   length, and the rest had to be scrolled to. It now grows with the script up to its cap, and so
   does the box for a script's input.
+- **A Safari element id lasts as long as its element, not as long as the last list.** Every
+  `apple_safari_page_elements` call voided the ids of the one before, so listing a field, then
+  listing again to find its Submit button, left the field's id dead, with an error blaming a
+  navigation that never happened. The same element now keeps its id across lists; an id dies when
+  its element leaves the page or the page navigates, and the error says which.
+- **Safari reads a page as it is laid out.** `apple_safari_read_page`, `apple_safari_wait_for` and
+  stored captures read the text from a detached copy of the page, which has no layout: blocks ran
+  together ("HomeHomeSearch Performance…") and CSS-hidden labels came along. They now read the
+  page itself, and `wait_for` matches a phrase the layout split across lines.
+- **Safari element labels are one line, without icon glyphs**, and a click's `label` names the
+  element as it was clicked ("Submit"), with `labelAfter` when it changed ("Submitting"). The
+  `idNote` and `staleNote` repeated in every result are gone; the tool descriptions say it once.
 ## [1.33.0] - 2026-10-28
 
 **Shell runs a script you approve.** An agent can run one script under Cupertino's grants once you

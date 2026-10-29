@@ -546,11 +546,6 @@ describe("value truncation", () => {
 /** The live read `read_page` now tries before the capture. */
 describe("read", () => {
   const readWith = (command: Record<string, unknown>) => {
-    const removed: string[] = [];
-    const clone = {
-      innerText: "Skip to content\n\n\n\nApp name   Prepaid Credits",
-      querySelectorAll: () => [{ remove: () => removed.push("script") }],
-    };
     const window: Record<string, unknown> = {};
     const context = createContext({
       crypto: webcrypto,
@@ -558,7 +553,7 @@ describe("read", () => {
       location: { href: "https://apps.example/form" },
       document: {
         title: "App Listing Submission",
-        body: { cloneNode: () => clone },
+        body: { innerText: "Skip to content\n\n\n\nApp name   Prepaid Credits" },
         documentElement: { outerHTML: "<html><body>form</body></html>" },
       },
     });
@@ -570,11 +565,17 @@ describe("read", () => {
     };
     const out = run({ action: "read", ...command });
     expect(out.ok, out.error).toBe(true);
-    return { data: out.data, removed, shared: window.cupertinoReadableText };
+    return { data: out.data, shared: window.cupertinoReadableText };
   };
 
-  it("returns the readable text, script stripped and whitespace collapsed", () => {
-    const { data, removed } = readWith({ format: "text", maxChars: 1000 });
+  /**
+   * From the live body, never a clone: a detached node is not rendered, and
+   * its `innerText` is then its `textContent` — no line breaks between blocks,
+   * and every CSS-hidden label kept. The stub offers no `cloneNode`, so a
+   * return to the clone fails here.
+   */
+  it("returns the laid-out text of the live body, whitespace collapsed", () => {
+    const { data } = readWith({ format: "text", maxChars: 1000 });
     expect(data).toMatchObject({
       url: "https://apps.example/form",
       title: "App Listing Submission",
@@ -582,7 +583,6 @@ describe("read", () => {
       content: "Skip to content\n\nApp name Prepaid Credits",
       truncated: false,
     });
-    expect(removed).toEqual(["script"]);
     expect(typeof data.readAt).toBe("string");
   });
 
@@ -918,6 +918,122 @@ describe("page tokens", () => {
   });
 });
 
+const ids = (out: { data: Record<string, never> }) =>
+  (out.data.elements as unknown as { id: string }[]).map((e) => e.id);
+
+/**
+ * An id lasts as long as its element, not as long as the last list.
+ *
+ * The first version cleared every handle on each enumeration. On Bing
+ * Webmaster Tools a caller listed "Sitemap URL", filled it, listed "Submit" to
+ * find the button, and the field's id was then refused — with an error that
+ * blamed a navigation that never happened.
+ */
+describe("element ids", () => {
+  type Run = (c: unknown) => { ok: boolean; data: Record<string, never>; error?: string };
+
+  const page = (elements: Record<string, unknown>[]) => {
+    const window: Record<string, unknown> = { innerHeight: 800, innerWidth: 1200 };
+    const context = createContext({
+      crypto: webcrypto,
+      window,
+      location: { href: "https://www.bing.com/webmasters/sitemaps" },
+      document: { querySelectorAll: () => elements, getElementById: () => null },
+      getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
+    });
+    runInContext(SOURCE, context);
+    return { run: window.cupertinoRunCommand as Run, token: window.cupertinoPageToken as string };
+  };
+
+  const button = (name: string, clicks: string[] = []) => ({
+    ...el("button", {}, { innerText: name }),
+    scrollIntoView: () => {},
+    click: () => void clicks.push(name),
+  });
+
+  it("keeps an element's id when the page is listed again, through a different filter", () => {
+    const clicks: string[] = [];
+    const { run } = page([button("Sitemap URL", clicks), button("Submit", clicks)]);
+
+    const [field] = ids(run({ action: "elements", limit: 10, query: "Sitemap" }));
+    const [submit] = ids(run({ action: "elements", limit: 10, query: "Submit" }));
+    expect(field).not.toBe(submit);
+    // The whole list hands out the same two ids again, not two new ones.
+    expect(ids(run({ action: "elements", limit: 10 }))).toEqual([field, submit]);
+
+    const out = run({ action: "click", elementId: field });
+    expect(out.ok, out.error).toBe(true);
+    expect(clicks).toEqual(["Sitemap URL"]);
+  });
+
+  it("says an element was removed, rather than blaming a navigation", () => {
+    const gone = button("Close");
+    const elements: Record<string, unknown>[] = [gone, button("Submit")];
+    const { run } = page(elements);
+    const [id] = ids(run({ action: "elements", limit: 10 }));
+
+    gone.isConnected = false;
+    elements.splice(0, 1);
+    // Before and after the next enumeration retires it: the same answer.
+    expect(run({ action: "click", elementId: id }).error).toContain("no longer in the page");
+    run({ action: "elements", limit: 10 });
+    expect(run({ action: "click", elementId: id }).error).toContain("no longer in the page");
+  });
+
+  it("answers to an element's id again once the page puts it back", () => {
+    const clicks: string[] = [];
+    const moved = button("Submit", clicks);
+    const elements: Record<string, unknown>[] = [moved];
+    const { run } = page(elements);
+    const [id] = ids(run({ action: "elements", limit: 10 }));
+
+    moved.isConnected = false;
+    elements.splice(0, 1);
+    run({ action: "elements", limit: 10 });
+    moved.isConnected = true;
+    elements.push(moved);
+    expect(ids(run({ action: "elements", limit: 10 }))).toEqual([id]);
+
+    const out = run({ action: "click", elementId: id });
+    expect(out.ok, out.error).toBe(true);
+    expect(clicks).toEqual(["Submit"]);
+  });
+
+  it("says plainly when an id was never handed out", () => {
+    const { run, token } = page([button("Submit")]);
+    run({ action: "elements", limit: 10 });
+
+    const out = run({ action: "click", elementId: `${token}-e99` });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("never handed that id out");
+    expect(out.error).not.toContain("navigation");
+  });
+
+  it("names the clicked button as it was, and what it reads now", () => {
+    const submit = button("Submit");
+    submit.click = () => void (submit.innerText = "Submitting");
+    const { run } = page([submit]);
+    const [id] = ids(run({ action: "elements", limit: 10 }));
+
+    expect(run({ action: "click", elementId: id }).data).toMatchObject({
+      label: "Submit",
+      labelAfter: "Submitting",
+    });
+  });
+
+  it("carries no labelAfter when the label did not change", () => {
+    const { run } = page([button("Copy")]);
+    const [id] = ids(run({ action: "elements", limit: 10 }));
+    expect(run({ action: "click", elementId: id }).data.labelAfter).toBeUndefined();
+  });
+
+  /** Fluent UI's sidebar: an icon-font glyph, then the caption over two lines. */
+  it("gives a label on one line, without icon glyphs", () => {
+    const link = el("a", {}, { innerText: "\nAI Performance\nBETA", href: "https://x/ai" });
+    expect(only(link).label).toBe("AI Performance BETA");
+  });
+});
+
 const labels = (out: { data: Record<string, never> }) =>
   (out.data.elements as unknown as { label: string }[]).map((e) => e.label);
 
@@ -952,9 +1068,7 @@ describe("filters, find and submit", () => {
         title: "Checkout",
         querySelectorAll: () => opts.elements ?? [],
         getElementById: () => null,
-        body: {
-          cloneNode: () => ({ innerText: opts.text ?? "", querySelectorAll: () => [] }),
-        },
+        body: { innerText: opts.text ?? "" },
       },
       getComputedStyle: () => ({ visibility: "visible", display: "block", opacity: "1" }),
     });
@@ -1004,6 +1118,14 @@ describe("filters, find and submit", () => {
     expect(out.ok, out.error).toBe(true);
     expect(out.data).toMatchObject({ found: true, url: "https://shop.example/checkout" });
     expect(String(out.data.excerpt)).toContain("Your order is CONFIRMED");
+  });
+
+  /** Laid-out text breaks lines between blocks; the caller means the words. */
+  it("matches words that the layout put on separate lines", () => {
+    const run = page({ text: "Known sitemaps\n1\nSitemaps with errors\n0" });
+    const out = run({ action: "find", text: "known  sitemaps 1" });
+    expect(out.data).toMatchObject({ found: true });
+    expect(String(out.data.excerpt)).toContain("Known sitemaps 1");
   });
 
   it("says plainly when the text is not there", () => {

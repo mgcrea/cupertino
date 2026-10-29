@@ -26,9 +26,16 @@
 // property that matters — the failure mode of the selector design is silent and
 // the failure mode of this one is loud.
 //
-// IDs live only as long as the page. They are handed out per enumeration and
-// die with a navigation, which is correct: an id that survived a page change
-// would be an id that could act on a page nobody asked about.
+// IDs live only as long as the page. They die with a navigation, which is
+// correct: an id that survived a page change would be an id that could act on
+// a page nobody asked about.
+//
+// Within the page, an id lives as long as its element. Enumerating again hands
+// the same element the same id, and does not void the ids of the last list.
+// The first version cleared every handle on each enumeration, and a filtered
+// list made that bite: on Bing Webmaster Tools a caller listed "Sitemap URL",
+// filled it, listed "Submit" to find the button — and the field's id was dead
+// for the submit, with an error blaming a navigation that never happened.
 //
 // ## An id names its page load, not just its element
 //
@@ -76,8 +83,16 @@
   /** `<page>-e<n>`, and nothing looser. */
   const ID_SHAPE = /^([0-9a-f]{8})-e\d+$/;
 
-  /** Every element handed out this page-lifetime, by id. */
+  /** Every element handed out this page-lifetime and still in it, by id. */
   const handles = new Map();
+  /** The other way round, so the same element keeps its id across enumerations. */
+  const idOf = new WeakMap();
+  /**
+   * Ids whose element left the page, dropped from `handles` so it does not hold
+   * detached nodes alive. Kept only to say "removed" rather than "never handed
+   * out" when one comes back.
+   */
+  const retired = new Set();
   let nextId = 1;
 
   /**
@@ -127,28 +142,43 @@
    * and reporting it as "button" is honest where inventing a name would not be.
    */
   function label(el) {
-    const aria = el.getAttribute("aria-label");
-    if (aria) return aria.trim();
+    const aria = tidy(el.getAttribute("aria-label"));
+    if (aria) return aria;
     const labelledBy = el.getAttribute("aria-labelledby");
     if (labelledBy) {
-      const target = document.getElementById(labelledBy);
-      if (target?.innerText) return target.innerText.trim().slice(0, 120);
+      const target = tidy(document.getElementById(labelledBy)?.innerText);
+      if (target) return target.slice(0, 120);
     }
-    if (el.labels?.length && el.labels[0].innerText) {
-      return el.labels[0].innerText.trim().slice(0, 120);
-    }
+    const labelText = tidy(el.labels?.[0]?.innerText);
+    if (labelText) return labelText.slice(0, 120);
     // `value` is the visible caption on a submit/button/reset input and NOTHING
     // else. Everywhere else it is what the user typed, which is a second door to
     // the same string `enumerate` is careful about below — a password field
     // whose value leaked out as its "label" would be redacted in name only.
     const caption = CAPTION_VALUE_TYPES.has(inputType(el)) ? el.value : "";
-    const text = (el.innerText || caption || "").trim();
+    const text = tidy(el.innerText || caption);
     if (text) return text.slice(0, 120);
-    const placeholder = el.getAttribute("placeholder");
-    if (placeholder) return placeholder.trim().slice(0, 120);
-    const title = el.getAttribute("title");
-    if (title) return title.trim().slice(0, 120);
+    const placeholder = tidy(el.getAttribute("placeholder"));
+    if (placeholder) return placeholder.slice(0, 120);
+    const title = tidy(el.getAttribute("title"));
+    if (title) return title.slice(0, 120);
     return el.tagName.toLowerCase();
+  }
+
+  /**
+   * A label on one line, without icon glyphs.
+   *
+   * Icon fonts draw with Private Use Area characters, which `trim` does not
+   * treat as whitespace: Bing Webmaster Tools' sidebar links came back as
+   * "\nHome" and "\nAI Performance\nBETA", the glyph invisible before the
+   * newline. A label is something to match a query against and read, and
+   * neither wants the glyph or the line breaks.
+   */
+  function tidy(text) {
+    return String(text || "")
+      .replace(/[-\u{F0000}-\u{10FFFF}]/gu, "")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
   /** Where `value` really is the caption a person reads, not what they typed. */
@@ -331,7 +361,11 @@
   const MAX_VALUE_CHARS = 20000;
 
   /**
-   * Enumerate what can be acted on, newest ids winning.
+   * Enumerate what can be acted on.
+   *
+   * An element listed before keeps its id, so a caller can list a field, then
+   * list again to find the button, and still use both. Ids whose element has
+   * left the page are retired here, which is the only bookkeeping they need.
    *
    * Capped, and the cap is not a performance guard — it is the same argument the
    * page-capture store makes about size. A search results page has hundreds of
@@ -340,7 +374,11 @@
    * one nobody reads.
    */
   function enumerate(limit, includeCodes, maxValueChars, filter = {}) {
-    handles.clear();
+    for (const [id, el] of handles) {
+      if (el.isConnected) continue;
+      handles.delete(id);
+      retired.add(id);
+    }
     const found = [];
     const all = document.querySelectorAll(SELECTOR);
     // Applied HERE, before the cap, rather than by the caller afterwards: on a
@@ -384,8 +422,15 @@
         truncated = true;
         break;
       }
-      const id = PAGE + "-e" + nextId++;
+      let id = idOf.get(el);
+      if (!id) {
+        id = PAGE + "-e" + nextId++;
+        idOf.set(el, id);
+      }
+      // Set every time, not only when minted: an element the page took out and
+      // put back (a framework moving a node) was retired, and is live again.
       handles.set(id, el);
+      retired.delete(id);
       found.push({
         id,
         kind: k,
@@ -433,15 +478,15 @@
       );
     }
     const el = handles.get(id);
-    if (!el) {
+    if (!el && !retired.has(id)) {
       throw new Error(
         'No element "' +
           id +
-          '" on this page. IDs come from an "elements" call and do not survive a navigation — ' +
-          "enumerate again.",
+          '" on this page: this page load never handed that id out. Use an id exactly as ' +
+          'an "elements" call returned it.',
       );
     }
-    if (!el.isConnected) {
+    if (!el || !el.isConnected) {
       throw new Error(
         'Element "' +
           id +
@@ -462,9 +507,19 @@
    */
   function click(id) {
     const el = resolve(id);
+    // Named BEFORE the click, so the result names the button that was clicked
+    // and not the state it went to ("Submit", not "Submitting"). The new label,
+    // when there is one, is worth saying too: it is the page answering.
+    const before = label(el);
     el.scrollIntoView({ block: "center", behavior: "instant" });
     el.click();
-    return { clicked: id, label: label(el), kind: kind(el) };
+    const after = el.isConnected ? label(el) : before;
+    return {
+      clicked: id,
+      label: before,
+      kind: kind(el),
+      ...(after !== before ? { labelAfter: after } : {}),
+    };
   }
 
   /**
@@ -825,21 +880,24 @@
   }
 
   /**
-   * The page's readable text: script and style removed, whitespace collapsed.
+   * The page's readable text, as laid out, whitespace collapsed.
    *
    * Shared with `content.js`, which stores the same extraction as a capture —
    * the manifest loads this file first, so it can. One implementation, so a
    * live read and a capture of the same page can never disagree about what
    * "the text" is.
    *
-   * innerText on a detached clone, so removing script/style cannot disturb the
-   * page the user is actually looking at.
+   * `innerText` of the LIVE body. The first version read it on a detached
+   * clone, to strip script and style without touching the page — but a node
+   * that is not rendered answers `innerText` with its `textContent`, so the
+   * clone had no line breaks and kept every CSS-hidden label. Bing Webmaster
+   * Tools read as "HomeHomeSearch PerformanceSearch Performance…", its table
+   * as "Sitemap URLLast submitLast crawl". The rendered body already leaves out
+   * script, style, noscript and template, since none of them display, and
+   * reading it changes nothing.
    */
   function readableText() {
-    const clone = document.body?.cloneNode(true);
-    if (!clone) return "";
-    for (const n of clone.querySelectorAll("script,style,noscript,template")) n.remove();
-    return (clone.innerText || "")
+    return (document.body?.innerText || "")
       .replace(/[ \t\u00a0]+/g, " ")
       .replace(/\n{3,}/g, "\n\n")
       .trim();
@@ -896,14 +954,20 @@
    * the words, not the CSS that may have upper-cased them.
    */
   function find(text) {
-    const wanted = String(text ?? "");
+    const wanted = String(text ?? "").trim();
     if (!wanted) throw new Error("Nothing to look for: text is empty.");
     const body = readableText();
     // Matched on the text as it is, with a case-insensitive pattern, rather
     // than on a lower-cased copy: lower-casing can change a string's length
     // ("İ" becomes two units), and an index from the copy would then cut the
-    // excerpt from the wrong place in the original.
-    const pattern = new RegExp(wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    // excerpt from the wrong place in the original. Any run of whitespace in
+    // the wanted text matches any run on the page, line breaks included: a
+    // button and its caption sit on separate lines in laid-out text, and a
+    // caller waiting for "Submit sitemap" means the words, not the layout.
+    const pattern = new RegExp(
+      wanted.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+"),
+      "i",
+    );
     const match = pattern.exec(body);
     return {
       url: location.href,

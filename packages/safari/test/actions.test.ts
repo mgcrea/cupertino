@@ -167,21 +167,25 @@ describe("apple_safari_click", () => {
   });
 
   /**
-   * A click that navigated invalidates every id the caller is holding. Saying
-   * so on every click is deliberate: the alternative is a caller that reuses an
-   * id after a navigation, and on the other side that is an error rather than a
-   * wrong click — but only because the ids die. The note is what stops the
-   * caller treating a dead id as a bug worth retrying.
+   * A click that navigated invalidates every id the caller is holding, and the
+   * caller has to know that before it reuses one. It is said once, where the
+   * tool is described, rather than in a note on every click: the note cost ~150
+   * characters a call, and its "or re-rendered" stopped being true once ids
+   * began to last as long as their elements.
    */
-  it("always warns that ids may now be stale", async () => {
+  it("says ids die on navigation in the description, not in every result", async () => {
     const dirs = paths();
     running = fakeExtension(dirs, () => ({ ok: true, data: { clicked: "3f9a2c1d-e1" } }));
     const c = await connect(dirs.pages);
+    const { tools } = await c.listTools();
+    const click = tools.find((t) => t.name === "apple_safari_click");
+    expect(click?.description).toContain("previous element ids are dead");
+
     const r = await call(c, "apple_safari_click", {
       url: "https://x.example/",
       elementId: "3f9a2c1d-e1",
     });
-    expect(r.text).toContain("dead");
+    expect(r.json()).not.toHaveProperty("staleNote");
   });
 
   it("reports the page's own refusal rather than inventing one", async () => {
@@ -557,12 +561,21 @@ describe("apple_safari_page_elements", () => {
     expect(r.json()).toMatchObject({ elements: [{ id: "3f9a2c1d-e1", label: "Buy" }] });
   });
 
-  it("says the ids are page-scoped", async () => {
+  it("says how long an id lasts where the id is described, not in every result", async () => {
     const dirs = paths();
     running = fakeExtension(dirs, () => ({ ok: true, data: { elements: [], truncated: false } }));
     const c = await connect(dirs.pages);
+    const { tools } = await c.listTools();
+    const click = tools.find((t) => t.name === "apple_safari_click");
+    const properties = click?.inputSchema.properties as
+      | Record<string, { description?: string }>
+      | undefined;
+    const elementId = properties?.elementId;
+    expect(elementId?.description).toContain("IDs DIE on navigation or reload");
+    expect(elementId?.description).toContain("listing the page again keeps it");
+
     const r = await call(c, "apple_safari_page_elements", { url: "https://x.example/" });
-    expect(r.text).toContain("until it navigates");
+    expect(r.json()).not.toHaveProperty("idNote");
   });
 });
 
