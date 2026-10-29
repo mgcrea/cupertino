@@ -220,7 +220,54 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_33_0, v1_32_0, v1_31_0, v1_30_0, v1_29_1]
+  static let releases: [Release] = [v1_34_0, v1_33_0, v1_32_0, v1_31_0, v1_30_0]
+
+  // swift-format-ignore
+  private static let v1_34_0: Release = Release(
+    version: "1.34.0",
+    date: "2026-10-29",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Safari can close the tabs an agent opened.",
+            body: [
+              "`apple_safari_close_tabs` takes the `ref` that `apple_safari_open_url` now returns for a new tab, or `all: true` for every tab an agent opened, from this session or another, in the last seven days. It closes a tab only while it still shows the URL it was opened on and no other tab shows that URL too. Anything else is reported and left open. A tab that redirected or was navigated away is let go rather than followed. Safari is not launched to close tabs, and the tool is registered only with writes on.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Shell's window shows the whole script, not two and a half lines of it.",
+            body: [
+              "The script box was measured before its text was laid out, so it opened at its least height whatever the script's length, and the rest had to be scrolled to. It now grows with the script up to its cap, and so does the box for a script's input.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "A Safari element id lasts as long as its element, not as long as the last list.",
+            body: [
+              "Every `apple_safari_page_elements` call voided the ids of the one before, so listing a field, then listing again to find its Submit button, left the field's id dead, with an error blaming a navigation that never happened. The same element now keeps its id across lists; an id dies when its element leaves the page or the page navigates, and the error says which.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "Safari reads a page as it is laid out.",
+            body: [
+              "`apple_safari_read_page`, `apple_safari_wait_for` and stored captures read the text from a detached copy of the page, which has no layout: blocks ran together (\"HomeHomeSearch Performance…\") and CSS-hidden labels came along. They now read the page itself, and `wait_for` matches a phrase the layout split across lines.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "Safari element labels are one line, without icon glyphs.",
+            body: [
+              "A click's `label` names the element as it was clicked (\"Submit\"), with `labelAfter` when it changed (\"Submitting\"). The `idNote` and `staleNote` repeated in every result are gone; the tool descriptions say it once.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_33_0: Release = Release(
@@ -486,95 +533,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_29_1: Release = Release(
-    version: "1.29.1",
-    date: "2026-10-21",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A saved body is whole, or nothing is saved.",
-            body: [
-              "If the page dropped a large body from its buffer while `apple_safari_network_get` was still pulling it, the part already pulled was saved as the file and reported as a success: a PDF missing its tail, which still opens. The pull now checks it got every character and refuses otherwise.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A request body reads whole when the response was cut short.",
-            body: [
-              "With `part: \"request\"`, `jsonPath`, `decode` and `saveAs` refused whenever the response had gone past `maxBodyBytes`, and sent you to record again for nothing. Request bodies are never cut, so they are now judged on their own.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A page that polls with one request keeps every answer.",
-            body: [
-              "A page that reopens the same request from its `onreadystatechange` handler had every answered poll but the last recorded as \"Aborted\", with no status or body.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "A save never writes through a symlink.",
-            body: [
-              "Saving with `overwrite` (Mail, Notes and Messages attachments, Safari's `saveAs`) followed a symlink of the same name in the download folder, so the bytes could land outside it. It now refuses.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Safari can close the tabs an agent opened.",
-            body: [
-              "`apple_safari_close_tabs` takes the `ref` that `apple_safari_open_url` now returns for a new tab, or `all: true` for every tab an agent opened, from this session or another, in the last seven days. It closes a tab only while it still shows the URL it was opened on and no other tab shows that URL too. Anything else is reported and left open. A tab that redirected or was navigated away is let go rather than followed. Safari is not launched to close tabs, and the tool is registered only with writes on.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Shell's window shows the whole script, not two and a half lines of it.",
-            body: [
-              "The script box was measured before its text was laid out, so it opened at its least height whatever the script's length, and the rest had to be scrolled to. It now grows with the script up to its cap, and so does the box for a script's input.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A Safari element id lasts as long as its element, not as long as the last list.",
-            body: [
-              "Every `apple_safari_page_elements` call voided the ids of the one before, so listing a field, then listing again to find its Submit button, left the field's id dead, with an error blaming a navigation that never happened. The same element now keeps its id across lists; an id dies when its element leaves the page or the page navigates, and the error says which.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "Safari reads a page as it is laid out.",
-            body: [
-              "`apple_safari_read_page`, `apple_safari_wait_for` and stored captures read the text from a detached copy of the page, which has no layout: blocks ran together (\"HomeHomeSearch Performance…\") and CSS-hidden labels came along. They now read the page itself, and `wait_for` matches a phrase the layout split across lines.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "Safari element labels are one line, without icon glyphs.",
-            body: [
-              "A click's `label` names the element as it was clicked (\"Submit\"), with `labelAfter` when it changed (\"Submitting\"). The `idNote` and `staleNote` repeated in every result are gone; the tool descriptions say it once.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }

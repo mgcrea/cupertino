@@ -6,13 +6,16 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.33.0`,
-`notes-v1.33.0`, `reminders-v1.33.0`, `core-v1.33.0` for the npm packages, and `app-v1.33.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.34.0`,
+`notes-v1.34.0`, `reminders-v1.34.0`, `core-v1.34.0` for the npm packages, and `app-v1.34.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.34.0] - 2026-10-29
+
+**Safari closes the tabs an agent opened.** Safari element ids also last across lists, pages read
+with their line breaks, and Shell's approval window shows the whole script.
 
 ### Added
 
@@ -3175,7 +3178,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.33.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.34.0...HEAD
+[1.34.0]: https://github.com/mgcrea/cupertino/compare/app-v1.33.0...app-v1.34.0
 [1.33.0]: https://github.com/mgcrea/cupertino/compare/app-v1.32.0...app-v1.33.0
 [1.32.0]: https://github.com/mgcrea/cupertino/compare/app-v1.31.0...app-v1.32.0
 [1.31.0]: https://github.com/mgcrea/cupertino/compare/app-v1.30.0...app-v1.31.0
