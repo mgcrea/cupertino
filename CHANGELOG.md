@@ -41,6 +41,7 @@ summary.
 - **Safari element labels are one line, without icon glyphs**, and a click's `label` names the
   element as it was clicked ("Submit"), with `labelAfter` when it changed ("Submitting"). The
   `idNote` and `staleNote` repeated in every result are gone; the tool descriptions say it once.
+
 ## [1.33.0] - 2026-10-28
 
 **Shell runs a script you approve.** An agent can run one script under Cupertino's grants once you
