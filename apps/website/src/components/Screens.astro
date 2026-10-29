@@ -10,6 +10,8 @@
  * list, the settings window and the write gate — panes a reader wants after the
  * page has made its argument, not before.
  *
+ * `Tour.astro` leads the column: the same window, moving, for the same reason.
+ *
  * Everything else on this page that looks like macOS is drawn in HTML —
  * `Activity.astro`, `MenuBar.astro`, `Status.astro` — and each of those is
  * drawn on purpose: they show a surface a capture cannot photograph at all (a
@@ -38,6 +40,7 @@ import promptShot from "../assets/shots/prompt.png";
 import settingsShot from "../assets/shots/settings.png";
 import writesShot from "../assets/shots/writes.png";
 import SectionHeader from "./SectionHeader.astro";
+import Tour from "./Tour.astro";
 
 /**
  * The captions are deliberately NOT the ones in
@@ -140,6 +143,7 @@ const plate = (image: (typeof shots)[number]["image"]) => {
   </SectionHeader>
 
   <div class="flex flex-col gap-14">
+    <Tour />
     {
       shots.map(({ image, id, title, body, alt }) => (
         <figure id={`shot-${id}`} class="reveal m-0 scroll-mt-24">
