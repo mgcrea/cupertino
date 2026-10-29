@@ -38,7 +38,7 @@ summary.
   stored captures read the text from a detached copy of the page, which has no layout: blocks ran
   together ("HomeHomeSearch Performance…") and CSS-hidden labels came along. They now read the
   page itself, and `wait_for` matches a phrase the layout split across lines.
-- **Safari element labels are one line, without icon glyphs**, and a click's `label` names the
+- **Safari element labels are one line, without icon glyphs.** A click's `label` names the
   element as it was clicked ("Submit"), with `labelAfter` when it changed ("Submitting"). The
   `idNote` and `staleNote` repeated in every result are gone; the tool descriptions say it once.
 
