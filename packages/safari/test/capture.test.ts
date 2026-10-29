@@ -46,9 +46,8 @@ type Capture = { kind: string; url: string; title: string; text: string; html: s
 /**
  * Evaluate content.js against a stub page.
  *
- * The stub is only as rich as the script actually is: `readableText` clones the
- * body, strips a few tags and reads `innerText`, so a clone that answers
- * `querySelectorAll` with nothing and carries the text is enough.
+ * The stub is only as rich as the script actually is: `readableText` reads the
+ * body's `innerText`, so a body that carries the text is enough.
  */
 const boot = (initial: { title: string; text: string }) => {
   const page = { title: initial.title, text: initial.text, href: "https://x.com/i/article/1" };
@@ -82,8 +81,7 @@ const boot = (initial: { title: string; text: string }) => {
     now = until;
   };
 
-  const clone = {
-    querySelectorAll: () => [] as unknown[],
+  const body = {
     get innerText() {
       return page.text;
     },
@@ -107,7 +105,7 @@ const boot = (initial: { title: string; text: string }) => {
       get title() {
         return page.title;
       },
-      body: { cloneNode: () => clone },
+      body,
       documentElement: {
         get outerHTML() {
           return `<html><title>${page.title}</title><body>${page.text}</body></html>`;

@@ -41,9 +41,11 @@ const elementIdArg = z
   .describe(
     'An element id from apple_safari_page_elements, like "3f9a2c1d-e12", passed exactly as ' +
       "given. The part before the dash names the page load that handed it out, and only that " +
-      "tab will act on it — another tab on the same URL refuses it. IDs DIE on navigation or " +
-      "reload: never construct one, never reuse one across a page change, and re-enumerate " +
-      "after any click that loaded something.",
+      "tab will act on it — another tab on the same URL refuses it. An id lasts as long as its " +
+      "element: listing the page again keeps it, so a field found by one filtered list and a " +
+      "button found by the next can both be used. IDs DIE on navigation or reload, and when " +
+      "the page removes their element: never construct one, and re-enumerate after any click " +
+      "that loaded something.",
   );
 
 /** What `kind` can be on an enumerated element; `actions.js` decides it. */
@@ -182,9 +184,6 @@ export const registerElementTools = (server: McpServer, client: AppleSafariClien
                 "applied here, after the page's cap: a match past the cap is missing. " +
                 "reload the tab to filter in the page."
               : undefined,
-            idNote:
-              "These ids are valid for this page load only — the tab that answered, until it " +
-              "navigates, reloads or re-renders. Re-enumerate after anything that changes the page.",
           }),
         );
       }),
@@ -262,7 +261,9 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           "click MAY still have happened — do not retry it; look at the page instead with " +
           "apple_safari_read_page. After a click that navigates, previous element ids are dead. " +
           "Only the tab whose page_elements handed out the id can run it; `clicked` echoes that " +
-          "id, so the result names the page load that acted.",
+          "id, so the result names the page load that acted. `label` names the element as it " +
+          'was clicked; `labelAfter`, when present, is what it reads now ("Submitting…"), the ' +
+          "page's own sign that the click registered.",
       ),
       inputSchema: z.object({ url: urlArg, elementId: elementIdArg }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
@@ -275,9 +276,6 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           compact({
             ...(result.data as Record<string, unknown>),
             url,
-            staleNote:
-              "If this click navigated or re-rendered the page, every element id from before it " +
-              "is now dead. Enumerate again rather than reusing one.",
           }),
         );
       }),
@@ -295,7 +293,8 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           "why this is its own verb. IRREVERSIBLE and NOT idempotent, like a click: it can " +
           "send a message or place an order. If it times out it MAY still have happened — do " +
           "not retry; look at the page. An element outside any form is refused; click its " +
-          "button instead.",
+          "button instead. A submit usually loads a new page, which voids every element id " +
+          "from before it; apple_safari_wait_for can wait for the result to appear.",
       ),
       inputSchema: z.object({ url: urlArg, elementId: elementIdArg }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
@@ -308,9 +307,6 @@ export const registerActionTools = (server: McpServer, client: AppleSafariClient
           compact({
             ...(result.data as Record<string, unknown>),
             url,
-            staleNote:
-              "A submit usually loads a new page, and every element id from before it is then " +
-              "dead. apple_safari_wait_for can wait for the result to appear.",
           }),
         );
       }),
