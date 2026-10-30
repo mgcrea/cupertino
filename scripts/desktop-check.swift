@@ -105,7 +105,7 @@ struct DesktopCheck {
     "apple_desktop_raise_window", "apple_desktop_set_value",
     "apple_desktop_set_window_frame", "apple_desktop_type", "apple_desktop_run",
     "apple_desktop_release", "apple_desktop_press_menu", "apple_desktop_show_menu",
-    "apple_desktop_drag", "apple_desktop_select",
+    "apple_desktop_drag", "apple_desktop_select", "apple_desktop_launch",
   ]
 
   static func json(_ text: String) -> [String: Any]? {
@@ -425,6 +425,78 @@ struct DesktopCheck {
     check(
       "activating an application that is not running does not light the indicator",
       DriveActivity.current() != "com.example.absent")
+    let (notRunningText, _) = callText(
+      "apple_desktop_activate", ["bundleId": "com.example.absent"], writes: true, anyApp: true)
+    check(
+      "a verb refused for an application that is not running points at launch",
+      notRunningText.contains("apple_desktop_launch starts it"))
+
+    // ─── launch ─────────────────────────────────────────────────────────────
+    //
+    // Every call here is refused before LaunchServices is asked to open
+    // anything, or names Finder, which is already running and so is left alone.
+    // Nothing is started on the machine running the check.
+    let (launchReach, launchReachError) = callText(
+      "apple_desktop_launch", ["bundleId": "com.microsoft.VSCode"], writes: true)
+    check(
+      "launch outside the brokered set is refused by name and lights nothing",
+      launchReachError && launchReach.contains("Reach any application")
+        && DriveActivity.notice()?.target != "com.microsoft.VSCode")
+    let (launchSelf, launchSelfError) = callText(
+      "apple_desktop_launch", ["bundleId": "io.mgcrea.cupertino"], writes: true, anyApp: true)
+    check(
+      "launch refuses Cupertino itself, whatever the reach",
+      launchSelfError && launchSelf.contains("Cupertino itself"))
+    let (launchAbsent, launchAbsentError) = callText(
+      "apple_desktop_launch", ["bundleId": "com.example.absent"], writes: true, anyApp: true)
+    check(
+      "launch of an application that is not installed is refused and lights nothing",
+      launchAbsentError && launchAbsent.contains("is installed")
+        && DriveActivity.notice()?.target != "com.example.absent")
+    if NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").isEmpty {
+      skip("launch leaves a running application alone", "Finder is not running here")
+    } else {
+      let (launchRunning, launchRunningError) = callText(
+        "apple_desktop_launch", ["bundleId": "com.apple.finder"], writes: true, anyApp: true)
+      check(
+        "launch leaves a running application alone and lights nothing",
+        !launchRunningError && json(launchRunning)?["launched"] as? Bool == false
+          && DriveActivity.notice()?.target != "com.apple.finder")
+    }
+    let (launchRun, _) = callText(
+      "apple_desktop_run",
+      ["steps": [["tool": "launch", "bundleId": "com.apple.Notes"], ["tool": "nope"]]],
+      writes: true)
+    check(
+      "launch is a step a run can take",
+      DesktopServer.runSteps.contains("launch") && launchRun.contains("Step 2")
+        && launchRun.contains("Nothing was run"))
+
+    // The quarantine flag, read the way a Mac writes it. MEASURED 2026-10-30:
+    // approved applications keep the attribute, with 0x0040 set.
+    check(
+      "a quarantine flag nobody approved awaits a first open",
+      AccessibilityDriver.quarantineAwaitsApproval("0181;6ab63ebd;;67DA8903"))
+    check(
+      "an approved quarantine flag does not",
+      !AccessibilityDriver.quarantineAwaitsApproval("01c1;6ab63ebd;Safari;")
+        && !AccessibilityDriver.quarantineAwaitsApproval("03c1;6ab63ebd;;"))
+    check(
+      "an unreadable quarantine value counts as awaiting approval",
+      AccessibilityDriver.quarantineAwaitsApproval("")
+        && AccessibilityDriver.quarantineAwaitsApproval("zz;"))
+    let bundle = FileManager.default.temporaryDirectory
+      .appendingPathComponent("desktop-check-\(UUID().uuidString).app")
+    try? FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+    let unflagged = AccessibilityDriver.awaitsFirstOpen(bundle)
+    let flag = Array("0181;6ab63ebd;;".utf8)
+    let flagged =
+      setxattr(bundle.path, "com.apple.quarantine", flag, flag.count, 0, 0) == 0
+      && AccessibilityDriver.awaitsFirstOpen(bundle)
+    try? FileManager.default.removeItem(at: bundle)
+    check(
+      "a bundle is read for its quarantine flag, and one without it is not held back",
+      !unflagged && flagged)
 
     // The same rule for the session verbs, which name their target now. Each of
     // these is refused BEFORE an event is built — a stale handle, a target that

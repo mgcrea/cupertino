@@ -92,6 +92,24 @@ nonisolated enum DesktopServer {
       "type": "string",
       "description": bundleIdDescription,
     ]
+    // Not from list_apps, which lists only what is running: the point of the
+    // verb is an application that is not.
+    let launchBundleIdProperty: [String: Any] = [
+      "type": "string",
+      "description": {
+        switch scope {
+        case .any:
+          return "Bundle identifier of any installed application, e.g. com.apple.Safari."
+        case .brokered:
+          return
+            "Bundle identifier of one of the Apple applications Cupertino brokers, e.g. "
+            + "com.apple.Notes. This surface is scoped to those; \"Reach any application\" in "
+            + "Cupertino widens it."
+        case .only:
+          return bundleIdDescription
+        }
+      }() as String,
+    ]
     // `type` and `key` accept a handle for the application it names, not for the
     // element: a keystroke still goes wherever the focus is. Said here, because a
     // caller reading "handle" on a typing verb would reasonably expect the text
@@ -579,6 +597,24 @@ nonisolated enum DesktopServer {
         "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
       ],
       [
+        "name": "apple_desktop_launch",
+        "description":
+          "Start an application that is not running, BEHIND whatever is in front: the person "
+          + "keeps their keyboard, and ui_tree, press and the other element verbs reach it there. "
+          + "Waits until it answers, up to 10 s. An application already running is left alone "
+          + "and answers launched: false. Takes a bundle identifier and nothing else: no "
+          + "documents or URLs. To bring it forward afterwards, apple_desktop_activate.",
+        "inputSchema": [
+          "type": "object",
+          "properties": ["bundleId": launchBundleIdProperty],
+          "required": ["bundleId"],
+        ],
+        "annotations": [
+          "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true,
+          "openWorldHint": true,
+        ],
+      ],
+      [
         "name": "apple_desktop_raise_window",
         "description": "Bring a window to the front by its handle.",
         "inputSchema": [
@@ -816,8 +852,9 @@ nonisolated enum DesktopServer {
     let driving = [
       "apple_desktop_press", "apple_desktop_set_value", "apple_desktop_click",
       "apple_desktop_type", "apple_desktop_key", "apple_desktop_raise_window",
-      "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_hover",
-      "apple_desktop_set_window_frame", "apple_desktop_run", "apple_desktop_release",
+      "apple_desktop_focus", "apple_desktop_activate", "apple_desktop_launch",
+      "apple_desktop_hover", "apple_desktop_set_window_frame", "apple_desktop_run",
+      "apple_desktop_release",
       "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
       "apple_desktop_select", "apple_desktop_mail_composer_edit",
     ]
@@ -1239,6 +1276,24 @@ nonisolated enum DesktopServer {
         try AccessibilityDriver.activate(bundleId: bundleId, scope: scope)
         return ok(id, ["activated": bundleId])
 
+      case "apple_desktop_launch":
+        guard let bundleId = args["bundleId"] as? String else {
+          return failure(id, "The 'bundleId' argument is required.")
+        }
+        let launched = try AccessibilityDriver.launch(bundleId: bundleId, scope: scope)
+        guard launched.launched else {
+          return ok(id, ["bundleId": bundleId, "launched": false, "note": "Already running."])
+        }
+        var body: [String: Any] = [
+          "bundleId": bundleId, "launched": true, "ready": launched.ready,
+        ]
+        if let windows = launched.windows { body["windows"] = windows }
+        if launched.tookFront {
+          body["tookFront"] = true
+          body["handedBack"] = launched.handedBack
+        }
+        return ok(id, body)
+
       case "apple_desktop_release":
         return ok(id, DrivingSession.answer(DrivingSession.release(.agent)))
 
@@ -1305,9 +1360,24 @@ nonisolated enum DesktopServer {
       default:
         return failure(id, "unknown tool '\(name)'")
       }
+    } catch AccessibilityDriver.Failure.appNotRunning(let app)
+      where launchable(writesAllowed, scope)
+    {
+      // A model told only "not running" goes looking for a way to start it, and
+      // the shell's `open` is the way it finds.
+      return failure(id, "\(app) is not running. apple_desktop_launch starts it.")
     } catch {
       return failed(id, error)
     }
+  }
+
+  /// Whether `apple_desktop_launch` is there to point to: it is a driving verb,
+  /// and the channel lent to Mail's composer is not the place to suggest it.
+  private static func launchable(_ writesAllowed: Bool, _ scope: AccessibilityDriver.Scope)
+    -> Bool
+  {
+    if case .only = scope { return false }
+    return writesAllowed
   }
 
   // ─── run: several steps in one call ────────────────────────────────────────
@@ -1318,7 +1388,7 @@ nonisolated enum DesktopServer {
   /// not steps of a sequence.
   static let runSteps = [
     "press", "press_menu", "show_menu", "select", "set_value", "click", "hover", "drag", "type",
-    "key", "focus", "activate", "raise_window", "set_window_frame", "find_elements",
+    "key", "focus", "activate", "launch", "raise_window", "set_window_frame", "find_elements",
     "get_attribute", "list_windows", "menu", "user_activity", "wait", "wait_for",
   ]
   static let runStepCeiling = 25
@@ -1778,6 +1848,7 @@ nonisolated enum DesktopServer {
       `apple_desktop_press` with a handle from `ui_tree` or `find_elements` over clicking a point,
       and `apple_desktop_press_menu` over clicking the menu bar. Neither brings the application
       forward; only click, hover, drag, type and key do.
+      `apple_desktop_launch` starts an application that is not running, behind the one in front.
 
       Driving is a session the person at the keyboard can see. The first driving call while they
       are using the Mac may wait a few seconds while Cupertino warns or asks them. If it comes
@@ -1970,6 +2041,15 @@ nonisolated enum DesktopServer {
       focused field; written unfocused, the field shows the text while the application never
       receives it. If `focused` comes back false, focus the field and type instead.
 
+      ## Starting an application
+
+      `apple_desktop_launch` starts one that is not running, behind whatever is in front, and
+      waits until it answers. It posts no input, so it opens no session and asks nobody; the
+      notice says Cupertino opened it. An application that comes forward anyway is sent back
+      behind, and the answer says so with `tookFront`. Refused: an application never opened on
+      this Mac, which would stop at a Gatekeeper dialog. Opening a document or a URL in it is
+      not something this verb does.
+
       ## Handles go stale
 
       They point at elements in the window as it was. If a press returns a stale-handle
@@ -1979,11 +2059,11 @@ nonisolated enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, press_menu, show_menu, select, set_value, click, hover, drag, type, key, focus, activate, raise_window, set_window_frame, run and release are available."
+        ? "Writes are ON: press, press_menu, show_menu, select, set_value, click, hover, drag, type, key, focus, activate, launch, raise_window, set_window_frame, run and release are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any
-        ? "Reach is ANY running application."
+        ? "Reach is ANY application but Cupertino, including one launch starts."
         : "Reach is limited to \(scope.described). Another application is refused by name, not by silence — widen it in Cupertino if you meant to address one.")
       """
     return result(

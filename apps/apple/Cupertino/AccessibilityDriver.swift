@@ -2060,6 +2060,157 @@ nonisolated enum AccessibilityDriver {
     return frontmostSettled(on: bundleId, timeout: 1)
   }
 
+  // ─── launching ─────────────────────────────────────────────────────────────
+
+  /// What `launch` did.
+  struct Launched {
+    /// False when the application was already running, and nothing was done.
+    let launched: Bool
+    /// It finished launching and its application element answered within the
+    /// wait. Without the Accessibility grant, finished launching is all of it.
+    var ready = false
+    /// Nil without the grant, which is the only way to count them.
+    var windows: Int?
+    /// It came to the front although it was started with `activates = false`.
+    var tookFront = false
+    /// And the application in front before it was given the front back.
+    var handedBack = false
+  }
+
+  /// Start an application that is not running, behind whatever is in front.
+  ///
+  /// Scope first, before LaunchServices is even asked, so an application out of
+  /// reach is refused without anything learning whether it is installed. A
+  /// running application is left alone and answers `launched: false`, which
+  /// keeps the verb as safe to repeat as `activate`.
+  ///
+  /// **No admission.** Nothing is typed or clicked, so there is nobody to warn
+  /// about input: the notice is the `.launching` one a Notes write lights when
+  /// it starts Notes, and for the same reason. Bringing the application forward
+  /// afterwards is `activate`, which admits as it always has.
+  ///
+  /// **A bundle id and nothing else.** No arguments, documents or URLs: opening
+  /// a URL or a document is a different power, and an application given one
+  /// does whatever its handler does with it.
+  ///
+  /// Blocks for up to `timeout`, so it runs on a connection's own thread like
+  /// every other verb here.
+  static func launch(bundleId: String, scope: Scope, timeout: TimeInterval = 10) throws
+    -> Launched
+  {
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    if (try? app(forBundleId: bundleId)) != nil { return Launched(launched: false) }
+    guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+      throw Failure.refused("No application with bundle identifier '\(bundleId)' is installed.")
+    }
+    // Starting it would stop at Gatekeeper's "downloaded from the Internet"
+    // dialog, in front of the person, about an application they never opened.
+    // `promptsUserIfNeeded = false` below is the system's own guard against the
+    // same thing; this one refuses with a reason instead of an opaque error.
+    if awaitsFirstOpen(url) {
+      throw Failure.refused(
+        "\(url.deletingPathExtension().lastPathComponent) has never been opened on this Mac, so "
+          + "starting it would put a Gatekeeper dialog in front of the person. Ask them to open "
+          + "it once themselves.")
+    }
+
+    // The window server's answer, else LaunchServices'. MEASURED 2026-10-30: the
+    // first read in a fresh process came back nil with VS Code in front, and
+    // without a "before" there is nothing to hand back to. The app's main run
+    // loop keeps `frontmostApplication` current enough for a fallback.
+    let before = frontmostBundleId() ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    let config = NSWorkspace.OpenConfiguration()
+    config.activates = false
+    config.addsToRecentItems = false
+    config.promptsUserIfNeeded = false
+    let done = DispatchSemaphore(value: 0)
+    let box = ResultBox<Void>()
+    NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
+      box.result = error.map { .failure($0) } ?? .success(())
+      done.signal()
+    }
+    let deadline = Date().addingTimeInterval(timeout)
+    if done.wait(timeout: .now() + timeout) == .timedOut {
+      throw Failure.busy("Starting \(bundleId)")
+    }
+    if case .failure(let error) = box.result {
+      throw Failure.refused("\(bundleId) did not start: \(error.localizedDescription)")
+    }
+    // Once it is known to have started, so a refusal lights nothing. The
+    // completion fires when the application registers, which is before its
+    // first window, so the notice is still up first.
+    DriveActivity.inform(bundleId, .launching)
+
+    // Registered as running and ready to be read are different moments, and the
+    // completion above reports only the first. Polled rather than slept, for the
+    // reason `Permissions.launchAndRequestAutomation` gives: a cold launch off a
+    // slow disk is much slower than a warm one.
+    var result = Launched(launched: true)
+    var readyAt: Date?
+    while Date() < deadline {
+      if let running = try? app(forBundleId: bundleId), running.isFinishedLaunching {
+        if !isTrusted() {
+          result.ready = true
+          break
+        }
+        if let count = windowCount(pid: pid(of: running)) {
+          result.ready = true
+          result.windows = count
+          readyAt = readyAt ?? Date()
+          // Most applications answer with no window a moment before their first
+          // one appears. Waited for briefly, since some never open one at all.
+          if count > 0 || Date().timeIntervalSince(readyAt!) > launchWindowGrace { break }
+        }
+      }
+      usleep(50_000)
+    }
+
+    // Some applications take the front whatever they were asked. The person did
+    // not choose that, so it goes back to whatever they had, the way a driving
+    // session hands back when it ends.
+    if let before, before != bundleId, frontmostBundleId() == bundleId {
+      result.tookFront = true
+      result.handedBack = handBack(to: before)
+    }
+    return result
+  }
+
+  /// How long a launched application that answers with no window is given to
+  /// open one before `launch` reports it as it is.
+  static let launchWindowGrace: TimeInterval = 2
+
+  private static func windowCount(pid: pid_t) -> Int? {
+    var raw: AnyObject?
+    guard
+      AXUIElementCopyAttributeValue(element(for: pid), kAXWindowsAttribute as CFString, &raw)
+        == .success
+    else { return nil }
+    return (raw as? [AXUIElement])?.count ?? 0
+  }
+
+  /// Whether starting the bundle at `url` would stop at Gatekeeper's first-open
+  /// dialog: it carries a quarantine flag nobody has approved.
+  static func awaitsFirstOpen(_ url: URL) -> Bool {
+    let name = "com.apple.quarantine"
+    let size = getxattr(url.path, name, nil, 0, 0, 0)
+    guard size > 0 else { return false }
+    var buffer = [UInt8](repeating: 0, count: size)
+    guard getxattr(url.path, name, &buffer, size, 0, 0) == size else { return true }
+    return quarantineAwaitsApproval(String(decoding: buffer, as: UTF8.self))
+  }
+
+  /// The flags are the first field, in hex; 0x0040 is set once the person has
+  /// approved the first open. Its presence alone says nothing: MEASURED
+  /// 2026-10-30 on this Mac, 19 applications in /Applications carried the
+  /// attribute, 18 of them with 0x0040 (`01c1`, `01c3`, `03c1`) and only the
+  /// one never opened without it (`0181`). An unreadable value counts as
+  /// awaiting approval, since the cost of a wrong yes is a dialog in front of
+  /// somebody.
+  static func quarantineAwaitsApproval(_ value: String) -> Bool {
+    guard let flags = UInt32(value.prefix(while: { $0 != ";" }), radix: 16) else { return true }
+    return flags & 0x0040 == 0
+  }
+
   /// Type by KEY CODE, one character at a time, resolved against the layout
   /// the Mac is actually using.
   ///

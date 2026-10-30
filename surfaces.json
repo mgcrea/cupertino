@@ -710,7 +710,7 @@
           "id": "allowAnyApp",
           "envSuffix": "ALLOW_ANY_APP",
           "label": "Reach any application",
-          "description": "Lets this surface read and drive ANY running application rather than only the Apple apps Cupertino brokers. Off by default: Accessibility does not scope to a target, so this is the difference between a surface that stays inside its own remit and one that reaches the whole Mac."
+          "description": "Lets this surface read, drive and start ANY application rather than only the Apple apps Cupertino brokers. Off by default: Accessibility does not scope to a target, so this is the difference between a surface that stays inside its own remit and one that reaches the whole Mac."
         }
       ]
     },
