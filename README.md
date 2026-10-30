@@ -44,7 +44,7 @@ off cannot see that they exist.
 | Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                                     |
 | Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on        |
 | Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on       |
-| Desktop   | —                                          | implemented — 25 tools, AXUIElement natively; in-app, no npm package; off until switched on          |
+| Desktop   | —                                          | implemented — 26 tools, AXUIElement natively; in-app, no npm package; off until switched on          |
 | Simulator | —                                          | implemented — 12 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on       |
 | Shell     | —                                          | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on               |
 | —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                          |
