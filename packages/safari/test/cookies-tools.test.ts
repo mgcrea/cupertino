@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -398,7 +399,11 @@ describe("cookies saveAs", () => {
     expect(statSync(file).mode & 0o777).toBe(0o600);
 
     const json = r.json() as { saved: { path: string; bytes: number; names: string[] } };
-    expect(json.saved).toEqual({ path: file, bytes: line.length, names: ["A3", "T", "Y"] });
+    expect(json.saved).toEqual({
+      path: realpathSync(file),
+      bytes: line.length,
+      names: ["A3", "T", "Y"],
+    });
     // Values are asked for by name, and only those names.
     expect(ext.seen[0]).toMatchObject({ action: "cookies", valuesFor: ["A3", "T", "Y"] });
   });

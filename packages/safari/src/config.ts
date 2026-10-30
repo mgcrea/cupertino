@@ -144,6 +144,33 @@ const ConfigSchema = BaseConfigSchema.extend({
    */
   allowNetwork: z.boolean().default(false),
   /**
+   * Whether `apple_safari_cookies` exists at all.
+   *
+   * Its own gate, for the reason `allowNetwork` is: it is a read, so it is not
+   * `allowWrites`, and what it reads is a signed-in session rather than one
+   * short-lived string, so it is not `allowCodes` either. A login cookie is the
+   * session itself — whoever holds it is signed in — which is why it is also
+   * the one gate here that is not enough on its own; see `cookieHosts`.
+   *
+   * Off means NOT REGISTERED, like the other read gates. The values never come
+   * back inline even when it is on: `saveAs` writes them to a file, and that
+   * additionally needs `allowWrites`.
+   */
+  allowCookies: z.boolean().default(false),
+  /**
+   * The sites whose cookies `apple_safari_cookies` may read, as registrable
+   * domains ("yahoo.com"), matched on a label boundary so the entry covers the
+   * domain and its subdomains and never `notyahoo.com`.
+   *
+   * The second gate, and the one that does the work. `allowCookies` alone
+   * would let any agent take any session in the browser — the bank's as
+   * readily as the one the user meant — so the flag registers the tool and
+   * this list decides which pages it may read. Empty, which is the default,
+   * means none. Entries are kept as given; `cookieHostRules` normalises them
+   * and sets aside one with no dot, since "com" would open a whole TLD.
+   */
+  cookieHosts: z.array(z.string()).default([]),
+  /**
    * Where `saveAs` may write. Only ever reached through core's
    * `writeConfinedFile`, which keeps a name to its basename, resolves symlinks
    * and refuses to overwrite; this setting is the root of that confinement.
@@ -175,6 +202,10 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config =>
     allowWrites: parseBool(env.APPLE_SAFARI_ALLOW_WRITES),
     allowCodes: parseBool(env.APPLE_SAFARI_ALLOW_CODES),
     allowNetwork: parseBool(env.APPLE_SAFARI_ALLOW_NETWORK),
+    allowCookies: parseBool(env.APPLE_SAFARI_ALLOW_COOKIES),
+    cookieHosts: env.APPLE_SAFARI_COOKIE_HOSTS?.split(",")
+      .map((entry) => entry.trim())
+      .filter(Boolean),
     downloadDir: trimmed(env.APPLE_SAFARI_DOWNLOAD_DIR),
     networkChunkChars: parseIntOpt(env.APPLE_SAFARI_NETWORK_CHUNK_CHARS),
     exposePrompts: parseBool(env.APPLE_SAFARI_EXPOSE_PROMPTS),
