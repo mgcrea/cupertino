@@ -277,25 +277,27 @@ describe("cookies command", () => {
  * value only by the first 8 hex of its SHA-256, computed in the worker. Values
  * are obvious fakes, and every assertion searches the whole filed result.
  */
+const sha8 = (v: string) => createHash("sha256").update(v).digest("hex").slice(0, 8);
+const probeCookie = (value: string, storeId: string, extra: Record<string, unknown> = {}) => ({
+  name: "T",
+  value,
+  domain: ".example.test",
+  path: "/",
+  secure: true,
+  httpOnly: true,
+  sameSite: "lax",
+  hostOnly: false,
+  session: false,
+  expirationDate: 1_798_761_600,
+  storeId,
+  ...extra,
+});
+
 describe("cookieProbe command", () => {
   const PAGE = "https://finance.example.test/portfolios/";
   const OLD = "fake-t-old-value-0000";
   const NEW = "fake-t-new-value-1111";
-  const sha8 = (v: string) => createHash("sha256").update(v).digest("hex").slice(0, 8);
-  const cookie = (value: string, storeId: string, extra: Record<string, unknown> = {}) => ({
-    name: "T",
-    value,
-    domain: ".example.test",
-    path: "/",
-    secure: true,
-    httpOnly: true,
-    sameSite: "lax",
-    hostOnly: false,
-    session: false,
-    expirationDate: 1_798_761_600,
-    storeId,
-    ...extra,
-  });
+  const cookie = probeCookie;
   const probe = {
     id: "c0ffee00-0000-4000-8000-000000000002",
     action: "cookieProbe",
@@ -306,8 +308,8 @@ describe("cookieProbe command", () => {
 
   /** Two profiles: store "0" (the API's default) holds an old session, "1" the tab's. */
   const twoStores = () => {
-    const getAll = vi.fn(async (query: { storeId?: string }) =>
-      query.storeId === "1" ? [cookie(NEW, "1")] : [cookie(OLD, "0")],
+    const getAll = vi.fn(async (...args: unknown[]) =>
+      (args[0] as { storeId?: string }).storeId === "1" ? [cookie(NEW, "1")] : [cookie(OLD, "0")],
     );
     const getAllCookieStores = vi.fn(async () => [
       { id: "0", tabIds: [3] },

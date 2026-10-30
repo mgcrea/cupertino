@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
 import { describeReach, urlArg } from "./actions.js";
-import { compact, ok, wrapResult } from "./util.js";
+import { compact, fail, ok, wrapResult } from "./util.js";
 
 /**
  * The cookies tool, registered only when `allowCookies` is on.
@@ -81,11 +81,35 @@ export const registerCookieTools = (
           .boolean()
           .optional()
           .describe("Replace an existing file of that name. Defaults to false."),
+        probe: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Diagnose instead of reading: one cookie name, whose every copy in every cookie store " +
+              "the extension can see is described (domain, path, expiry, store, and the first " +
+              "8 hex of its value's SHA-256, never the value), with which store holds the tab. " +
+              "Use it when a saved session is rejected. Not with names or saveAs.",
+          ),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    async (args) =>
+    async ({ probe, ...args }) =>
       wrapResult(async () => {
+        if (probe !== undefined) {
+          if (args.names !== undefined || args.saveAs !== undefined) {
+            return fail("probe is a diagnostic on its own: pass it without names or saveAs.");
+          }
+          return ok(
+            compact({
+              ...(await client.probeCookies({ url: args.url, name: probe })),
+              probeNote:
+                "No values: each copy is named by its value's SHA-256 prefix. The same prefix " +
+                "in two stores is the same session; a prefix that does not change across a " +
+                "sign-in is a copy the sign-in did not touch.",
+            }),
+          );
+        }
         const result = await client.cookies(args);
         return ok(
           compact({

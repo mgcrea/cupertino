@@ -8,7 +8,13 @@ import {
 import { BUILD_INFO } from "../build-info.js";
 import type { Config } from "../config.js";
 import { pageOfElement, runCommand, type Command, type CommandResult } from "./actions.js";
-import { readCookies, type CookiesInput, type CookiesResult } from "./cookies.js";
+import {
+  probeCookies,
+  readCookies,
+  type CookiesInput,
+  type CookiesResult,
+  type ProbeResult,
+} from "./cookies.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import {
   BookmarksUnavailableError,
@@ -1061,6 +1067,11 @@ export class AppleSafariClient {
       },
       input,
     );
+  }
+
+  /** Which cookie store answers, for one name, with value prefixes only; see `probeCookies`. */
+  probeCookies(input: { url: string; name: string }): Promise<ProbeResult> {
+    return probeCookies(this.#runNet, { cookieHosts: this.#config.cookieHosts }, input);
   }
 
   /** One record's headers and body, pulled in chunks; see `networkGet`. */

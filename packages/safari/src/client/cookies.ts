@@ -142,27 +142,25 @@ const explain = (result: CommandResult): PreconditionError =>
       : (result.error ?? "The extension could not read this page's cookies."),
   );
 
-export async function readCookies(
-  run: NetRun,
-  settings: { allowWrites: boolean; downloadDir: string; cookieHosts: string[] },
-  input: CookiesInput,
-): Promise<CookiesResult> {
+/**
+ * The page's host, once it has passed the second gate. Checked before anything
+ * is written to the channel: a refused host must cost the browser nothing and
+ * tell it nothing. Shared by the read and the probe so neither can skip it.
+ */
+const allowedHost = (url: string, cookieHosts: string[]): string => {
   let parsed: URL;
   try {
-    parsed = new URL(input.url);
+    parsed = new URL(url);
   } catch {
     throw new PreconditionError(
-      `"${input.url}" is not a URL. Pass the page's URL as apple_safari_list_tabs reports it.`,
+      `"${url}" is not a URL. Pass the page's URL as apple_safari_list_tabs reports it.`,
     );
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new PreconditionError(`Only an http or https page has cookies to read here.`);
   }
   const host = parsed.hostname.toLowerCase();
-
-  // The second gate, checked before anything is written to the channel: a
-  // refused host must cost the browser nothing and tell it nothing.
-  const { hosts } = cookieHostRules(settings.cookieHosts);
+  const { hosts } = cookieHostRules(cookieHosts);
   if (!hostAllowed(host, hosts)) {
     throw new PreconditionError(
       `Reading cookies on ${host} is not allowed: it is not covered by APPLE_SAFARI_COOKIE_HOSTS ` +
@@ -174,6 +172,62 @@ export async function readCookies(
         `covers the domain and its subdomains.`,
     );
   }
+  return host;
+};
+
+/** A copy of an answer with every `value` key removed, at any depth. */
+const withoutValues = (data: unknown): unknown =>
+  Array.isArray(data)
+    ? data.map(withoutValues)
+    : data !== null && typeof data === "object"
+      ? Object.fromEntries(
+          Object.entries(data)
+            .filter(([key]) => key !== "value")
+            .map(([key, v]) => [key, withoutValues(v)]),
+        )
+      : data;
+
+export type ProbeResult = {
+  url: string;
+  host: string;
+  name: string;
+  tab: unknown;
+  stores: unknown;
+  reads: unknown;
+};
+
+/**
+ * Which cookie store answers, for one name: every copy of it in every store the
+ * extension's API knows, which store holds the polling tab, and an 8-hex
+ * SHA-256 prefix per value instead of the value. A diagnostic, behind the same
+ * two gates as the read; the worker hashes, and anything named `value` that
+ * comes back anyway is removed here.
+ */
+export async function probeCookies(
+  run: NetRun,
+  settings: { cookieHosts: string[] },
+  input: { url: string; name: string },
+): Promise<ProbeResult> {
+  const host = allowedHost(input.url, settings.cookieHosts);
+  const result = await run({ action: "cookieProbe", url: input.url, name: input.name });
+  if (!result.ok) throw explain(result);
+  const data = withoutValues(result.data ?? {}) as Record<string, unknown>;
+  return {
+    url: input.url,
+    host,
+    name: input.name,
+    tab: data.tab ?? null,
+    stores: data.stores ?? null,
+    reads: data.reads ?? [],
+  };
+}
+
+export async function readCookies(
+  run: NetRun,
+  settings: { allowWrites: boolean; downloadDir: string; cookieHosts: string[] },
+  input: CookiesInput,
+): Promise<CookiesResult> {
+  const host = allowedHost(input.url, settings.cookieHosts);
 
   const names = input.names?.length ? [...new Set(input.names)] : undefined;
   if (input.saveAs !== undefined) {
