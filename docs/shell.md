@@ -515,6 +515,10 @@ keeps Cupertino as its responsible process, and so keeps Cupertino's grants. A `
 job and an app started with `open` are spawned by launchd and are normally their own responsible
 process, so they are expected not to hold Cupertino's grants; that has not been measured.
 
+To start an application, the Desktop surface's `apple_desktop_launch` is the supported route: it is
+scoped, opens nothing but the application, and leaves no decision to the person ([desktop.md](desktop.md),
+"Starting an application").
+
 ## What is recorded
 
 ### The run record, always on
