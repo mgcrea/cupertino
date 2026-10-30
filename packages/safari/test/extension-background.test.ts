@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
@@ -31,21 +32,24 @@ function load(
   native: (...args: unknown[]) => Promise<unknown> = async () => "native-reply",
   // `null` is a browser with no `cookies` namespace at all, which is what an
   // extension without the permission sees.
-  cookies: { getAll: (...args: unknown[]) => Promise<unknown> } | null = {
+  cookies: {
+    getAll: (...args: unknown[]) => Promise<unknown>;
+    getAllCookieStores?: () => Promise<unknown>;
+  } | null = {
     getAll: async () => [],
   },
 ) {
   const sendNativeMessage = vi.fn(native);
   const registerContentScripts = vi.fn(async () => {});
   const lifecycle: string[] = [];
-  const messageListeners: ((message: unknown) => Promise<unknown>)[] = [];
+  const messageListeners: ((message: unknown, sender?: unknown) => Promise<unknown>)[] = [];
   const errors: unknown[][] = [];
   const hook = (name: string) => ({ addListener: () => void lifecycle.push(name) });
   const context = createContext({
     browser: {
       runtime: {
         onMessage: {
-          addListener: (fn: (message: unknown) => Promise<unknown>) =>
+          addListener: (fn: (message: unknown, sender?: unknown) => Promise<unknown>) =>
             void messageListeners.push(fn),
         },
         onInstalled: hook("installed"),
@@ -57,9 +61,12 @@ function load(
       ...(cookies ? { cookies } : {}),
     },
     console: { error: (...args: unknown[]) => errors.push(args) },
+    // A service worker has Web Crypto and TextEncoder; the probe hashes with them.
+    crypto: globalThis.crypto,
+    TextEncoder,
   });
   runInContext(SOURCE, context);
-  const send = (message: unknown) => messageListeners[0]!(message);
+  const send = (message: unknown, sender?: unknown) => messageListeners[0]!(message, sender);
   return { sendNativeMessage, registerContentScripts, lifecycle, messageListeners, errors, send };
 }
 
@@ -257,5 +264,152 @@ describe("cookies command", () => {
     expect(reply.commands).toEqual([click]);
     expect(getAll).not.toHaveBeenCalled();
     expect(results).toEqual([]);
+  });
+});
+
+/**
+ * `cookieProbe`: which cookie store answers, measured without a value.
+ *
+ * Safari keeps one cookie store per profile, and `getAll({url})` with no
+ * `storeId` reads whichever the API defaults to — not necessarily the one the
+ * polling tab's profile uses. The probe reads one cookie name from EVERY store
+ * the API knows, says which store holds the polling tab, and identifies each
+ * value only by the first 8 hex of its SHA-256, computed in the worker. Values
+ * are obvious fakes, and every assertion searches the whole filed result.
+ */
+describe("cookieProbe command", () => {
+  const PAGE = "https://finance.example.test/portfolios/";
+  const OLD = "fake-t-old-value-0000";
+  const NEW = "fake-t-new-value-1111";
+  const sha8 = (v: string) => createHash("sha256").update(v).digest("hex").slice(0, 8);
+  const cookie = (value: string, storeId: string, extra: Record<string, unknown> = {}) => ({
+    name: "T",
+    value,
+    domain: ".example.test",
+    path: "/",
+    secure: true,
+    httpOnly: true,
+    sameSite: "lax",
+    hostOnly: false,
+    session: false,
+    expirationDate: 1_798_761_600,
+    storeId,
+    ...extra,
+  });
+  const probe = {
+    id: "c0ffee00-0000-4000-8000-000000000002",
+    action: "cookieProbe",
+    url: PAGE,
+    name: "T",
+    expiresAt: 9_999_999_999,
+  };
+
+  /** Two profiles: store "0" (the API's default) holds an old session, "1" the tab's. */
+  const twoStores = () => {
+    const getAll = vi.fn(async (query: { storeId?: string }) =>
+      query.storeId === "1" ? [cookie(NEW, "1")] : [cookie(OLD, "0")],
+    );
+    const getAllCookieStores = vi.fn(async () => [
+      { id: "0", tabIds: [3] },
+      { id: "1", tabIds: [7, 9] },
+    ]);
+    const results: Record<string, unknown>[] = [];
+    const loaded = load(
+      async (_app, message) => {
+        const m = message as Record<string, unknown>;
+        if (m.kind === "poll") return { commands: [probe] };
+        if (m.kind === "result") results.push(m);
+        return { stored: true };
+      },
+      { getAll, getAllCookieStores },
+    );
+    return { ...loaded, results, getAll, getAllCookieStores };
+  };
+
+  it("reads the name from every store and says which one holds the polling tab", async () => {
+    const { send, results, getAll } = twoStores();
+    await send({ kind: "poll", url: PAGE }, { tab: { id: 9, incognito: false } });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, name: "T" });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, name: "T", storeId: "0" });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, name: "T", storeId: "1" });
+
+    expect(results[0]).toMatchObject({ kind: "result", id: probe.id, ok: true });
+    const data = results[0]!.data as {
+      tab: Record<string, unknown>;
+      stores: { id: string; tabCount: number; holdsThisTab: boolean }[];
+      reads: { storeId: string | null; matches: Record<string, unknown>[] }[];
+    };
+    expect(data.tab).toMatchObject({ id: 9, incognito: false });
+    expect(data.stores).toEqual([
+      { id: "0", tabCount: 1, holdsThisTab: false },
+      { id: "1", tabCount: 2, holdsThisTab: true },
+    ]);
+    // The default read (what the tool did) and one per store.
+    expect(data.reads.map((r) => r.storeId)).toEqual([null, "0", "1"]);
+    expect(data.reads[0]!.matches[0]).toMatchObject({ storeId: "0", valueSha8: sha8(OLD) });
+    expect(data.reads[2]!.matches[0]).toMatchObject({
+      storeId: "1",
+      domain: ".example.test",
+      path: "/",
+      expirationDate: 1_798_761_600,
+      valueSha8: sha8(NEW),
+    });
+  });
+
+  it("files no value, only 8-hex prefixes", async () => {
+    const { send, results } = twoStores();
+    await send({ kind: "poll", url: PAGE }, { tab: { id: 9 } });
+    const filed = JSON.stringify(results);
+    expect(filed).not.toContain(OLD);
+    expect(filed).not.toContain(NEW);
+    expect(filed).not.toContain('"value"');
+    for (const read of (results[0]!.data as { reads: { matches: { valueSha8: string }[] }[] })
+      .reads) {
+      for (const m of read.matches) expect(m.valueSha8).toMatch(/^[0-9a-f]{8}$/);
+    }
+  });
+
+  it("returns every duplicate of the name, with partition fields when the API gives them", async () => {
+    const getAll = vi.fn(async () => [
+      cookie(OLD, "0"),
+      cookie(NEW, "0", {
+        domain: "finance.example.test",
+        path: "/portfolios",
+        partitionKey: { topLevelSite: "https://example.test" },
+      }),
+    ]);
+    const results: Record<string, unknown>[] = [];
+    const { send } = load(
+      async (_app, message) => {
+        const m = message as Record<string, unknown>;
+        if (m.kind === "poll") return { commands: [probe] };
+        if (m.kind === "result") results.push(m);
+        return { stored: true };
+      },
+      { getAll },
+    );
+    await send({ kind: "poll", url: PAGE }, { tab: { id: 9 } });
+    const data = results[0]!.data as {
+      stores: unknown;
+      reads: { matches: Record<string, unknown>[] }[];
+    };
+    // No getAllCookieStores in this browser: said, not guessed.
+    expect(data.stores).toBeNull();
+    expect(data.reads).toHaveLength(1);
+    expect(data.reads[0]!.matches).toHaveLength(2);
+    expect(data.reads[0]!.matches[1]).toMatchObject({
+      domain: "finance.example.test",
+      path: "/portfolios",
+      partitionKey: { topLevelSite: "https://example.test" },
+    });
+    expect(JSON.stringify(results)).not.toContain("fake-");
+  });
+
+  it("does not let the page see the probe", async () => {
+    const { send } = twoStores();
+    const reply = (await send({ kind: "poll", url: PAGE }, { tab: { id: 9 } })) as {
+      commands: unknown[];
+    };
+    expect(reply.commands).toEqual([]);
   });
 });
