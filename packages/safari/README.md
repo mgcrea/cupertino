@@ -171,9 +171,9 @@ enter the page's own process.
   in Safari › Settings › Extensions, and until then the tool says `browser.cookies` is not
   available. It still reads only on sites you have allowed the extension on: there is no new
   all-sites grant.
-- **The Cupertino app cannot pass `APPLE_SAFARI_COOKIE_HOSTS` yet**, since it hands its servers
-  on/off settings only. Start the server yourself with both variables set, from a process with Full
-  Disk Access so it can reach the extension's container.
+- **In the Cupertino app** both are one control: Safari › **Read cookies**, with the sites in the
+  **Sites** field under it, passed only while the box is ticked. Started yourself, the server needs
+  both variables set and Full Disk Access, so it can reach the extension's container.
 
 Buffer limits: 1,000 records and 50 MiB of bodies per page; bodies are kept up to `maxBodyBytes`
 (10 MiB by default, 50 MiB at most). See [docs/safari.md](../../docs/safari.md#network-capture).

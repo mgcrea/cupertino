@@ -1395,14 +1395,21 @@ the tab (the extension is active in three profiles here, and the call passes no 
 session cookie's `expires: null` against a real one (all 17 here had an expiry), and a Private
 Browsing tab.
 
-### Not yet in the app
+### In the app
 
-The app hands its servers on/off gates only (`ServerLocator.environment`), so it can set
-`APPLE_SAFARI_ALLOW_COOKIES` once a gate is added to `surfaces.json`, but it has no way to pass
-`APPLE_SAFARI_COOKIE_HOSTS`. Until it grows a host-list setting, the tool is reachable from a server
-an MCP client starts itself (npm, or `node packages/safari/dist/cli.js`) with both variables set,
-in a process that can read the extension's container: Full Disk Access, since a plain shell gets
-`EPERM` there.
+The live run above had to start the server from a terminal, because the app handed its servers
+on/off gates only and had no way to pass a host list. It now has one: Safari's surface carries a
+**Read cookies** gate (`allowCookies` in `surfaces.json`) with a **Sites** field under it. A gate
+may declare a `value` (an env suffix, a label and a placeholder), stored beside its switch as
+`gate.<surface>.<id>.value`, and `ServerLocator.gateValues` passes it as `APPLE_SAFARI_COOKIE_HOSTS`
+**only while the switch is on**, trimmed, and not at all when empty. So switching the gate off is
+the whole of switching the tool off, whatever is still typed. The field is disabled, not hidden,
+while the switch is off, and like every gate it reaches servers started after the change.
+`make unit` pins those rules.
+
+Outside the app, a server an MCP client starts itself (npm, or `node packages/safari/dist/cli.js`)
+takes both variables directly, but only from a process that can read the extension's container:
+Full Disk Access, since a plain shell gets `EPERM` there.
 
 ## Still open
 

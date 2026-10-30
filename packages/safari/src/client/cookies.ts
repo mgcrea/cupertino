@@ -169,7 +169,8 @@ export async function readCookies(
         (hosts.length === 0
           ? "(empty, so no site's cookies are readable). "
           : `(${hosts.join(", ")}). `) +
-        `The user can add the site's registrable domain to that setting, comma-separated; it ` +
+        `The user can add the site's registrable domain there (in the Cupertino app, the Sites ` +
+        `field under Safari's "Read cookies"), comma-separated; it ` +
         `covers the domain and its subdomains.`,
     );
   }
