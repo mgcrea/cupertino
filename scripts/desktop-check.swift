@@ -118,6 +118,7 @@ struct DesktopCheck {
     "apple_desktop_diagnostics", "apple_desktop_expand", "apple_desktop_find_elements",
     "apple_desktop_get_attribute", "apple_desktop_list_apps", "apple_desktop_list_windows",
     "apple_desktop_menu", "apple_desktop_ui_tree", "apple_desktop_user_activity",
+    "apple_desktop_wait_for",
   ]
 
   static func main() {
@@ -553,6 +554,118 @@ struct DesktopCheck {
         && ((complete?["results"] as? [[String: Any]])?.last?["result"] as? [String: Any])?[
           "secondsSinceInput"] != nil
     )
+
+    // ─── match in a step, and wait_for ──────────────────────────────────────
+    //
+    // Refusals before anything runs, and one run whose match looks in an
+    // application nothing is running as: it stops at the step without reaching
+    // a driving path, whether or not this process holds a grant.
+    let (unmatchable, unmatchableFailed) = runText([
+      ["tool": "press_menu", "match": ["id": "x"], "bundleId": "com.example.absent"]
+    ])
+    check(
+      "match is refused on a step that takes no handle, before running any",
+      unmatchableFailed && unmatchable.contains("cannot take 'match'")
+        && unmatchable.contains("Nothing was run"))
+    let (emptyMatch, emptyMatchFailed) = runText([
+      ["tool": "press", "match": [String: Any](), "bundleId": "com.example.absent"]
+    ])
+    check(
+      "an empty match is refused",
+      emptyMatchFailed && emptyMatch.contains("at least one of id, role, name or value"))
+    let (noApp, noAppFailed) = runText([["tool": "press", "match": ["name": "Send"]]])
+    check(
+      "a match names the application it looks in",
+      noAppFailed && noApp.contains("needs 'bundleId'") && noApp.contains("Nothing was run"))
+    let (longMatch, longMatchFailed) = runText([
+      [
+        "tool": "press", "match": ["name": "Send"], "bundleId": "com.example.absent",
+        "waitMs": DesktopServer.matchWaitCeilingMs + 1,
+      ]
+    ])
+    check(
+      "a match's waitMs is bounded",
+      longMatchFailed && longMatch.contains("'waitMs'") && longMatch.contains("Nothing was run"))
+    let (lookedText, lookedFailed) = runText([
+      ["tool": "wait", "ms": 0],
+      ["tool": "press", "match": ["name": "Send"], "bundleId": "com.example.absent", "waitMs": 0],
+    ])
+    let looked = json(lookedText)
+    check(
+      "a match stands in for the handle, and a step whose match finds nothing stops the run there",
+      lookedFailed && looked?["completed"] as? Int == 1
+        && (looked?["failed"] as? [String: Any])?["step"] as? Int == 2)
+
+    let (stepNothing, stepNothingFailed) = runText([
+      ["tool": "wait", "ms": 0], ["tool": "wait_for", "bundleId": "com.example.absent"],
+    ])
+    check(
+      "a wait_for step with nothing to match is refused before the run starts",
+      stepNothingFailed && stepNothing.contains("Step 2 (wait_for)")
+        && stepNothing.contains("Nothing was run"))
+    let (waitNothing, waitNothingFailed) = callText(
+      "apple_desktop_wait_for", ["bundleId": "com.example.absent"], writes: false)
+    check(
+      "wait_for needs something to match",
+      waitNothingFailed && waitNothing.contains("at least one of id, role, name or value"))
+    let (waitState, waitStateFailed) = callText(
+      "apple_desktop_wait_for", ["bundleId": "com.example.absent", "id": "x", "state": "gone"],
+      writes: false)
+    check(
+      "wait_for refuses a state it does not know",
+      waitStateFailed && waitState.contains("\"present\" or \"absent\""))
+
+    let matcher = AccessibilityDriver.Matcher(role: "AXStaticText", value: "Code Rewind")
+    check(
+      "a value matches by case-insensitive substring",
+      matcher.accepts(
+        .init(
+          role: "AXStaticText", identifier: nil, name: nil, pressable: false,
+          value: "Code rewind successful")))
+    check(
+      "and an element with no value read does not match one",
+      !matcher.accepts(
+        .init(role: "AXStaticText", identifier: nil, name: "Code rewind", pressable: false)))
+
+    // ─── an application that quit ───────────────────────────────────────────
+    let reaped = Process()
+    reaped.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+    try? reaped.run()
+    reaped.waitUntilExit()
+    let quit = AccessibilityDriver.quitFailure(
+      pid: reaped.processIdentifier, bundleId: "com.example.Gone")
+    check(
+      "a process that is gone is named as quit, not busy",
+      quit?.errorDescription?.contains("quit (pid \(reaped.processIdentifier))") == true)
+    check(
+      "and a running one is not",
+      AccessibilityDriver.quitFailure(
+        pid: ProcessInfo.processInfo.processIdentifier, bundleId: "com.example.Here") == nil)
+
+    let reports = FileManager.default.temporaryDirectory
+      .appendingPathComponent("desktop-check-reports-\(UUID().uuidString)")
+    try? FileManager.default.createDirectory(at: reports, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: reports) }
+    let now = Date()
+    for (name, age) in [
+      ("Drakar-2026-10-30-135904.ips", 60.0), ("Drakar-2026-10-30-140100.ips", 30.0),
+      ("Drakar-Helper-2026-10-30-140200.ips", 5.0), ("Drakar-2026-10-29-090000.ips", 86_400.0),
+      ("Drakar-2026-10-30-140300.diag", 1.0),
+    ] {
+      let url = reports.appendingPathComponent(name)
+      FileManager.default.createFile(atPath: url.path, contents: Data())
+      try? FileManager.default.setAttributes(
+        [.modificationDate: now.addingTimeInterval(-age)], ofItemAtPath: url.path)
+    }
+    check(
+      "the crash report named is the newest of that executable's own, not a helper's",
+      AccessibilityDriver.recentCrashReport(executable: "Drakar", in: reports, now: now)?
+        .hasSuffix("Drakar-2026-10-30-140100.ips") == true)
+    check(
+      "and one older than ten minutes is not named",
+      AccessibilityDriver.recentCrashReport(
+        executable: "Drakar", in: reports, now: now.addingTimeInterval(3600)) == nil)
+
     let runSchema =
       ((ask("tools/list", writes: true)?["result"] as? [String: Any])?["tools"]
       as? [[String: Any]] ?? [])

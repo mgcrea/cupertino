@@ -53,6 +53,9 @@ nonisolated enum AccessibilityDriver {
     case staleHandle(String)
     case busy(String)
     case refused(String)
+    /// The process behind a handle is gone. Kept apart from `busy`, which is
+    /// what a dead application's element answers with — see `quitFailure`.
+    case appQuit(name: String, pid: pid_t, report: String?)
 
     var errorDescription: String? {
       switch self {
@@ -83,6 +86,16 @@ nonisolated enum AccessibilityDriver {
         return "\(what) did not answer in time. The app may be busy; retry."
       case .refused(let what):
         return what
+      case .appQuit(let name, let pid, let report?):
+        return
+          "\(name) quit (pid \(pid)). Crash report: \(report). Its handles are gone; relaunch it "
+          + "and take a fresh tree."
+      case .appQuit(let name, let pid, nil):
+        return
+          "\(name) quit (pid \(pid)). No crash report from the last ten minutes yet: ReportCrash "
+          + "writes one into ~/Library/Logs/DiagnosticReports a few seconds after a crash, and "
+          + "none when the app quit on its own. Its handles are gone; relaunch it and take a "
+          + "fresh tree."
       }
     }
   }
@@ -179,7 +192,77 @@ nonisolated enum AccessibilityDriver {
     guard inScope(entry.bundleId, scope: scope) else {
       throw Failure.outOfScope(entry.bundleId)
     }
+    var pid: pid_t = 0
+    if AXUIElementGetPid(entry.element, &pid) == .success,
+      let gone = quitFailure(pid: pid, bundleId: entry.bundleId)
+    {
+      throw gone
+    }
     return entry
+  }
+
+  // ─── an application that quit ──────────────────────────────────────────────
+
+  /// `.appQuit` when `pid` is no longer running, else nil.
+  ///
+  /// Measured 2026-10-30 on a SIGKILLed SwiftUI app: every read, press and
+  /// write on an element it had answered before came back
+  /// `kAXErrorCannotComplete` at once, which `failure(for:)` maps to `busy`. An
+  /// agent testing Drakar was told "did not answer in time. The app may be
+  /// busy; retry" while Drakar had crashed, and found out with `pgrep`. The
+  /// element still answers `AXUIElementGetPid`, so asking the kernel is two
+  /// system calls, cheap enough to run before every verb that takes a handle.
+  ///
+  /// `EPERM` is a live process this one may not signal, so only `ESRCH` counts.
+  static func quitFailure(pid: pid_t, bundleId: String) -> Failure? {
+    guard pid > 0, kill(pid, 0) != 0, errno == ESRCH else { return nil }
+    let executable = executableName(of: bundleId)
+    return .appQuit(
+      name: executable, pid: pid,
+      report: recentCrashReport(executable: executable, in: crashReports))
+  }
+
+  /// The executable's name, which is what a crash report is filed under. Read
+  /// from the bundle because the process is gone; the last component of the
+  /// bundle id when LaunchServices does not know it.
+  static func executableName(of bundleId: String) -> String {
+    NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId)
+      .flatMap { Bundle(url: $0)?.executableURL?.lastPathComponent }
+      ?? bundleId.split(separator: ".").last.map(String.init) ?? bundleId
+  }
+
+  static let crashReports = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Logs/DiagnosticReports")
+
+  /// The newest `<executable>-<date>.ips` (or `.crash`) in `folder` modified in
+  /// the last `within` seconds, or nil.
+  ///
+  /// The date has to follow the dash, so `Drakar` does not pick up a
+  /// `Drakar-Helper` report. Ten minutes because a report is about the crash an
+  /// agent just ran into, and an older one is somebody else's.
+  static func recentCrashReport(
+    executable: String, in folder: URL, within: TimeInterval = 600, now: Date = Date()
+  ) -> String? {
+    let prefix = executable + "-"
+    let files =
+      (try? FileManager.default.contentsOfDirectory(
+        at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
+    return
+      files
+      .filter { url in
+        let name = url.lastPathComponent
+        return ["ips", "crash"].contains(url.pathExtension) && name.hasPrefix(prefix)
+          && name.dropFirst(prefix.count).first?.isNumber == true
+      }
+      .compactMap { url -> (path: String, modified: Date)? in
+        guard
+          let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate,
+          now.timeIntervalSince(modified) <= within
+        else { return nil }
+        return (url.path, modified)
+      }
+      .max { $0.modified < $1.modified }?.path
   }
 
   /// The application a handle belongs to, with the same scope check.
@@ -685,11 +768,50 @@ nonisolated enum AccessibilityDriver {
     let identifier: String?
     let name: String?
     let pressable: Bool
+    /// `AXValue`, read only for a walk asked to (`readValue`): one more round
+    /// trip per node, which a search that does not test it should not pay.
+    var value: String? = nil
+  }
+
+  /// What `find_elements`, `wait_for` and a `run` step's `match` look for. `id`
+  /// and `role` match exactly, `name` and `value` by case-insensitive
+  /// substring. `value` is how a static text is found by what it says: its
+  /// text is its `AXValue`, and it usually carries no title or description.
+  struct Matcher {
+    var identifier: String?
+    var role: String?
+    var name: String?
+    var value: String?
+    var pressableOnly = false
+
+    init(
+      identifier: String? = nil, role: String? = nil, name: String? = nil, value: String? = nil,
+      pressableOnly: Bool = false
+    ) {
+      self.identifier = identifier
+      self.role = role
+      self.name = name?.lowercased()
+      self.value = value?.lowercased()
+      self.pressableOnly = pressableOnly
+    }
+
+    var isEmpty: Bool {
+      identifier == nil && role == nil && name == nil && value == nil && !pressableOnly
+    }
+
+    func accepts(_ candidate: Candidate) -> Bool {
+      if pressableOnly && !candidate.pressable { return false }
+      if let identifier, candidate.identifier != identifier { return false }
+      if let role, candidate.role != role { return false }
+      if let name, candidate.name?.lowercased().contains(name) != true { return false }
+      if let value, candidate.value?.lowercased().contains(value) != true { return false }
+      return true
+    }
   }
 
   static func tree(
     bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, scope: Scope,
-    match: ((Candidate) -> Bool)? = nil
+    match: ((Candidate) -> Bool)? = nil, readValue: Bool = false
   ) throws -> Tree {
     let all = try windows(bundleId: bundleId, scope: scope)
     let chosen: [WindowRef]
@@ -711,7 +833,7 @@ nonisolated enum AccessibilityDriver {
     let roots = menus + chosen.compactMap { handles.get($0.handle)?.element }
     let tree = walk(
       roots: roots, detail: detail, bounds: bounds, bundleId: bundleId, match: match,
-      skipping: menus)
+      readValue: readValue, skipping: menus)
     var answer = tree
     answer.menus = menus.count
     return answer
@@ -754,7 +876,7 @@ nonisolated enum AccessibilityDriver {
 
   private static func walk(
     roots: [AXUIElement], detail: Detail, bounds: Bounds, bundleId: String,
-    match: ((Candidate) -> Bool)? = nil, rootsRecovered: Bool = false,
+    match: ((Candidate) -> Bool)? = nil, readValue: Bool = false, rootsRecovered: Bool = false,
     skipping skipped: [AXUIElement] = []
   ) -> Tree {
     let skip = Set(skipped.map(ElementKey.init))
@@ -819,7 +941,8 @@ nonisolated enum AccessibilityDriver {
       if keep, let match {
         keep = match(
           Candidate(
-            role: role, identifier: identifier, name: title ?? description, pressable: pressable))
+            role: role, identifier: identifier, name: title ?? description, pressable: pressable,
+            value: readValue ? string(el, kAXValueAttribute as String) : nil))
       }
 
       if keep {
@@ -870,6 +993,167 @@ nonisolated enum AccessibilityDriver {
     return Tree(
       elements: out, visited: visited, seconds: Date().timeIntervalSince(started),
       stoppedBy: stoppedBy, recovered: recovered)
+  }
+
+  // ─── waiting ───────────────────────────────────────────────────────────────
+
+  enum WaitState: String, CaseIterable {
+    case present, absent
+  }
+
+  struct WaitOutcome {
+    let satisfied: Bool
+    let cancelled: Bool
+    /// The last walk, whose elements are the matches: what held, or what was
+    /// still there when the wait gave up.
+    let tree: Tree
+    let walks: Int
+    let seconds: Double
+    /// The last refusal a walk met and waited through, such as `busy`.
+    let lastError: String?
+  }
+
+  /// How long a wait sleeps between two walks when nothing wakes it.
+  static let waitRecheck: TimeInterval = 0.25
+  /// The least time between two walks, however often the application posts.
+  /// An AppKit window mid-animation posts layout changes continuously, and a
+  /// walk per notification would keep both processes busy for nothing.
+  static let waitMinimumGap: TimeInterval = 0.1
+
+  /// Walk until `matcher` finds something (`present`) or finds nothing
+  /// (`absent`), or `timeout` passes.
+  ///
+  /// **The re-check is the mechanism; notifications only wake it early.**
+  /// Measured 2026-10-30 on a SwiftUI window over 3 s in which a `Text` changed
+  /// six times and a `Button` came and went three times: an observer for ten
+  /// notifications on the application received six `AXRowCountChanged` from a
+  /// `List` and nothing else — no value change, no creation, no destruction.
+  /// A wait that slept until notified would never wake on a SwiftUI app. AppKit
+  /// applications do post, so an observer is attached and ends the sleep the
+  /// moment one arrives, but the walk every `waitRecheck` is what is relied on.
+  ///
+  /// **Absence needs a whole walk.** A walk cut short by its node or time bound
+  /// that found nothing has not shown that nothing is there, so `absent` holds
+  /// only on a walk that ended on its own (or at the depth cap, which every
+  /// other answer here treats as an ordinary bound rather than a truncation).
+  ///
+  /// An application with no window holds `absent` and not `present`, rather
+  /// than failing: a sheet closing can take the last window with it. A walk
+  /// that meets `busy` is retried, and named if the wait times out. The
+  /// application quitting ends the wait with `.appQuit`.
+  static func waitFor(
+    bundleId: String, windowIndex: Int?, matcher: Matcher, state: WaitState,
+    timeout: TimeInterval, bounds: Bounds, scope: Scope, cancelled: () -> Bool = { false }
+  ) throws -> WaitOutcome {
+    guard isTrusted() else { throw Failure.notTrusted }
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    let target = pid(of: try app(forBundleId: bundleId))
+    let started = Date()
+    let deadline = started.addingTimeInterval(timeout)
+    let wake = Wake(pid: target)
+    var walks = 0
+    var lastError: String?
+    var last = Tree(elements: [], visited: 0, seconds: 0, stoppedBy: nil, recovered: 0)
+
+    while true {
+      if let gone = quitFailure(pid: target, bundleId: bundleId) { throw gone }
+      let walkStarted = Date()
+      var walkBounds = bounds
+      walkBounds.seconds = min(bounds.seconds, max(0.05, deadline.timeIntervalSinceNow))
+      do {
+        last = try tree(
+          bundleId: bundleId, windowIndex: windowIndex, detail: .all, bounds: walkBounds,
+          scope: scope, match: matcher.accepts, readValue: matcher.value != nil)
+        lastError = nil
+      } catch Failure.noWindows {
+        last = Tree(elements: [], visited: 0, seconds: 0, stoppedBy: nil, recovered: 0)
+        lastError = nil
+      } catch Failure.busy(let what) {
+        lastError = Failure.busy(what).errorDescription
+      } catch Failure.appNotRunning {
+        // Gone from NSWorkspace before the kernel check above saw it.
+        throw quitFailure(pid: target, bundleId: bundleId)
+          ?? Failure.appNotRunning(bundleId)
+      }
+      walks += 1
+
+      if lastError == nil {
+        let holds: Bool
+        switch state {
+        case .present:
+          holds = !last.elements.isEmpty
+        case .absent:
+          holds =
+            last.elements.isEmpty && (last.stoppedBy.map { $0.hasPrefix("depth") } ?? true)
+        }
+        if holds {
+          return WaitOutcome(
+            satisfied: true, cancelled: false, tree: last, walks: walks,
+            seconds: Date().timeIntervalSince(started), lastError: nil)
+        }
+      }
+
+      let left = deadline.timeIntervalSinceNow
+      if left <= 0 || cancelled() {
+        return WaitOutcome(
+          satisfied: false, cancelled: left > 0, tree: last, walks: walks,
+          seconds: Date().timeIntervalSince(started), lastError: lastError)
+      }
+      wake.sleep(min(waitRecheck, left))
+      let gap = waitMinimumGap - Date().timeIntervalSince(walkStarted)
+      if gap > 0 { Thread.sleep(forTimeInterval: min(gap, max(0, deadline.timeIntervalSinceNow))) }
+    }
+  }
+
+  /// An `AXObserver` on one application, attached to the waiting thread's run
+  /// loop, so a sleep ends early when the application posts something.
+  ///
+  /// The callback does nothing: the notification's only job is to make
+  /// `CFRunLoopRunInMode` return, and the walk that follows reads what changed.
+  /// Without an observer (an application that refuses every notification) the
+  /// sleep is a plain one, because a run loop with no source returns at once
+  /// and the wait would spin.
+  private final class Wake {
+    static let notifications = [
+      kAXValueChangedNotification, kAXCreatedNotification, kAXUIElementDestroyedNotification,
+      kAXLayoutChangedNotification, kAXTitleChangedNotification, kAXWindowCreatedNotification,
+      kAXMenuOpenedNotification, kAXMenuClosedNotification, kAXRowCountChangedNotification,
+      kAXFocusedUIElementChangedNotification, kAXSelectedChildrenChangedNotification,
+    ]
+
+    private var observer: AXObserver?
+    private let runLoop = CFRunLoopGetCurrent()
+
+    init(pid: pid_t) {
+      var created: AXObserver?
+      guard AXObserverCreate(pid, { _, _, _, _ in }, &created) == .success, let created else {
+        return
+      }
+      let app = AccessibilityDriver.element(for: pid)
+      var listening = false
+      for name in Self.notifications
+      where AXObserverAddNotification(created, app, name as CFString, nil) == .success {
+        listening = true
+      }
+      guard listening else { return }
+      CFRunLoopAddSource(runLoop, AXObserverGetRunLoopSource(created), .defaultMode)
+      observer = created
+    }
+
+    deinit {
+      if let observer {
+        CFRunLoopRemoveSource(runLoop, AXObserverGetRunLoopSource(observer), .defaultMode)
+      }
+    }
+
+    func sleep(_ seconds: TimeInterval) {
+      guard observer != nil,
+        CFRunLoopRunInMode(.defaultMode, seconds, true) != .finished
+      else {
+        Thread.sleep(forTimeInterval: seconds)
+        return
+      }
+    }
   }
 
   // ─── driving ───────────────────────────────────────────────────────────────
@@ -1228,7 +1512,21 @@ nonisolated enum AccessibilityDriver {
   /// returned true on the first text field of all seven apps probed, which proves
   /// the write path is PERMITTED and not that any given app honours it. So this
   /// reads the value back and tells the caller when it did not take.
-  static func setValue(handle: String, value: String, scope: Scope) throws -> Bool {
+  ///
+  /// **A text element is focused first, or SwiftUI never hears the write.**
+  /// Measured 2026-10-30 on SwiftUI `TextField`s, one-line and
+  /// `axis: .vertical` (Drakar's composer): an `AXValue` write on an unfocused
+  /// field read back as written at once, while a `Text` bound to the same
+  /// `@State` stayed empty at 0 ms, 100 ms and 1.1 s. The read-back proved the
+  /// field showed the text, not that the app had it, and an agent pressed Send
+  /// on a prompt Drakar never received. Setting `AXFocused` first installs the
+  /// field editor, and the same write then reached the binding six times in six
+  /// with no settle between the two, without bringing the app forward.
+  /// `focused` is nil for anything that is not a text element, which is written
+  /// exactly as before.
+  static func setValue(
+    handle: String, value: String, scope: Scope
+  ) throws -> (confirmed: Bool, focused: Bool?) {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
     try announce(handle)
@@ -1241,12 +1539,26 @@ nonisolated enum AccessibilityDriver {
       throw Failure.refused("That element's value is not settable.")
     }
 
+    var focused: Bool?
+    if let role = string(element, kAXRoleAttribute as String), textRoles.contains(role),
+      isSettable(element, kAXFocusedAttribute)
+    {
+      _ = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+      focused = (copy(element, kAXFocusedAttribute as String) as? Bool) ?? false
+    }
+
     let err = AXUIElementSetAttributeValue(
       element, kAXValueAttribute as CFString, value as CFTypeRef)
     if let problem = failure(for: err, doing: "Setting '\(handle)'") { throw problem }
 
-    return string(element, kAXValueAttribute as String) == value
+    return (string(element, kAXValueAttribute as String) == value, focused)
   }
+
+  /// The roles that edit through a field editor. A search field is an
+  /// `AXTextField` with a subrole, so it is covered.
+  private static let textRoles: Set<String> = [
+    kAXTextFieldRole as String, kAXTextAreaRole as String, kAXComboBoxRole as String,
+  ]
 
   static func raise(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }

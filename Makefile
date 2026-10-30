@@ -296,6 +296,7 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/desktop-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
@@ -321,6 +322,7 @@ mail-composer-check: ## Assert the Mail composer's text matching, handle registr
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/ShellInput.swift \
@@ -348,6 +350,7 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/simulator-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
