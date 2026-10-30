@@ -1226,6 +1226,56 @@ choose, unlike the Simulator's containers that all offer `AXShowMenu`. The quest
 elements to 52, all 21 rows `selectable`. Five walks each on main and on the branch, twice: 1.19 s
 against 1.17 s on average, inside the run-to-run spread of 0.67 to 1.77 s.
 
+## Waiting, step selectors, and the write SwiftUI never heard, 2026-10-30
+
+A session testing Drakar's rewind sheet spent most of its time working around this surface: menus
+that closed between calls and took their handles with them, `wait` capped at 5 s so every "until
+the turn ends" was a loop of reads, a `set_value` that answered `confirmed` for a prompt Drakar
+never received, and a crash reported as "the app may be busy". The design is
+`docs/superpowers/specs/2026-10-30-desktop-waits-design.md`. Measured in a scratch SwiftUI app
+(`NSHostingView`, accessory policy, never in front), from the agent shell, which inherits
+Accessibility:
+
+|                                                                                                 |                                                             |
+| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `AXValue` written to an unfocused `TextField`, read back                                        | as written, at once                                         |
+| a `Text` bound to the same `@State`, at 0 ms, 100 ms, 1.1 s                                     | empty every time                                            |
+| the same write after `AXFocused = true`, no settle between the two                              | the binding updates, 6 of 6, one-line and `axis: .vertical` |
+| frontmost application during either                                                             | unchanged                                                   |
+| notifications in 3 s of a `Text` changing six times and a `Button` coming and going three times | six `AXRowCountChanged` from a `List`, nothing else         |
+| a read, a press and a write on a SIGKILLed app's element                                        | `kAXErrorCannotComplete` (-25204), at once                  |
+| `AXUIElementGetPid` on that element                                                             | still answers; `kill(pid, 0)` says `ESRCH`                  |
+
+**The read-back proved the field, not the app.** SwiftUI's binding follows the field editor, and an
+unfocused field has none, so the write lands in the cell and nowhere else. Waiting does not help.
+Focusing first installs the field editor, and the write then goes through it. `set_value` does
+that for `AXTextField`, `AXTextArea` and `AXComboBox`, and answers `focused`.
+
+**`wait_for` re-reads; notifications only wake it early.** A wait that slept until notified would
+never wake on a SwiftUI app. So the loop walks every 0.25 s, with the match inside the walk as
+`find_elements` has it, and an `AXObserver` on the waiting thread's run loop ends the sleep early
+when an AppKit app posts. Walks are at least 0.1 s apart however often the app posts. `absent` holds
+only on a walk not cut short by its node or time bound, because a truncated walk that found
+nothing has not shown absence. The call registers with `InProcessCalls`, so Esc ends it at the next
+re-check.
+
+**A `match` in a `run` step goes through the same loop**, with `waitMs` (2 s by default) for the
+element to appear, so a step finds the item of a menu the step before opened: open menus already
+lead every walk. Several matches are a refusal unless `index` picks one, because pressing the first
+of two is a wrong press half the time with nothing saying so.
+
+**A dead app is checked before every handle verb**, in `resolveEntry`: two system calls. The answer
+names the newest `<executable>-<date>.ips` from the last ten minutes, and says when there is none
+yet, since ReportCrash writes it a few seconds after the crash. A death between that check and the
+action still reads `busy`; the next call names it.
+
+Checked live on 2026-10-30 against the scratch app through `DesktopServer.handle`: `wait_for`
+found a static text by value, `set_value` through a `match` reached both fields' bindings, two
+matches refused and `index` picked one, `absent` held 0.38 s after the button went, a 600 ms
+timeout answered at 0.61 s, a cancel after 0.5 s ended the wait at 0.57 s, a SIGKILL 0.5 s into a
+wait ended it at 0.55 s naming the quit, and a handle used afterwards said quit rather than busy.
+Not yet driven against Drakar itself.
+
 ## Still open
 
 - **A drop onto another application.** `to.bundleId` is checked for reach and window, and no drop

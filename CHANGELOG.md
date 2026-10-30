@@ -12,6 +12,34 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Desktop can wait for a change instead of polling for it.** `apple_desktop_wait_for` blocks until
+  an element matching `id`, `role`, `name` or `value` appears, or with `state: "absent"` until it
+  is gone, for up to a minute, and answers with the matches and their handles. It re-reads the tree
+  every quarter second and sooner when the app posts a change. A timeout is an error saying what
+  the last read saw, so a `run` stops there, and Esc in Claude Code ends it. It replaces chains of
+  `wait` steps and `find_elements` calls.
+- **A `run` step can name its element instead of passing a handle.** A step that takes a `handle`
+  can take `match` and `bundleId` instead, and the element is found when the step runs, waiting up
+  to two seconds by default for it to appear. A step can now press an item in a context menu the
+  step before it opened, which a handle read before the run could never reach. A match that finds
+  several elements fails the step unless `index` picks one.
+- **`find_elements` matches on `value`.** A static text keeps its text in its value rather than
+  its name, so it could only be found by reading the whole tree.
+
+### Fixed
+
+- **`set_value` reaches SwiftUI text fields.** Written while the field was not focused, the text
+  showed in the field and read back as written, but the app's own state never received it, so a
+  prompt typed into Drakar and sent went out empty. `set_value` now focuses a text field before
+  writing, without bringing the app forward, and says `focused` in its answer.
+- **Desktop says an app quit rather than calling it busy.** A handle into an app that had crashed
+  answered "did not answer in time. The app may be busy; retry". It now says the app quit, with its
+  pid and the crash report when there is one.
+
 ## [1.35.0] - 2026-10-30
 
 **Safari can hand a signed-in session to a local tool.** It reads a site's cookies, HttpOnly ones

@@ -37,8 +37,10 @@ nonisolated enum DesktopServer {
         readResource(uri, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
       },
       call: { name, args, id in
-        let reply = call(
-          name, args: args, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
+        let reply = cancellable(name, id: id) {
+          call(
+            name, args: args, id: id, surface: surface, writesAllowed: writesAllowed, scope: scope)
+        }
         // Any call keeps an open session alive, reads included: an agent reading
         // the tree between two presses is still driving. See `DrivingSession`.
         DrivingSession.touch()
@@ -131,6 +133,17 @@ nonisolated enum DesktopServer {
       ],
       "description": "Where the button goes down: {\"handle\"} or {\"x\", \"y\"}.",
     ]
+    // Shared by find_elements, wait_for and a run step's `match`, so the three
+    // cannot come to disagree about what a match is.
+    let matchProperties: [String: Any] = [
+      "id": ["type": "string", "description": "Exact AXIdentifier to match."],
+      "role": ["type": "string", "description": "Exact role, e.g. AXButton."],
+      "name": ["type": "string", "description": "Substring of the title or description."],
+      "value": [
+        "type": "string",
+        "description": "Substring of the value — what a static text says, or a field holds.",
+      ],
+    ]
     let boundsProperties: [String: Any] = [
       "maxDepth": [
         "type": "integer",
@@ -216,22 +229,47 @@ nonisolated enum DesktopServer {
       [
         "name": "apple_desktop_find_elements",
         "description":
-          "Search an application's tree for elements matching an identifier, role or name, "
-          + "without reading the whole tree first. Matching is case-insensitive and by substring "
-          + "for name, exact for id and role.",
+          "Search an application's tree for elements matching an identifier, role, name or "
+          + "value, without reading the whole tree first. Matching is case-insensitive and by "
+          + "substring for name and value, exact for id and role.",
         "inputSchema": [
           "type": "object",
-          "properties": [
+          "properties": matchProperties.merging([
             "bundleId": bundleIdProperty,
-            "id": ["type": "string", "description": "Exact AXIdentifier to match."],
-            "role": ["type": "string", "description": "Exact role, e.g. AXButton."],
-            "name": ["type": "string", "description": "Substring of the title or description."],
             "pressableOnly": [
               "type": "boolean",
               "description": "Only return elements that can be pressed. Defaults to false.",
             ],
             "window": windowProperty,
-          ].merging(boundsProperties) { current, _ in current },
+          ]) { _, new in new }.merging(boundsProperties) { current, _ in current },
+          "required": ["bundleId"],
+        ],
+        "annotations": ["readOnlyHint": true],
+      ],
+      [
+        "name": "apple_desktop_wait_for",
+        "description":
+          "Wait until an element matching id, role, name or value appears (state \"present\", "
+          + "the default) or is gone (\"absent\"), then answer with the matches and their "
+          + "handles. One call in place of a loop of reads: it re-reads the tree every 0.25 s "
+          + "and sooner when the application posts a change. A timeout, or the application "
+          + "quitting, is an error naming what the last read saw, so a run stops there. Absence "
+          + "is only reported from a read that was not cut short by its bounds.",
+        "inputSchema": [
+          "type": "object",
+          "properties": matchProperties.merging([
+            "bundleId": bundleIdProperty,
+            "state": [
+              "type": "string", "enum": AccessibilityDriver.WaitState.allCases.map(\.rawValue),
+              "description": "present (default) or absent.",
+            ],
+            "timeoutMs": [
+              "type": "integer",
+              "description":
+                "How long to wait. Default \(waitForDefaultMs), at most \(waitForCeilingMs).",
+            ],
+            "window": windowProperty,
+          ]) { _, new in new }.merging(boundsProperties) { current, _ in current },
           "required": ["bundleId"],
         ],
         "annotations": ["readOnlyHint": true],
@@ -339,9 +377,11 @@ nonisolated enum DesktopServer {
       [
         "name": "apple_desktop_set_value",
         "description":
-          "Set an element's value — a text field, a slider. Reads the value back and reports "
-          + "whether it actually took: some applications report a value as settable and then "
-          + "drop the write.",
+          "Set an element's value — a text field, a slider. A text field is focused first, "
+          + "without bringing the application forward, because an application built on SwiftUI "
+          + "only hears a write into a focused field. Reads the value back and reports whether "
+          + "it actually took: some applications report a value as settable and then drop the "
+          + "write.",
         "inputSchema": [
           "type": "object",
           "properties": ["handle": ["type": "string"], "value": ["type": "string"]],
@@ -578,11 +618,15 @@ nonisolated enum DesktopServer {
           + "step is {\"tool\": <verb>, ...that verb's arguments}, the verb being a desktop tool "
           + "without its apple_desktop_ prefix: \(runSteps.joined(separator: ", ")). 'wait' takes "
           + "'ms'. Every step is checked before the first runs, so a mistake in step 5 leaves "
-          + "steps 1 to 4 undone rather than half a form filled. A step cannot use a handle found "
-          + "by another step in the same run; take handles from a read before the run. The "
-          + "answer carries each step's result and, on failure, which step stopped it — the "
-          + "steps before it did happen. Pass 'releaseAfter' to hand the Mac back once every "
-          + "step completed.",
+          + "steps 1 to 4 undone rather than half a form filled. A step that takes a 'handle' "
+          + "can name its element instead with 'match' ({\"id\", \"role\", \"name\", \"value\", "
+          + "\"window\"}, as find_elements matches) and 'bundleId': it is found when the step "
+          + "runs, waiting up to 'waitMs' (default \(matchWaitDefaultMs), at most "
+          + "\(matchWaitCeilingMs)) for it to appear, so a step can press an item in a menu the "
+          + "step before it opened. More than one match fails the step unless 'index' picks one. "
+          + "A wait_for step stops the run until something appears or goes. The answer carries "
+          + "each step's result and, on failure, which step stopped it — the steps before it did "
+          + "happen. Pass 'releaseAfter' to hand the Mac back once every step completed.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -843,12 +887,10 @@ nonisolated enum DesktopServer {
         guard let bundleId = args["bundleId"] as? String else {
           return failure(id, "The 'bundleId' argument is required.")
         }
-        let wantedId = args["id"] as? String
-        let wantedRole = args["role"] as? String
-        let wantedName = (args["name"] as? String)?.lowercased()
-        let pressableOnly = args["pressableOnly"] as? Bool ?? false
-        if wantedId == nil && wantedRole == nil && wantedName == nil && !pressableOnly {
-          return failure(id, "Give at least one of id, role, name or pressableOnly.")
+        var matcher = matching(args)
+        matcher.pressableOnly = args["pressableOnly"] as? Bool ?? false
+        if matcher.isEmpty {
+          return failure(id, "Give at least one of id, role, name, value or pressableOnly.")
         }
         // Searched over `all` regardless of what the caller wants back: a
         // control that carries no name is still findable by role, and filtering
@@ -861,18 +903,48 @@ nonisolated enum DesktopServer {
         let tree = try AccessibilityDriver.tree(
           bundleId: bundleId, windowIndex: args["window"] as? Int,
           detail: .all, bounds: bounds(args), scope: scope,
-          match: { candidate in
-            if pressableOnly && !candidate.pressable { return false }
-            if let wantedId, candidate.identifier != wantedId { return false }
-            if let wantedRole, candidate.role != wantedRole { return false }
-            if let wantedName {
-              guard let name = candidate.name?.lowercased(), name.contains(wantedName) else {
-                return false
-              }
-            }
-            return true
-          })
+          match: matcher.accepts, readValue: matcher.value != nil)
         return ok(id, treeBody(tree))
+
+      case "apple_desktop_wait_for":
+        guard let bundleId = args["bundleId"] as? String else {
+          return failure(id, "The 'bundleId' argument is required.")
+        }
+        let matcher = matching(args)
+        guard !matcher.isEmpty else {
+          return failure(id, "Give at least one of id, role, name or value.")
+        }
+        let state: AccessibilityDriver.WaitState
+        if let named = args["state"] {
+          guard let name = named as? String,
+            let known = AccessibilityDriver.WaitState(rawValue: name)
+          else { return failure(id, "The 'state' argument is \"present\" or \"absent\".") }
+          state = known
+        } else {
+          state = .present
+        }
+        let timeoutMs = min(waitForCeilingMs, max(0, args["timeoutMs"] as? Int ?? waitForDefaultMs))
+        let outcome = try AccessibilityDriver.waitFor(
+          bundleId: bundleId, windowIndex: args["window"] as? Int, matcher: matcher, state: state,
+          timeout: Double(timeoutMs) / 1000, bounds: bounds(args), scope: scope,
+          cancelled: { isCancelled })
+        var body = treeBody(outcome.tree)
+        body["state"] = state.rawValue
+        body["held"] = outcome.satisfied
+        body["walks"] = outcome.walks
+        body["waitedSeconds"] = (outcome.seconds * 100).rounded() / 100
+        if outcome.satisfied { return ok(id, body) }
+        if let lastError = outcome.lastError { body["lastError"] = lastError }
+        body["note"] =
+          outcome.cancelled
+          ? "Called off before it held."
+          : state == .present
+            ? "Nothing matched within \(timeoutMs) ms."
+            : outcome.tree.elements.isEmpty
+              ? "The last read found nothing but was cut short by its bounds, so absence is not "
+                + "shown. Narrow it with 'window', or raise budgetSeconds or maxNodes."
+              : "Still there after \(timeoutMs) ms: 'elements' is what the last read found."
+        return failure(id, body: body)
 
       case "apple_desktop_user_activity":
         // Not gated on `isTrusted`: this is CoreGraphics rather than
@@ -931,17 +1003,21 @@ nonisolated enum DesktopServer {
         guard let handle = args["handle"] as? String, let value = args["value"] as? String else {
           return failure(id, "Both 'handle' and 'value' are required.")
         }
-        let landed = try AccessibilityDriver.setValue(
+        let written = try AccessibilityDriver.setValue(
           handle: handle, value: value, scope: scope)
-        return ok(
-          id,
-          [
-            "handle": handle, "confirmed": landed,
-            "note": landed
-              ? "The value read back as written."
-              : "The application accepted the write and the value did not change. It reported "
-                + "itself settable and dropped it; try focusing the field and typing instead.",
-          ])
+        var answer: [String: Any] = [
+          "handle": handle, "confirmed": written.confirmed,
+          "note": !written.confirmed
+            ? "The application accepted the write and the value did not change. It reported "
+              + "itself settable and dropped it; try focusing the field and typing instead."
+            : written.focused == false
+              ? "The field shows the value, but it would not take the focus, and an application "
+                + "built on SwiftUI only hears a write into a focused field. If the application "
+                + "has to act on it, focus the field and type instead."
+              : "The value read back as written.",
+        ]
+        if let focused = written.focused { answer["focused"] = focused }
+        return ok(id, answer)
 
       case "apple_desktop_click":
         guard let x = args["x"] as? Double, let y = args["y"] as? Double else {
@@ -1243,10 +1319,74 @@ nonisolated enum DesktopServer {
   static let runSteps = [
     "press", "press_menu", "show_menu", "select", "set_value", "click", "hover", "drag", "type",
     "key", "focus", "activate", "raise_window", "set_window_frame", "find_elements",
-    "get_attribute", "list_windows", "menu", "user_activity", "wait",
+    "get_attribute", "list_windows", "menu", "user_activity", "wait", "wait_for",
   ]
   static let runStepCeiling = 25
   static let runWaitCeilingMs = 5000
+
+  /// The steps that may name their element with `match` instead of a `handle`:
+  /// every step whose tool takes one, but `drag`, whose two ends are objects of
+  /// their own.
+  static let matchSteps: Set<String> = [
+    "press", "show_menu", "select", "set_value", "focus", "raise_window", "get_attribute",
+    "hover", "type", "key",
+  ]
+  static let matchWaitDefaultMs = 2000
+  static let matchWaitCeilingMs = 10_000
+  static let waitForDefaultMs = 10_000
+  static let waitForCeilingMs = 60_000
+
+  /// A matcher from `id`, `role`, `name` and `value` — a tool's own arguments,
+  /// or a step's `match` object. Empty when none is given.
+  static func matching(_ args: [String: Any]) -> AccessibilityDriver.Matcher {
+    AccessibilityDriver.Matcher(
+      identifier: args["id"] as? String, role: args["role"] as? String,
+      name: args["name"] as? String, value: args["value"] as? String)
+  }
+
+  /// Find the one element a step's `match` names, waiting up to its `waitMs`
+  /// for it to appear. Several matches are a refusal unless `index` picks one:
+  /// pressing the first of two "Delete" buttons is the wrong press half the
+  /// time, and nothing would say so.
+  private static func resolveMatch(
+    _ step: [String: Any], scope: AccessibilityDriver.Scope
+  ) throws -> String {
+    let spec = step["match"] as? [String: Any] ?? [:]
+    let bundleId = step["bundleId"] as? String ?? ""
+    let waitMs = step["waitMs"] as? Int ?? matchWaitDefaultMs
+    let outcome = try AccessibilityDriver.waitFor(
+      bundleId: bundleId, windowIndex: spec["window"] as? Int, matcher: matching(spec),
+      state: .present, timeout: Double(waitMs) / 1000, bounds: AccessibilityDriver.Bounds(),
+      scope: scope, cancelled: { isCancelled })
+    let found = outcome.tree.elements
+    guard !found.isEmpty else {
+      throw AccessibilityDriver.Failure.refused(
+        outcome.cancelled
+          ? "Called off while looking for \(InProcessRPC.jsonText(spec))."
+          : "Nothing matched \(InProcessRPC.jsonText(spec)) within \(waitMs) ms"
+            + (outcome.tree.stoppedBy.map { ", and the read was cut short by \($0)" } ?? "")
+            + ".")
+    }
+    if let index = step["index"] as? Int {
+      guard index < found.count else {
+        throw AccessibilityDriver.Failure.refused(
+          "'index' \(index) is past the \(found.count) elements that matched.")
+      }
+      return found[index].handle
+    }
+    guard found.count == 1 else {
+      let listed = found.prefix(10).map { element -> [String: Any] in
+        var summary = element.json
+        summary.removeValue(forKey: "rect")
+        summary.removeValue(forKey: "depth")
+        return summary
+      }
+      throw AccessibilityDriver.Failure.refused(
+        "\(found.count) elements matched \(InProcessRPC.jsonText(spec)); narrow 'match' or pick "
+          + "one with 'index'. The first of them: \(InProcessRPC.jsonText(["elements": listed])).")
+    }
+    return found[0].handle
+  }
 
   /// Check every step, then run them in order through `call`, stopping at the
   /// first failure.
@@ -1308,14 +1448,55 @@ nonisolated enum DesktopServer {
           "Step \(number): apple_desktop_\(tool) is not available, because driving is switched "
             + "off for this surface. Nothing was run.")
       }
-      let missing = (schema["required"] as? [String] ?? []).filter { step[$0] == nil }
+      let matched = step["match"] != nil
+      if matched {
+        guard matchSteps.contains(tool) else {
+          return failure(
+            id,
+            "Step \(number) (\(tool)) cannot take 'match'; only a step that takes a 'handle' can: "
+              + "\(matchSteps.sorted().joined(separator: ", ")). Nothing was run.")
+        }
+        guard let spec = step["match"] as? [String: Any], !matching(spec).isEmpty else {
+          return failure(
+            id,
+            "Step \(number) (\(tool)): 'match' is an object with at least one of id, role, name "
+              + "or value. Nothing was run.")
+        }
+        guard step["bundleId"] is String else {
+          return failure(
+            id,
+            "Step \(number) (\(tool)): 'match' needs 'bundleId', the application to look in. "
+              + "Nothing was run.")
+        }
+        if let waitMs = step["waitMs"],
+          !((waitMs as? Int).map { (0...matchWaitCeilingMs).contains($0) } ?? false)
+        {
+          return failure(
+            id,
+            "Step \(number) (\(tool)): 'waitMs' is a whole number from 0 to \(matchWaitCeilingMs). "
+              + "Nothing was run.")
+        }
+        if let index = step["index"], !((index as? Int).map { $0 >= 0 } ?? false) {
+          return failure(
+            id,
+            "Step \(number) (\(tool)): 'index' is a whole number from 0. Nothing was run.")
+        }
+      }
+      let missing = (schema["required"] as? [String] ?? [])
+        .filter { step[$0] == nil && !(matched && $0 == "handle") }
       guard missing.isEmpty else {
         return failure(
           id,
           "Step \(number) (\(tool)) is missing \(missing.map { "'\($0)'" }.joined(separator: " and ")). "
             + "Nothing was run.")
       }
-      if tool == "hover", step["handle"] == nil, step["x"] == nil || step["y"] == nil {
+      if tool == "wait_for", matching(step).isEmpty {
+        return failure(
+          id,
+          "Step \(number) (wait_for) needs at least one of id, role, name or value. Nothing was "
+            + "run.")
+      }
+      if tool == "hover", !matched, step["handle"] == nil, step["x"] == nil || step["y"] == nil {
         return failure(
           id, "Step \(number) (hover) needs 'handle', or both 'x' and 'y'. Nothing was run.")
       }
@@ -1344,27 +1525,44 @@ nonisolated enum DesktopServer {
         results.append(["step": number, "tool": tool, "waitedMs": ms])
         continue
       }
+      func stopped(_ error: String) -> String {
+        failure(
+          id,
+          body: [
+            "completed": index, "total": steps.count, "results": results,
+            "failed": [
+              "step": number, "tool": tool, "error": jsonObject(error).map { $0 as Any } ?? error,
+            ],
+            "note":
+              "Stopped at step \(number), so the steps after it did not run. The steps before it "
+              + "did, so read the screen before retrying rather than running the whole sequence "
+              + "again.",
+          ])
+      }
       var arguments = step
       arguments.removeValue(forKey: "tool")
+      var resolved: String?
+      if step["match"] != nil {
+        do {
+          resolved = try resolveMatch(step, scope: scope)
+        } catch {
+          return stopped(error.localizedDescription)
+        }
+        DrivingSession.touch()
+        arguments["handle"] = resolved
+        for key in ["match", "waitMs", "index"] { arguments.removeValue(forKey: key) }
+      }
       let reply = call(
         "apple_desktop_\(tool)", args: arguments, id: nil, surface: surface,
         writesAllowed: writesAllowed, scope: scope)
       DrivingSession.touch()
       let (text, isError) = toolText(reply)
-      guard !isError else {
-        let body: [String: Any] = [
-          "completed": index, "total": steps.count, "results": results,
-          "failed": ["step": number, "tool": tool, "error": text],
-          "note":
-            "Stopped at step \(number), so the steps after it did not run. The steps before it "
-            + "did, so read the screen before retrying rather than running the whole sequence "
-            + "again.",
-        ]
-        return InProcessRPC.result(
-          id,
-          ["content": [["type": "text", "text": InProcessRPC.jsonText(body)]], "isError": true])
-      }
-      results.append(["step": number, "tool": tool, "result": jsonObject(text) ?? text])
+      guard !isError else { return stopped(text) }
+      var result: [String: Any] = [
+        "step": number, "tool": tool, "result": jsonObject(text) ?? text,
+      ]
+      if let resolved { result["resolved"] = resolved }
+      results.append(result)
     }
 
     var body: [String: Any] = [
@@ -1748,10 +1946,35 @@ nonisolated enum DesktopServer {
       `apple_desktop_run` takes a whole sequence in one call and stops at the first step that
       fails. Pass `releaseAfter` to hand the Mac back once every step completed.
 
+      ## Wait for the change, do not poll for it
+
+      `apple_desktop_wait_for` blocks until an element matching `id`, `role`, `name` or `value`
+      appears, or with `state: "absent"` until it is gone, and answers with the matches and
+      their handles. Use it for anything that takes its time: a sheet opening, a turn ending,
+      a row arriving. A timeout is an error that says what the last read saw. `value` is how a
+      static text is found by what it says, since its text is its value rather than its name.
+
+      ## Name a step's element instead of passing its handle
+
+      In a `run`, a step that takes a `handle` can take `match` and `bundleId` instead, and
+      the element is found when the step runs:
+      `{"tool": "press", "match": {"name": "Rewind code"}, "bundleId": "…"}`. That is how
+      to choose an item in a context menu the step before opened, which a handle read before
+      the run cannot reach. A match that finds several elements fails the step unless `index`
+      picks one.
+
+      ## Setting a text field
+
+      `apple_desktop_set_value` focuses a text field before writing to it, without bringing
+      the application forward. An application built on SwiftUI only hears a write into a
+      focused field; written unfocused, the field shows the text while the application never
+      receives it. If `focused` comes back false, focus the field and type instead.
+
       ## Handles go stale
 
       They point at elements in the window as it was. If a press returns a stale-handle
-      error, take a fresh tree rather than retrying.
+      error, take a fresh tree rather than retrying. If the application has quit, the call
+      says so, with its crash report when there is one, rather than calling it busy.
 
       ## Two switches, and they bound different things
 
@@ -1790,5 +2013,62 @@ nonisolated enum DesktopServer {
 
   private static func failed(_ id: Any?, _ error: Error) -> String {
     InProcessRPC.failed(id, error)
+  }
+
+  /// A failure whose text is a JSON body, for an answer that still has
+  /// something to report: what a timed-out wait last saw, what a run did before
+  /// it stopped.
+  private static func failure(_ id: Any?, body: [String: Any]) -> String {
+    InProcessRPC.result(
+      id, ["content": [["type": "text", "text": InProcessRPC.jsonText(body)]], "isError": true])
+  }
+
+  // ─── calling off a wait ────────────────────────────────────────────────────
+
+  /// Set from the connection's reader thread when the client calls the request
+  /// off; read by the wait loop on the worker between two walks.
+  final class CancelFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var set = false
+    func raise() {
+      lock.lock()
+      set = true
+      lock.unlock()
+    }
+    var isSet: Bool {
+      lock.lock()
+      defer { lock.unlock() }
+      return set
+    }
+  }
+
+  static let cancelKey = "io.mgcrea.cupertino.desktop.cancel"
+
+  /// Whether the call this thread is serving was called off. A thread-local,
+  /// as `DrivingSession.connectionKey` is, so a `wait_for` inside a `run` reads
+  /// the run's flag without a parameter threaded through `call`.
+  static var isCancelled: Bool {
+    (Thread.current.threadDictionary[cancelKey] as? CancelFlag)?.isSet ?? false
+  }
+
+  /// Run `body` registered with `InProcessCalls` when it is one of the two calls
+  /// that can wait — `wait_for`, and a `run`, which may hold one — so Esc in
+  /// Claude Code, or the client hanging up, ends the wait at its next re-check
+  /// rather than after a minute nobody is waiting for. Every other call answers
+  /// in a round trip and is not worth the registration.
+  private static func cancellable(_ name: String, id: Any?, _ body: () -> String) -> String {
+    guard name == "apple_desktop_wait_for" || name == "apple_desktop_run",
+      let connection = Thread.current.threadDictionary[DrivingSession.connectionKey] as? UUID
+    else { return body() }
+    let flag = CancelFlag()
+    let token = InProcessCalls.register(
+      connection: connection, requestId: InProcessCalls.requestId(id) ?? "u\(UUID().uuidString)"
+    ) { flag.raise() }
+    Thread.current.threadDictionary[cancelKey] = flag
+    defer {
+      token.done()
+      Thread.current.threadDictionary.removeObject(forKey: cancelKey)
+    }
+    return body()
   }
 }
