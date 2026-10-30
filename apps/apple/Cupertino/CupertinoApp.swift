@@ -928,8 +928,46 @@ struct GateToggle: View {
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
         .padding(.leading, 20)
+      if let value = gate.value {
+        GateValueField(surface: surface, gate: gate, value: value, isOn: isOn)
+          .padding(.leading, 20)
+          .padding(.top, 4)
+      }
     }
     .padding(.leading, 20)
+  }
+}
+
+/// The text a gate carries, under its switch: Safari's cookie gate's sites.
+///
+/// Disabled rather than hidden while the switch is off, so what is typed stays
+/// visible and nothing is lost by flipping it — and `ServerLocator.gateValues`
+/// passes it only while the switch is on, so a disabled field is also an
+/// inert one. Like a gate, it reaches servers started after the change.
+struct GateValueField: View {
+  private let value: Surface.Gate.Value
+  private let isOn: Bool
+  @AppStorage private var text: String
+
+  init(surface: Surface, gate: Surface.Gate, value: Surface.Gate.Value, isOn: Bool) {
+    self.value = value
+    self.isOn = isOn
+    _text = AppStorage(wrappedValue: "", SurfaceSettings.gateValueKey(surface, gate))
+  }
+
+  var body: some View {
+    VStack(alignment: .leading, spacing: 2) {
+      TextField(value.label, text: $text, prompt: Text(value.placeholder))
+        .textFieldStyle(.roundedBorder)
+        .font(.caption)
+        .autocorrectionDisabled()
+        .disabled(!isOn)
+      if isOn && text.trimmingCharacters(in: .whitespaces).isEmpty {
+        Text("No sites listed, so no site's cookies can be read.")
+          .font(.caption2)
+          .foregroundStyle(.secondary)
+      }
+    }
   }
 }
 

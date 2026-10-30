@@ -60,6 +60,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
         allowWrites,
         allowCodes: config.allowCodes,
         allowNetwork: config.allowNetwork,
+        allowCookies: config.allowCookies,
       }),
   );
   /*

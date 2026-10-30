@@ -32,22 +32,22 @@ off cannot see that they exist.
 
 ## Surfaces
 
-| Surface   | Package                                    | Status                                                                                         |
-| --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 24 tools, search/read/attachments + gated writes and watches                     |
-| Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                                 |
-| Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                      |
-| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                 |
-| Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                |
-| Messages  | [`packages/messages`](packages/messages)   | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches       |
-| Safari    | [`packages/safari`](packages/safari)       | implemented — 20 tools, history/tabs/reading list/page reads + gated writes, codes, network    |
-| Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                               |
-| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on  |
-| Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on |
-| Desktop   | —                                          | implemented — 25 tools, AXUIElement natively; in-app, no npm package; off until switched on    |
-| Simulator | —                                          | implemented — 12 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on |
-| Shell     | —                                          | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on         |
-| —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                    |
+| Surface   | Package                                    | Status                                                                                               |
+| --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Mail      | [`packages/mail`](packages/mail)           | implemented — 24 tools, search/read/attachments + gated writes and watches                           |
+| Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                                       |
+| Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                            |
+| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                       |
+| Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                      |
+| Messages  | [`packages/messages`](packages/messages)   | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches             |
+| Safari    | [`packages/safari`](packages/safari)       | implemented — 21 tools, history/tabs/reading list/page reads + gated writes, codes, network, cookies |
+| Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                                     |
+| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on        |
+| Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on       |
+| Desktop   | —                                          | implemented — 25 tools, AXUIElement natively; in-app, no npm package; off until switched on          |
+| Simulator | —                                          | implemented — 12 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on       |
+| Shell     | —                                          | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on               |
+| —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                          |
 
 **Screen, Sound, Desktop, Simulator and Shell arrive switched off.** Every other surface that brokers
 an Apple app is on when Cupertino is installed. The first four are not, because Screen Recording,
@@ -322,7 +322,7 @@ it is ~100%. This server decodes them; `textSource` on every result says which l
 | ---------------------------------------------------- | ----------------------------------------------- | --------------------------------------------- |
 | `search_history` `get_page` `read_page` `list_tabs`  | `open_url` `add_reading_list_item` `close_tabs` | `find_codes`                                  |
 | `list_bookmarks` `list_reading_list` `page_elements` | `click` `fill` `scroll` `submit`                | `network_record` `network_list` `network_get` |
-| `wait_for` `diagnostics`                             |                                                 |                                               |
+| `wait_for` `diagnostics`                             |                                                 | `cookies`                                     |
 
 **The widest write set here, and it splits across two lanes that share nothing but the flag.**
 `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, and
@@ -341,6 +341,14 @@ Headers named like credentials are masked; **bodies are not redacted, and neithe
 token in a query string comes back as the page sent it. On a page whose Content-Security-Policy
 refuses inline scripts there is a fallback that loads the recorder by URL; it has not been verified
 in Safari. `reload` and `saveAs` also need the write flag.
+
+**`cookies` reads a site's cookies, HttpOnly ones included**, so a signed-in session can be handed
+to a local tool. It is gated twice: `APPLE_SAFARI_ALLOW_COOKIES` registers it, and
+`APPLE_SAFARI_COOKIE_HOSTS` lists the sites it may read (`yahoo.com` covers its subdomains; empty
+means none). It never returns a value inline; `names` plus `saveAs` writes the named cookies to a
+0600 file as one `Cookie` header value, and that needs the write flag too. The extension asks for
+the `cookies` permission for it, with no new all-sites grant. In the app both are one control: "Read
+cookies", with the sites in a field under it.
 
 There is deliberately no `do JavaScript` tool: it needs a developer-menu toggle that is not a TCC
 grant and whose state cannot be read, so diagnostics could never say in advance whether it would

@@ -120,6 +120,22 @@ nonisolated struct Surface: Identifiable, Hashable {
     let envSuffix: String
     let label: String
     let description: String
+    /// A text the gate carries, or nil for a plain switch. Defaulted so the
+    /// generated gates that have none need not say so.
+    var value: Value? = nil
+
+    /// A setting that belongs to one gate: drawn under its switch, stored as
+    /// `gate.<surface>.<id>.value`, and passed as `envPrefix + envSuffix`
+    /// ONLY while the gate is on — see `ServerLocator.gateValues`.
+    ///
+    /// Safari's cookie gate is the first. Its switch alone would hand any agent
+    /// any signed-in session, so the value, the sites it may read, is the
+    /// second gate, and an empty one refuses every page.
+    struct Value: Hashable {
+      let envSuffix: String
+      let label: String
+      let placeholder: String
+    }
   }
 
   /// Whether the Apple Events lane carries reads too, or only writes.
@@ -497,6 +513,14 @@ nonisolated struct Surface: Identifiable, Hashable {
       // lane, the capture itself goes through the extension and so inherits
       // Safari's per-website consent, and it sees only the top frame: no
       // subframes, no workers, no WebSockets. See docs/safari.md.
+      //
+      // allowCookies is the fourth read gate, and the first that is not
+      // enough on its own. A login cookie IS the login, so the switch alone
+      // would hand any agent any session in the browser. Its `value` is the
+      // second gate: the sites the user lists, passed as
+      // APPLE_SAFARI_COOKIE_HOSTS only while the switch is on, and an empty
+      // list refuses every page. Values never come back inline; saveAs
+      // writes named ones to a 0600 file and needs allowWrites too.
       bundleID: "com.apple.Safari",
       kind: .app,
       iconPath: nil,
@@ -512,6 +536,7 @@ nonisolated struct Surface: Identifiable, Hashable {
       gates: [
         Surface.Gate(id: "allowCodes", envSuffix: "ALLOW_CODES", label: "Read one-time codes", description: "Lets Safari tools read a one-time 2FA code from a page you have allowed the extension on. Off by default."),
         Surface.Gate(id: "allowNetwork", envSuffix: "ALLOW_NETWORK", label: "Read network traffic", description: "Lets Safari tools record what a page you have allowed the extension on fetches, and read the responses. Off by default."),
+        Surface.Gate(id: "allowCookies", envSuffix: "ALLOW_COOKIES", label: "Read cookies", description: "Lets apple_safari_cookies list a page's cookies, HttpOnly ones included, on the sites below only, so a signed-in session can be handed to a local tool. Values never come back to the agent; saving them to a private file also needs writes. Off by default.", value: Surface.Gate.Value(envSuffix: "COOKIE_HOSTS", label: "Sites", placeholder: "yahoo.com, example.org")),
       ]
     ),
     Surface(

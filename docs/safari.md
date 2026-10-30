@@ -191,7 +191,7 @@ their browser can be scripted.
 
 `packages/safari` shipped this surface as six read tools with no write tool, and now ships
 **nineteen**: the reads (with `wait_for` among them), plus two Apple Events writes and four
-extension-lane actions, all behind `allowWrites`, `find_codes` behind `allowCodes`, and the three network tools behind `allowNetwork`.
+extension-lane actions, all behind `allowWrites`, `find_codes` behind `allowCodes`, the three network tools behind `allowNetwork`, and `cookies` behind `allowCookies` and a host list.
 Each arrival is recorded further down, under [Writes, built](#writes-built),
 [Acting on a page, built](#acting-on-a-page-built) and [Network capture](#network-capture). Three
 decisions came out of building the read half that this document did not anticipate.
@@ -729,7 +729,8 @@ user's Safari and could not close any of them.
 
 Safari's `tab` class has `URL`, `name`, `index`, `visible`, `text`, `source` and a hidden `pid` (the
 WebContent process, shared between tabs and replaced on navigation), and no id. The extension lane
-has none to offer either: its manifest asks for `nativeMessaging` only, and `tabs` would change the
+has none to offer either: its manifest asked for `nativeMessaging` only when this was built (it now
+also asks for `cookies`, see [Reading cookies](#reading-cookies)), and `tabs` would change the
 permission Safari asks the user for. So "a tab the agent opened" cannot be read off Safari; it has to
 be recorded when it is opened.
 
@@ -1278,6 +1279,137 @@ why XHR entries carry `trace`. With that, every request on the site recorded as 
 **Two refusals behave as designed.** A request id from before a reload is refused with the "since
 gone" message, after the action timeout. A `saveAs` onto a name that already exists refuses without
 `overwrite: true`.
+
+## Reading cookies
+
+`apple_safari_cookies` lists the cookies Safari would send to an open page, **HttpOnly ones
+included**, and saves named ones to a file, so a signed-in session can be handed to a local tool
+without the user copying it out of Safari by hand. The case that asked for it is
+`mcp-yahoo-finance`, which needs `A3`, `T` and `Y` from a signed-in finance.yahoo.com tab. The brief
+said all three were HttpOnly; measured, `A3` and `T` are and `Y` is not (see below). Two HttpOnly
+logins are still two cookies nothing else here can reach.
+
+### Why the extension, and why its background worker
+
+Nothing else here can see an HttpOnly cookie. A page script cannot, by definition. The network
+tools mask `cookie` and `set-cookie` and record only the page's own fetch and XHR calls, so the
+cookies the browser attaches never pass through them. Safari's cookie store is a file behind Full
+Disk Access. What does see them is `browser.cookies.getAll({url})` in the extension, which needs the
+`cookies` permission and host access to the site.
+
+That API exists only in the background worker, which is also the right place for it on its own
+merits: an HttpOnly cookie is one the page's process is never handed, and a content script runs in
+that process. So the command still travels the ordinary channel (the handler gives it to a page
+polling on its URL, which ties the read to an open page on a site the user allowed), but
+`background.js` takes it out of the poll's reply on the way back, reads the cookies itself, and
+files the result with native. The page never sees the command. An extension older than this ships
+it on to the page, whose runner answers "Unknown action", and the server turns that into "update,
+check the extension is enabled, and reload the tab".
+
+### Gated twice, and why the flag alone is too weak
+
+`APPLE_SAFARI_ALLOW_COOKIES` decides whether the tool exists, like the other read gates, and is not
+folded into `allowWrites` (it is a read) or `allowNetwork` (it reaches what that lane masks, the
+session itself). But a login cookie is the login, so a flag alone would let any agent take any
+signed-in session in the browser, the bank's as readily as the one the user meant.
+
+So `APPLE_SAFARI_COOKIE_HOSTS` decides which sites: comma-separated registrable domains
+(`yahoo.com`), each covering the domain and its subdomains on a label boundary, so `yahoo.com`
+matches `finance.yahoo.com` and never `notyahoo.com`. Empty, the default, refuses every page. The
+check runs in the server before any command is written, so a refused host costs the browser nothing
+and tells it nothing, and the refusal names the setting. An entry with no dot is set aside and shown
+as `ignoredHosts` in diagnostics, since `com` would open a whole TLD. **There is no public-suffix
+list**, so `co.uk` is not caught; the setting is the user's, and the docs say not to list one.
+
+Under both sits Safari's own per-site grant, since the read runs in the extension.
+
+### No value inline, and the file a local tool reads
+
+A tool result goes into the conversation, which is the wrong place for a session. A listing returns
+name, domain, path, `secure`, `httpOnly`, `sameSite` and `expires` (null for a session cookie), and
+asks the worker for no value at all, so none crosses the channel. The server also drops a `value`
+the worker sent anyway.
+
+To get values out, `names` plus `saveAs` sends the names as `valuesFor`, and the worker lets out a
+value only for those. The server writes them through core's `writeConfinedFile` into
+`APPLE_SAFARI_DOWNLOAD_DIR`: a bare filename, mode 0600, never over an existing file without
+`overwrite: true`, and only with `allowWrites`. The result gives the path, the names and the byte
+count. `saveAs` without `names` is refused, so the file holds the session asked for and not every
+tracker the site set beside it, and a name the page lacks writes nothing and says which.
+
+**The format is chosen for the consumer.** The file is the `Cookie` header's VALUE,
+`A3=…; T=…; Y=…`, in the order asked for, with no `Cookie:` prefix and no trailing newline.
+`mcp-yahoo-finance` takes `YAHOO_FINANCE_COOKIE` as exactly that string and splits it on `;\s*`, so
+a prefix would make the first pair `Cookie: A3` and a newline would land in `Y`'s value. A value
+holding `;` or a control character would break the line, so it is refused (naming the cookie, never
+the value) rather than escaped. Two cookies with one name are both written, longest path first, as
+a browser sends them.
+
+**What the values cross on the way.** The worker's answer for `saveAs` is a result file in the
+appex container, like every other answer: written by the handler, deleted by the server as it
+collects it, and pruned after 60 s if nobody does. It holds only the named values. Values are never
+logged, never in an error, never in diagnostics (which shows the flag and the host list), and the
+tests use obviously fake ones.
+
+### The permission change
+
+The manifest asks for `cookies` beside `nativeMessaging`. There is still no `host_permissions` entry
+and so no new `<all_urls>` grant: the read relies on the same per-site access the content scripts'
+`matches` already ask for.
+
+**This was expected to make Safari ask the user to approve the extension again. Measured, it did
+not.** Installing the build that added it over 1.34.0 left Cupertino ticked in Settings ›
+Extensions, with the same permissions text as before ("can read and alter webpages you visit and
+see your browsing history on all websites"; nothing about cookies), no prompt anywhere, and
+`browser.cookies` working on the first call. Two caveats keep this from being the last word: the
+manifest version did not change (both builds said 1.34.0), and a real Sparkle update changes it, so
+whether Safari reacts to a permission added under a NEW version is unmeasured. If it does disable the
+extension, the worker has no `browser.cookies` and the tool says so.
+
+### Measured
+
+2026-10-30, Safari 26 on macOS 26, a notarized build of this branch installed over 1.34.0, the server
+started from a terminal with Full Disk Access with `APPLE_SAFARI_COOKIE_HOSTS=yahoo.com` (the app
+cannot yet pass a host list; see below), on a signed-in `https://finance.yahoo.com/` tab in front.
+
+| Check                                  | Result                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| Listing                                | **17 cookies in 909 ms**, one round trip                                  |
+| HttpOnly visible                       | **Yes**: `A3`, `T`, `A1`, `F`, `OTH`, `dflow` all `httpOnly: true`        |
+| `Y`                                    | present, **`httpOnly: false`** (secure, `no_restriction`)                 |
+| Host access                            | the per-site grant from the content scripts' `matches` was enough         |
+| `www.google.com` (not listed)          | refused before any command, naming `APPLE_SAFARI_COOKIE_HOSTS`            |
+| `saveAs` `A3`, `T`, `Y`                | 684 bytes, mode 0600, three pairs in order, no prefix, no newline         |
+| Any value in anything the server wrote | **none**, checked by searching its whole stdout and stderr for each value |
+
+**What Safari's `cookies` API does, set against Chrome's.** The shape matches Chrome's: `sameSite`
+comes back as `no_restriction`, `lax` or `strict`, `expirationDate` in whole seconds, and `domain`
+with a leading dot for a domain cookie (`.yahoo.com`) and without one for a host-only cookie
+(`finance.yahoo.com`). The difference is host access: Chrome's MV3 `cookies.getAll` needs
+`host_permissions` for the site, and content-script `matches` do not grant it. Safari treats the
+site the user allowed for the content scripts as granted for this API too, which is what lets the
+manifest add no host permission at all.
+
+**Still unmeasured:** which cookie store answers when a Safari profile other than the default holds
+the tab (the extension is active in three profiles here, and the call passes no `storeId`), a
+session cookie's `expires: null` against a real one (all 17 here had an expiry), and a Private
+Browsing tab.
+
+### In the app
+
+The live run above had to start the server from a terminal, because the app handed its servers
+on/off gates only and had no way to pass a host list. It now has one: Safari's surface carries a
+**Read cookies** gate (`allowCookies` in `surfaces.json`) with a **Sites** field under it. A gate
+may declare a `value` (an env suffix, a label and a placeholder), stored beside its switch as
+`gate.<surface>.<id>.value`, and `ServerLocator.gateValues` passes it as `APPLE_SAFARI_COOKIE_HOSTS`
+**only while the switch is on**, trimmed, and not at all when empty. So switching the gate off is
+the whole of switching the tool off, whatever is still typed. The field is disabled, not hidden,
+while the switch is off, and like every gate it reaches servers started after the change.
+`make unit` pins those rules.
+
+Outside the app, a server an MCP client starts itself (npm, or `node packages/safari/dist/cli.js`)
+takes both variables directly, but only from a process that can read the extension's container:
+Full Disk Access, since a plain shell gets `EPERM` there.
 
 ## Still open
 

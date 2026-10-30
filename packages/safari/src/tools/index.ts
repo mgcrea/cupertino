@@ -4,6 +4,7 @@ import type { AppleSafariClient } from "../client/safari.js";
 import { registerActionTools, registerElementTools } from "./actions.js";
 import { registerBookmarkTools } from "./bookmarks.js";
 import { registerCodeTools } from "./codes.js";
+import { registerCookieTools } from "./cookies.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
 import { registerHistoryTools } from "./history.js";
 import { registerNetworkTools } from "./network.js";
@@ -61,6 +62,21 @@ export type ToolContext = {
    * flag alone never lets either happen.
    */
   allowNetwork: boolean;
+  /**
+   * Reading a site's cookies, HttpOnly ones included: `apple_safari_cookies`.
+   *
+   * A READ gate of its own, apart from `allowWrites` for the reason the two
+   * above give, and apart from `allowNetwork` because it reaches what that lane
+   * masks: the session itself, not traffic that happens to carry it. It is
+   * also not enough alone. The tool reads only pages on a site in
+   * `cookieHosts`, refuses every other before the browser is asked, and with
+   * the list empty refuses everything — so turning this on never hands an
+   * agent every session in the browser.
+   *
+   * Values never come back inline. `saveAs`, the only way out for them, writes
+   * a file and so additionally needs `allowWrites`; the client refuses it.
+   */
+  allowCookies: boolean;
 };
 
 /**
@@ -86,6 +102,7 @@ export const registerTools = (
   registerElementTools(server, client);
   if (ctx.allowCodes) registerCodeTools(server, client);
   if (ctx.allowNetwork) registerNetworkTools(server, client, { allowWrites: ctx.allowWrites });
+  if (ctx.allowCookies) registerCookieTools(server, client, { allowWrites: ctx.allowWrites });
   if (!ctx.allowWrites) return;
   registerWriteTools(server, client);
   registerActionTools(server, client);

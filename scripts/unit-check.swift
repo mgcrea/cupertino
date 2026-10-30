@@ -1272,6 +1272,38 @@ struct UnitCheck {
       check("an empty list returns at once", Date().timeIntervalSince(emptyStart) < 0.1)
     }
 
+    // A gate's text reaches the server only with its gate. Safari's cookie hosts
+    // are the second gate on a tool that reads signed-in sessions, so a value
+    // that leaked past a switched-off gate, or an empty one passed as "", would
+    // be a gate in name only.
+    print("\ngate values")
+    do {
+      let safari = Surface.all.first { $0.id == "safari" }!
+      let cookies = safari.gates.first { $0.id == "allowCookies" }
+      check("safari declares the cookies gate", cookies?.envSuffix == "ALLOW_COOKIES")
+      check("and its value is the host list", cookies?.value?.envSuffix == "COOKIE_HOSTS")
+
+      let hosts = { (_: Surface.Gate) -> String? in "  yahoo.com, example.org \n" }
+      let on = ServerLocator.gateValues(for: safari, isOn: { $0.id == "allowCookies" }, text: hosts)
+      check(
+        "the hosts pass while the gate is on, trimmed",
+        on == ["COOKIE_HOSTS": "yahoo.com, example.org"])
+      let off = ServerLocator.gateValues(for: safari, isOn: { _ in false }, text: hosts)
+      check("nothing passes while the gate is off, whatever is typed", off.isEmpty)
+      let blank = ServerLocator.gateValues(for: safari, isOn: { _ in true }, text: { _ in "  " })
+      check("an empty field passes nothing, so the server keeps its default", blank.isEmpty)
+      let other = ServerLocator.gateValues(
+        for: safari, isOn: { $0.id == "allowNetwork" }, text: hosts)
+      check("another gate being on does not carry this one's value", other.isEmpty)
+
+      let env = ServerLocator.environment(
+        for: safari, allowWrites: false, gates: ["ALLOW_COOKIES"], values: on)
+      check("the env names the gate", env["APPLE_SAFARI_ALLOW_COOKIES"] == "1")
+      check("and carries the hosts", env["APPLE_SAFARI_COOKIE_HOSTS"] == "yahoo.com, example.org")
+      let none = ServerLocator.environment(for: safari, allowWrites: false)
+      check("with no values, no host variable at all", none["APPLE_SAFARI_COOKIE_HOSTS"] == nil)
+    }
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")

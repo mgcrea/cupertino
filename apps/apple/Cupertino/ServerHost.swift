@@ -1071,7 +1071,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
       : SurfaceSettings.lazyTools(surface) && !ClientFacade.defersSchemas(wiredClient)
     process.environment = ServerLocator.environment(
       for: surface, allowWrites: SurfaceSettings.allowWrites(surface), gates: gates,
-      lazyTools: lazyTools)
+      values: SurfaceSettings.gateValues(surface), lazyTools: lazyTools)
 
     let writes = SurfaceSettings.allowWrites(surface)
     hostLog(surface.id, .info, "allowWrites=\(writes)")
@@ -1539,6 +1539,18 @@ nonisolated enum SurfaceSettings {
   /// The env suffixes of every gate currently on, for `ServerLocator`.
   static func enabledGates(_ surface: Surface) -> [String] {
     surface.gates.filter { isGateOn(surface, $0) }.map(\.envSuffix)
+  }
+
+  /// Where a gate's text lives, beside its switch's key.
+  static func gateValueKey(_ surface: Surface, _ gate: Surface.Gate) -> String {
+    "\(gateKey(surface, gate)).value"
+  }
+
+  /// The texts of the gates currently on, for `ServerLocator`; see `gateValues` there.
+  static func gateValues(_ surface: Surface) -> [String: String] {
+    ServerLocator.gateValues(
+      for: surface, isOn: { isGateOn(surface, $0) },
+      text: { UserDefaults.standard.string(forKey: gateValueKey(surface, $0)) })
   }
 
   static func enabledKey(_ surface: Surface) -> String { "surfaceEnabled.\(surface.id)" }

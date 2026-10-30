@@ -67,6 +67,16 @@ ask them to trigger a new one. And a site that splits the code across six
 single-character boxes cannot be filled by one \`fill\`; enumerate again
 afterwards and look at \`hasValue\` before clicking submit.
 
+## Handing a signed-in session to a local tool
+
+Only when \`APPLE_SAFARI_ALLOW_COOKIES\` is on, and only for a site listed in
+\`APPLE_SAFARI_COOKIE_HOSTS\`; a refusal naming that setting is the user's to
+change, never something to work around. \`apple_safari_cookies\` on the page's
+URL lists its cookies, HttpOnly ones included, with no value. To hand some to a
+tool, call it again with \`names\` and \`saveAs\`: the file holds one Cookie header
+value ("A3=…; T=…; Y=…"), mode 0600, and the values go nowhere else. Never read
+that file back into the conversation; give its path to the tool that needs it.
+
 ## Debugging a page, and getting a file out of an API response
 
 Only when the user has switched on "Read network traffic"

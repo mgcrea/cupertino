@@ -59,17 +59,42 @@ nonisolated enum ServerLocator {
   /// so there would be nothing to scope a lend to. Presence is not permission:
   /// `ServerHost` still proves the caller with `LOCAL_PEERPID` and still answers
   /// to the borrower's own gates.
+  /// The texts the gates that are ON carry, keyed by env suffix, for `environment`.
+  ///
+  /// A value goes with its gate or not at all: the cookie hosts of a switched-off
+  /// cookie gate are not passed, so turning the switch off is the whole of
+  /// turning the tool off, whatever is still typed in the field. Whitespace is
+  /// trimmed and an empty text is left out, so the server sees its default
+  /// (for cookie hosts, none) rather than an empty variable.
+  ///
+  /// Pure, with the two reads injected, so `make unit` can check it without
+  /// `UserDefaults`; `SurfaceSettings.gateValues` supplies them.
+  static func gateValues(
+    for surface: Surface, isOn: (Surface.Gate) -> Bool, text: (Surface.Gate) -> String?
+  ) -> [String: String] {
+    var values: [String: String] = [:]
+    for gate in surface.gates {
+      guard let value = gate.value, isOn(gate) else { continue }
+      let trimmed = (text(gate) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+      if !trimmed.isEmpty { values[value.envSuffix] = trimmed }
+    }
+    return values
+  }
+
   static let axSocketVar = "CUPERTINO_AX_SOCKET"
   static let axIdentityVar = "CUPERTINO_AX_FOR"
 
+  /// - Parameter values: env SUFFIX → text, from `gateValues`. Passed as is.
   static func environment(
-    for surface: Surface, allowWrites: Bool, gates: [String] = [], lazyTools: Bool = false
+    for surface: Surface, allowWrites: Bool, gates: [String] = [],
+    values: [String: String] = [:], lazyTools: Bool = false
   )
     -> [String: String]
   {
     var env = ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory()]
     if allowWrites { env["\(surface.envPrefix)ALLOW_WRITES"] = "1" }
     for suffix in gates { env["\(surface.envPrefix)\(suffix)"] = "1" }
+    for (suffix, value) in values { env["\(surface.envPrefix)\(suffix)"] = value }
     if lazyTools { env["\(surface.envPrefix)LAZY_TOOLS"] = "1" }
     if surface.runtime == .node, surface.bundleID != nil,
       BridgeProtocol.isAddressable(BridgeProtocol.socketPath)

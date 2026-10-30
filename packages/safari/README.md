@@ -57,6 +57,12 @@ which the user can see and revoke per site.
 | `apple_safari_network_list`   | what the page fetched: method, URL, status, timing, no bodies          |
 | `apple_safari_network_get`    | one request's headers and body; `saveAs` writes a file (needs writes)  |
 
+**Opt-in read** — `APPLE_SAFARI_ALLOW_COOKIES`, and only for sites in `APPLE_SAFARI_COOKIE_HOSTS`
+
+| Tool                   | What                                                                         |
+| ---------------------- | ---------------------------------------------------------------------------- |
+| `apple_safari_cookies` | a page's cookies, HttpOnly included, as metadata; `saveAs` writes named ones |
+
 **Write** — `APPLE_SAFARI_ALLOW_WRITES`
 
 | Tool                                 | What                                    |
@@ -76,7 +82,9 @@ which the user can see and revoke per site.
 | `APPLE_SAFARI_ALLOW_WRITES`            | off           | Register the seven write tools at all.                |
 | `APPLE_SAFARI_ALLOW_CODES`             | off           | One-time codes — see below.                           |
 | `APPLE_SAFARI_ALLOW_NETWORK`           | off           | Network capture — see below.                          |
-| `APPLE_SAFARI_DOWNLOAD_DIR`            | `~/Downloads` | Where `network_get` `saveAs` writes.                  |
+| `APPLE_SAFARI_ALLOW_COOKIES`           | off           | Reading cookies — see below.                          |
+| `APPLE_SAFARI_COOKIE_HOSTS`            | empty         | Sites whose cookies may be read. Empty = none.        |
+| `APPLE_SAFARI_DOWNLOAD_DIR`            | `~/Downloads` | Where `saveAs` writes.                                |
 | `APPLE_SAFARI_NETWORK_CHUNK_CHARS`     | `262144`      | Characters per native message when pulling a body.    |
 | `APPLE_SAFARI_LIVE_TABS`               | on            | Use the Apple Events lane. Off = no Apple Event.      |
 | `APPLE_SAFARI_STORE`                   | auto          | Explicit `History.db` path.                           |
@@ -138,6 +146,34 @@ is a different exposure from a one-time code.
   requests can be missing, and if it does not, `hook.injection` says `"blocked"`.
 - **A file inside an API response:** `network_get` with `jsonPath` to the field, `decode: "base64"`
   and `saveAs`. The bytes go to disk, not into the conversation.
+
+### `APPLE_SAFARI_ALLOW_COOKIES` and `APPLE_SAFARI_COOKIE_HOSTS`
+
+Registers `cookies`, which lists the cookies Safari would send to an open page, **HttpOnly ones
+included**, so a signed-in session can be handed to a local tool without copying it out of Safari by
+hand. It reads through `browser.cookies` in the extension's background worker, so the values never
+enter the page's own process.
+
+- **Gated twice.** The flag decides whether the tool exists; `APPLE_SAFARI_COOKIE_HOSTS` decides
+  which sites it may read. A login cookie is the login, so the flag alone would hand any agent any
+  session in the browser. The list is comma-separated registrable domains (`yahoo.com`), each
+  covering the domain and its subdomains on a label boundary (never `notyahoo.com`). Empty, the
+  default, refuses every page, and a refusal names the setting. An entry with no dot is ignored;
+  there is no public-suffix list, so do not list one like `co.uk`.
+- **No value inline, ever.** The result gives each cookie's name, domain, path, `secure`,
+  `httpOnly`, `sameSite` and `expires` (null for a session cookie).
+- **To get values out:** `names` plus `saveAs` writes the named cookies into
+  `APPLE_SAFARI_DOWNLOAD_DIR` as one `Cookie` header value — `A3=…; T=…; Y=…`, with no `Cookie:`
+  prefix and no trailing newline, so a tool that takes a cookie string reads the file as is — mode 0600. A bare filename, never over an existing file unless `overwrite: true`, and it needs
+  `ALLOW_WRITES`. A name the page lacks writes nothing and says which.
+- **The extension asks for the `cookies` permission.** On the install measured, Safari did not ask
+  for approval again and the API worked at once; if yours shows the extension switched off, enable it
+  in Safari › Settings › Extensions, and until then the tool says `browser.cookies` is not
+  available. It still reads only on sites you have allowed the extension on: there is no new
+  all-sites grant.
+- **In the Cupertino app** both are one control: Safari › **Read cookies**, with the sites in the
+  **Sites** field under it, passed only while the box is ticked. Started yourself, the server needs
+  both variables set and Full Disk Access, so it can reach the extension's container.
 
 Buffer limits: 1,000 records and 50 MiB of bodies per page; bodies are kept up to `maxBodyBytes`
 (10 MiB by default, 50 MiB at most). See [docs/safari.md](../../docs/safari.md#network-capture).

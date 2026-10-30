@@ -537,6 +537,8 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/ShellPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
+		apps/apple/Cupertino/ServerLocator.swift \
+		apps/apple/Cupertino/Surfaces.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check

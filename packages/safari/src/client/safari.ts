@@ -8,6 +8,7 @@ import {
 import { BUILD_INFO } from "../build-info.js";
 import type { Config } from "../config.js";
 import { pageOfElement, runCommand, type Command, type CommandResult } from "./actions.js";
+import { readCookies, type CookiesInput, type CookiesResult } from "./cookies.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import {
   BookmarksUnavailableError,
@@ -1022,9 +1023,10 @@ export class AppleSafariClient {
   }
 
   /**
-   * Send one network command through the same channel and the same silence
-   * diagnosis as `pageAction`. The logic that uses it lives in `network.ts`;
-   * this is only the wiring, to keep this file from carrying it.
+   * Send one network or cookies command through the same channel and the same
+   * silence diagnosis as `pageAction`. The logic that uses it lives in
+   * `network.ts` and `cookies.ts`; this is only the wiring, to keep this file
+   * from carrying it.
    */
   #runNet = async (command: Omit<Command, "id" | "expiresAt">): Promise<CommandResult> => {
     const sentAt = Date.now();
@@ -1046,6 +1048,19 @@ export class AppleSafariClient {
   /** The records a page has buffered, filtered and paged. */
   networkList(input: Parameters<typeof networkList>[1]): Promise<ListResult> {
     return networkList(this.#runNet, input);
+  }
+
+  /** A page's cookies as metadata, or the named ones saved to a file; see `readCookies`. */
+  cookies(input: CookiesInput): Promise<CookiesResult> {
+    return readCookies(
+      this.#runNet,
+      {
+        allowWrites: this.#config.allowWrites,
+        downloadDir: this.#config.downloadDir,
+        cookieHosts: this.#config.cookieHosts,
+      },
+      input,
+    );
   }
 
   /** One record's headers and body, pulled in chunks; see `networkGet`. */

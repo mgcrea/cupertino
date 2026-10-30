@@ -62,7 +62,9 @@ export type Command = {
     | "read"
     | "netRecord"
     | "netList"
-    | "netGet";
+    | "netGet"
+    // Answered by the background worker, never by the page; see `cookies.ts`.
+    | "cookies";
   /**
    * The page this is for. A command with no URL is answered by whichever
    * allowed page polls first, which is only ever right for a question about
@@ -126,6 +128,12 @@ export type Command = {
   headers?: boolean | undefined;
   offset?: number | undefined;
   length?: number | undefined;
+  /**
+   * `cookies`: the names whose VALUES may come back. Absent for a listing, so
+   * a listing carries no value across the channel at all; set to the caller's
+   * `names` only for `saveAs`.
+   */
+  valuesFor?: string[] | undefined;
   /** Unix seconds. The handler drops an expired command rather than running it. */
   expiresAt: number;
 };
