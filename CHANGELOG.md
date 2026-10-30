@@ -6,11 +6,29 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.34.0`,
-`notes-v1.34.0`, `reminders-v1.34.0`, `core-v1.34.0` for the npm packages, and `app-v1.34.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.35.0`,
+`notes-v1.35.0`, `reminders-v1.35.0`, `core-v1.35.0` for the npm packages, and `app-v1.35.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.35.0] - 2026-10-30
+
+**Safari can hand a signed-in session to a local tool.** It reads a site's cookies, HttpOnly ones
+included, only for the sites you list, and never shows a value to the agent.
+
+### Added
+
+- **Safari reads a site's cookies, for the sites you list.** `apple_safari_cookies` lists the
+  cookies Safari would send to an open page, HttpOnly ones included, with each one's name, domain,
+  path, flags and expiry, and never its value. To hand a session to a local tool, it writes the
+  cookies you name to a private file (mode 0600) as one Cookie header value. Turn it on in Safari's
+  settings in Cupertino with **Read cookies**, and list the sites it may read in the **Sites** field
+  under it, like `yahoo.com`: an empty list refuses every site. Saving the file also needs writes.
+  Outside the app, the same is `APPLE_SAFARI_ALLOW_COOKIES` and `APPLE_SAFARI_COOKIE_HOSTS`.
+- **The Safari extension asks for the cookies permission**, which the tool above reads through. It
+  adds no all-sites access: cookies are read only on sites you have already allowed the extension
+  on.
 
 ## [1.34.0] - 2026-10-29
 
@@ -3178,7 +3196,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.34.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.35.0...HEAD
+[1.35.0]: https://github.com/mgcrea/cupertino/compare/app-v1.34.0...app-v1.35.0
 [1.34.0]: https://github.com/mgcrea/cupertino/compare/app-v1.33.0...app-v1.34.0
 [1.33.0]: https://github.com/mgcrea/cupertino/compare/app-v1.32.0...app-v1.33.0
 [1.32.0]: https://github.com/mgcrea/cupertino/compare/app-v1.31.0...app-v1.32.0

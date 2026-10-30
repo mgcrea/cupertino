@@ -220,7 +220,31 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_34_0, v1_33_0, v1_32_0, v1_31_0, v1_30_0]
+  static let releases: [Release] = [v1_35_0, v1_34_0, v1_33_0, v1_32_0, v1_31_0]
+
+  // swift-format-ignore
+  private static let v1_35_0: Release = Release(
+    version: "1.35.0",
+    date: "2026-10-30",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Safari reads a site's cookies, for the sites you list.",
+            body: [
+              "`apple_safari_cookies` lists the cookies Safari would send to an open page, HttpOnly ones included, with each one's name, domain, path, flags and expiry, and never its value. To hand a session to a local tool, it writes the cookies you name to a private file (mode 0600) as one Cookie header value. Turn it on in Safari's settings in Cupertino with **Read cookies**, and list the sites it may read in the **Sites** field under it, like `yahoo.com`: an empty list refuses every site. Saving the file also needs writes. Outside the app, the same is `APPLE_SAFARI_ALLOW_COOKIES` and `APPLE_SAFARI_COOKIE_HOSTS`.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "The Safari extension asks for the cookies permission",
+            body: [
+              ", which the tool above reads through. It adds no all-sites access: cookies are read only on sites you have already allowed the extension on.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_34_0: Release = Release(
@@ -500,35 +524,6 @@ nonisolated enum Changelog {
             headline: "Finding the device screen in Device Hub stops before the app's own tree",
             body: [
               ", which made the search run out of time on an iPhone Duo.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_30_0: Release = Release(
-    version: "1.30.0",
-    date: "2026-10-22",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A new mail no longer reaches its recipient as one long quote.",
-            body: [
-              "`apple_mail_send_message` set the body through AppleScript, and Mail wraps a body set that way in a quotation. Mail hides it, but Outlook and every other client show it, and the plain-text part had `> ` before every line. The step meant to remove it needed a permission Cupertino doesn't hold, so it failed every time, and the failure was dropped as cosmetic. A new message is now composed the way a reply is: the body and any files are pasted into the window and read back, and nothing is assigned, so there is no quote to remove. `apple_mail_update_draft` recreates a draft the same way. Without Cupertino, a body that stays quoted is reported as `quoted: true` and is never sent like that.",
-            ]),
-        ]),
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 1,
-            headline: "Mail attaches files to a draft that is already open.",
-            body: [
-              "`apple_mail_update_draft` takes `attachments`, and its `body` is now optional, so \"attach the PDF to that reply\" no longer means driving Mail's File menu by hand. The files are pasted into the draft's own composer window after your text and above any quoted original, the way a file copied in Finder pastes, and nothing is saved until each one shows up in the window with your text unchanged. Threading and the quote stay as they were. With no window open, files only go on when the body is rewritten too, on a draft that is not a reply.",
             ]),
         ]),
     ])
