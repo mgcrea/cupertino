@@ -58,6 +58,8 @@ export type CookiesInput = {
 export type CookiesResult = {
   url: string;
   host: string;
+  /** The cookie store (one per Safari profile) the cookies came from; see `background.js`. */
+  store: string | null;
   count: number;
   cookies: CookieInfo[];
   saved?: { path: string; bytes: number; names: string[] };
@@ -252,12 +254,16 @@ export async function readCookies(
     ...(input.saveAs !== undefined ? { valuesFor: names } : {}),
   });
   if (!result.ok) throw explain(result);
-  const raw = ((result.data as { cookies?: unknown } | undefined)?.cookies ?? []) as RawCookie[];
+  const data = result.data as { cookies?: unknown; store?: unknown } | undefined;
+  const raw = (data?.cookies ?? []) as RawCookie[];
   const all = raw.filter((c) => typeof c?.name === "string");
+  // Which profile's session this is. Null from an extension older than the
+  // store fix, which read Safari's default store whatever the tab's profile.
+  const store = typeof data?.store === "string" ? data.store : null;
 
   if (input.saveAs === undefined) {
     const listed = (names ? all.filter((c) => names.includes(c.name as string)) : all).map(toInfo);
-    return { url: input.url, host, count: listed.length, cookies: listed };
+    return { url: input.url, host, store, count: listed.length, cookies: listed };
   }
 
   const wanted = names as string[];
@@ -305,6 +311,7 @@ export async function readCookies(
   return {
     url: input.url,
     host,
+    store,
     count: cookies.length,
     cookies,
     saved: { path: written.path, bytes: written.bytes, names: wanted },

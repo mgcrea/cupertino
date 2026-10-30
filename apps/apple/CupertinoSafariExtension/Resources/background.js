@@ -48,7 +48,7 @@ async function answerHere(reply, poll, sender) {
     }
     const result =
       command.action === "cookies"
-        ? await cookies(command, poll)
+        ? await cookies(command, poll, sender)
         : await cookieProbe(command, poll, sender);
     try {
       await browser.runtime.sendNativeMessage("application.id", {
@@ -74,8 +74,15 @@ async function answerHere(reply, poll, sender) {
  * result is written to the container by the handler and removed by the server
  * as it collects it. Never throws, so a failure is an answer rather than a
  * timeout. An error message is the API's own and carries no cookie.
+ *
+ * Read from the store holding the tab that polled, and from no other. Safari
+ * keeps a cookie store per profile, and `getAll` with no `storeId` answers
+ * from one fixed store whatever profile the tab is in: measured 2026-10-30, a
+ * Maker-profile tab got the Personal profile's session, so a sign-in in Maker
+ * left the saved file byte-identical and Yahoo refused it. With no store to
+ * name, it refuses rather than hand over some profile's session.
  */
-async function cookies(command, poll) {
+async function cookies(command, poll, sender) {
   // The handler only gives a URL-routed command to a page polling with that
   // URL; this is the same rule where the read happens.
   if (typeof command.url !== "string" || command.url !== poll?.url) {
@@ -90,12 +97,15 @@ async function cookies(command, poll) {
         "Settings > Extensions.",
     };
   }
+  const store = await storeOfTab(sender);
+  if (!store.id) return { ok: false, error: store.error };
   try {
-    const found = await browser.cookies.getAll({ url: command.url });
+    const found = await browser.cookies.getAll({ url: command.url, storeId: store.id });
     const values = Array.isArray(command.valuesFor) ? command.valuesFor : [];
     return {
       ok: true,
       data: {
+        store: store.id,
         cookies: (found ?? []).map((c) => {
           const entry = {
             name: c.name,
@@ -118,6 +128,32 @@ async function cookies(command, poll) {
       ok: false,
       error: "browser.cookies.getAll failed: " + String(error?.message || error),
     };
+  }
+}
+
+/**
+ * The cookie store the polling tab's profile uses: the one store whose
+ * `tabIds` holds that tab. Anything short of exactly one is an error that
+ * names the cause, never a fallback to the default store, which is the wrong
+ * profile's session for every tab outside it.
+ */
+async function storeOfTab(sender) {
+  const unknown =
+    "Could not tell which cookie store (Safari profile) this tab uses, so nothing was read: " +
+    "the default store can belong to another profile.";
+  const tabId = sender?.tab?.id;
+  if (typeof tabId !== "number") return { error: unknown + " The poll named no tab." };
+  if (typeof browser.cookies.getAllCookieStores !== "function") {
+    return { error: unknown + " This Safari does not list its cookie stores." };
+  }
+  try {
+    const holding = ((await browser.cookies.getAllCookieStores()) ?? []).filter(
+      (s) => Array.isArray(s.tabIds) && s.tabIds.includes(tabId),
+    );
+    if (holding.length === 1) return { id: holding[0].id };
+    return { error: unknown + ` ${holding.length} stores claim the tab.` };
+  } catch (error) {
+    return { error: unknown + " " + String(error?.message || error) };
   }
 }
 

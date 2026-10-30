@@ -47,6 +47,9 @@ export const registerCookieTools = (
           "its name, domain, path, secure, httpOnly, sameSite and expiry (`expires`, null for a " +
           "session cookie). It NEVER returns a cookie's value inline, whatever you ask: a login " +
           "cookie is the login itself, and this conversation is the wrong place for it.\n\n" +
+          "Safari keeps separate cookies per profile. They come from the profile of the tab " +
+          "that answered, named in `store`; with the same URL open in two profiles, whichever " +
+          "polls first answers, so keep the page open in the one profile you mean.\n\n" +
           "To hand a session to a local tool, pass `names` and `saveAs`. The named cookies are " +
           'written to that file as one Cookie header value ("A3=…; T=…; Y=…", no "Cookie:" ' +
           "prefix and no trailing newline), mode 0600, into APPLE_SAFARI_DOWNLOAD_DIR (default " +
@@ -114,6 +117,12 @@ export const registerCookieTools = (
         return ok(
           compact({
             ...result,
+            storeNote:
+              result.store === null
+                ? "The extension that answered predates the profile fix: it read Safari's " +
+                  "default cookie store, which can be another profile's session. Update " +
+                  "Cupertino and reload the tab before relying on these cookies."
+                : undefined,
             valuesNote: result.saved
               ? "The values are in the file and nowhere else. Treat it as the login itself: " +
                 "hand its path to the tool that needs it, and delete it when done."
