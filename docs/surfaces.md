@@ -332,6 +332,16 @@ question was never "which tables should not count" but "did a table holding one 
 OBJECTS move" — and a role classifier already answered that. Same shape as scoring an id bridge:
 state what would count as evidence BEFORE looking at what moved.
 
+**Where a store holds the field, read it there — and native code does not change that.** An Apple
+Events read costs what the app takes to answer one event per property, not the transport:
+`osascript -l JavaScript` starts in 20 ms, while Mail took ~430 ms for one message's summary and
+8.4 s to list twenty (measured 2026-10-27, macOS 27.0, 210k messages). A Swift client sends the same
+events and waits as long; the Desktop surface's win came from replacing System Events, which is a
+different cost. On the store side `node:sqlite` is already SQLite in-process, so a native reader
+buys nothing there either. Moving Mail's reads onto the Envelope Index and the message files took
+them to 2–50 ms; Messages, which never had an Apple Events read lane, measured 5–130 ms and needed
+nothing.
+
 **Check whether the entitlement is claimable by a Developer-ID build before probing the store.**
 One `codesign -d --entitlements - --xml` closes Passwords in a second: `Passwords.app` holds the
 Apple-private `com.apple.password-manager` keychain access group, which no Developer-ID build can
