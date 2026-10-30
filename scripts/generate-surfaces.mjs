@@ -179,6 +179,21 @@ const validate = (surfaces) => {
             if (typeof g?.[key] !== "string" || !g[key])
               problems.push(`${gat}: ${key} is required`);
           }
+          // `value` is optional: a text the gate carries, passed to the server
+          // only while the gate is on. Safari's cookie gate is the first, and
+          // its value is the second gate — the sites it may read.
+          if (g?.value !== undefined) {
+            if (!/^[A-Z][A-Z0-9_]*$/.test(g.value?.envSuffix ?? "")) {
+              problems.push(`${gat}.value: envSuffix must be SCREAMING_SNAKE_CASE`);
+            }
+            if (g.value?.envSuffix === g.envSuffix) {
+              problems.push(`${gat}.value: envSuffix must differ from the gate's own`);
+            }
+            for (const key of ["label", "placeholder"]) {
+              if (typeof g.value?.[key] !== "string" || !g.value[key])
+                problems.push(`${gat}.value: ${key} is required`);
+            }
+          }
         }
       }
     }
@@ -251,7 +266,12 @@ const STORE_PERMISSION = {
 
 const swiftGate = (g) =>
   `        Surface.Gate(id: ${swiftString(g.id)}, envSuffix: ${swiftString(g.envSuffix)}, ` +
-  `label: ${swiftString(g.label)}, description: ${swiftString(g.description)}),`;
+  `label: ${swiftString(g.label)}, description: ${swiftString(g.description)}` +
+  (g.value === undefined
+    ? ""
+    : `, value: Surface.Gate.Value(envSuffix: ${swiftString(g.value.envSuffix)}, ` +
+      `label: ${swiftString(g.value.label)}, placeholder: ${swiftString(g.value.placeholder)})`) +
+  `),`;
 
 const swiftSurface = (s) => {
   const lines = [];

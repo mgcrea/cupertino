@@ -374,7 +374,15 @@
         "gate on its own therefore never changes anything. Like the click",
         "lane, the capture itself goes through the extension and so inherits",
         "Safari's per-website consent, and it sees only the top frame: no",
-        "subframes, no workers, no WebSockets. See docs/safari.md."
+        "subframes, no workers, no WebSockets. See docs/safari.md.",
+        "",
+        "allowCookies is the fourth read gate, and the first that is not",
+        "enough on its own. A login cookie IS the login, so the switch alone",
+        "would hand any agent any session in the browser. Its `value` is the",
+        "second gate: the sites the user lists, passed as",
+        "APPLE_SAFARI_COOKIE_HOSTS only while the switch is on, and an empty",
+        "list refuses every page. Values never come back inline; saveAs",
+        "writes named ones to a 0600 file and needs allowWrites too."
       ],
       "gates": [
         {
@@ -388,6 +396,17 @@
           "envSuffix": "ALLOW_NETWORK",
           "label": "Read network traffic",
           "description": "Lets Safari tools record what a page you have allowed the extension on fetches, and read the responses. Off by default."
+        },
+        {
+          "id": "allowCookies",
+          "envSuffix": "ALLOW_COOKIES",
+          "label": "Read cookies",
+          "description": "Lets apple_safari_cookies list a page's cookies, HttpOnly ones included, on the sites below only, so a signed-in session can be handed to a local tool. Values never come back to the agent; saving them to a private file also needs writes. Off by default.",
+          "value": {
+            "envSuffix": "COOKIE_HOSTS",
+            "label": "Sites",
+            "placeholder": "yahoo.com, example.org"
+          }
         }
       ]
     },
