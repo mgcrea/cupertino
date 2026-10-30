@@ -1361,10 +1361,15 @@ and so no new `<all_urls>` grant: the read relies on the same per-site access th
 not.** Installing the build that added it over 1.34.0 left Cupertino ticked in Settings ›
 Extensions, with the same permissions text as before ("can read and alter webpages you visit and
 see your browsing history on all websites"; nothing about cookies), no prompt anywhere, and
-`browser.cookies` working on the first call. Two caveats keep this from being the last word: the
-manifest version did not change (both builds said 1.34.0), and a real Sparkle update changes it, so
-whether Safari reacts to a permission added under a NEW version is unmeasured. If it does disable the
-extension, the worker has no `browser.cookies` and the tool says so.
+`browser.cookies` working on the first call.
+
+That first install kept the version at 1.34.0, which is not what an update does, so it was measured
+again the way users get it: the official 1.34.0 from GitHub reinstalled (extension asking for
+`nativeMessaging` only), Safari opened on finance.yahoo.com and quit, then the notarized 1.35.0
+release commit installed over it with the appex and manifest both at 1.35.0. **Safari kept
+Cupertino ticked under the new version too.** The tool then answered through the app on the first
+try (below). An in-place install is not Sparkle's replacement, which remains unmeasured; if a future
+Safari does disable the extension, the worker has no `browser.cookies` and the tool says so.
 
 ### Measured
 
@@ -1410,6 +1415,13 @@ while the switch is off, and like every gate it reaches servers started after th
 Outside the app, a server an MCP client starts itself (npm, or `node packages/safari/dist/cli.js`)
 takes both variables directly, but only from a process that can read the extension's container:
 Full Disk Access, since a plain shell gets `EPERM` there.
+
+**Measured through the app**, 2026-10-30, on the notarized 1.35.0 release commit, by speaking MCP to
+the installed `cupertino-bridge --server=safari` with Read cookies ticked, `yahoo.com` in Sites and
+writes on: the server (1.35.0) registered the tool, diagnostics showed `hosts: ["yahoo.com"]`,
+`www.google.com` was refused naming the Sites field, the listing returned 17 cookies with `A3` and
+`T` HttpOnly and no value, and `saveAs` wrote 684 bytes to `~/Downloads` at 0600, three pairs in
+order, no value anywhere in what the bridge returned.
 
 ## Still open
 
