@@ -544,18 +544,24 @@ nonisolated enum Changelog {
         entries: [
           Entry(
             ordinal: 0,
+            headline: "Desktop can start an application that is not running.",
+            body: [
+              "`apple_desktop_launch` opens it behind whatever is in front and waits until it answers, up to 10 s, so its controls can be read and pressed while the person keeps their keyboard. It takes a bundle identifier and nothing else, is write-gated and scoped like the other driving tools, and shows the \"Cupertino opened\" notice. An application already running is left alone, one that takes the front anyway is sent back behind, and one never opened on this Mac is refused rather than stopping at a Gatekeeper dialog. With \"Reach any application\" on, any installed application can be started. A verb refused because an application is not running now says so and names the tool.",
+            ]),
+          Entry(
+            ordinal: 1,
             headline: "Desktop can wait for a change instead of polling for it.",
             body: [
               "`apple_desktop_wait_for` blocks until an element matching `id`, `role`, `name` or `value` appears, or with `state: \"absent\"` until it is gone, for up to a minute, and answers with the matches and their handles. It re-reads the tree every quarter second and sooner when the app posts a change. A timeout is an error saying what the last read saw, so a `run` stops there, and Esc in Claude Code ends it. It replaces chains of `wait` steps and `find_elements` calls.",
             ]),
           Entry(
-            ordinal: 1,
+            ordinal: 2,
             headline: "A `run` step can name its element instead of passing a handle.",
             body: [
               "A step that takes a `handle` can take `match` and `bundleId` instead, and the element is found when the step runs, waiting up to two seconds by default for it to appear. A step can now press an item in a context menu the step before it opened, which a handle read before the run could never reach. A match that finds several elements fails the step unless `index` picks one.",
             ]),
           Entry(
-            ordinal: 2,
+            ordinal: 3,
             headline: "`find_elements` matches on `value`.",
             body: [
               "A static text keeps its text in its value rather than its name, so it could only be found by reading the whole tree.",
@@ -566,13 +572,13 @@ nonisolated enum Changelog {
         lead: [],
         entries: [
           Entry(
-            ordinal: 3,
+            ordinal: 4,
             headline: "`set_value` reaches SwiftUI text fields.",
             body: [
               "Written while the field was not focused, the text showed in the field and read back as written, but the app's own state never received it, so a prompt typed into Drakar and sent went out empty. `set_value` now focuses a text field before writing, without bringing the app forward, and says `focused` in its answer.",
             ]),
           Entry(
-            ordinal: 4,
+            ordinal: 5,
             headline: "Desktop says an app quit rather than calling it busy.",
             body: [
               "A handle into an app that had crashed answered \"did not answer in time. The app may be busy; retry\". It now says the app quit, with its pid and the crash report when there is one.",

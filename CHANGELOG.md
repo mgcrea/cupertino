@@ -16,6 +16,14 @@ summary.
 
 ### Added
 
+- **Desktop can start an application that is not running.** `apple_desktop_launch` opens it behind
+  whatever is in front and waits until it answers, up to 10 s, so its controls can be read and
+  pressed while the person keeps their keyboard. It takes a bundle identifier and nothing else, is
+  write-gated and scoped like the other driving tools, and shows the "Cupertino opened" notice. An
+  application already running is left alone, one that takes the front anyway is sent back behind,
+  and one never opened on this Mac is refused rather than stopping at a Gatekeeper dialog. With
+  "Reach any application" on, any installed application can be started. A verb refused because an
+  application is not running now says so and names the tool.
 - **Desktop can wait for a change instead of polling for it.** `apple_desktop_wait_for` blocks until
   an element matching `id`, `role`, `name` or `value` appears, or with `state: "absent"` until it
   is gone, for up to a minute, and answers with the matches and their handles. It re-reads the tree

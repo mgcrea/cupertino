@@ -322,10 +322,10 @@ was found.
 `allowWrites` and `allowAnyApp` are orthogonal, and neither other in-process surface has a pair
 shaped this way — Sound's two gates are both capability tiers, these are **capability and scope**.
 
-|               | off (shipped)                                                                              | on                                                    |
-| ------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `allowWrites` | reads structure; the twelve driving tools are not registered                               | can press, type, click, hover, raise, focus, activate |
-| `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any running application but Cupertino itself  |
+|               | off (shipped)                                                                              | on                                                              |
+| ------------- | ------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| `allowWrites` | reads structure; the driving tools are not registered                                      | can press, type, click, hover, raise, focus, activate, launch   |
+| `allowAnyApp` | reaches the 9 applications Cupertino brokers (Simulator.app since the `simulator` surface) | reaches any application but Cupertino itself, and can start one |
 
 **Scope needs its own switch precisely because Accessibility does not scope.** The grant that reads a
 Maps place card reads anything on the Mac, so the bound comes from the closed table or from nowhere —
@@ -445,7 +445,7 @@ strings that change with the Mac's language.
 |                         | `screen`                    | `desktop`                            |
 | ----------------------- | --------------------------- | ------------------------------------ |
 | Grant                   | Screen Recording            | Accessibility                        |
-| Reach                   | the 9 brokered surface apps | **any running application**          |
+| Reach                   | the 9 brokered surface apps | **any application**, and starts one  |
 | Answers                 | pixels                      | structure, and it can act            |
 | Sees an occluded window | yes, composited             | yes, irrelevant — no pixels involved |
 
@@ -1276,8 +1276,63 @@ timeout answered at 0.61 s, a cancel after 0.5 s ended the wait at 0.57 s, a SIG
 wait ended it at 0.55 s naming the quit, and a handle used afterwards said quit rather than busy.
 Not yet driven against Drakar itself.
 
+## Starting an application, 2026-10-30
+
+An agent asked to work in an application that was not running had two answers: "Safari is not
+running." from every verb here, or `open -a` through the Shell surface, which costs the person a
+decision per run, checks no reach, and leaves an application that no stop can reach
+([shell.md](shell.md), "What a stop cannot reach"). `apple_desktop_launch` is the third.
+
+**It starts the application behind whatever is in front, and that is the whole verb.**
+`NSWorkspace.openApplication` with `activates = false`, `addsToRecentItems = false` and
+`promptsUserIfNeeded = false`, given a bundle identifier and nothing else: no arguments, documents or
+URLs, since opening one is whatever the application's handler does with it. Bringing it forward
+afterwards is `activate`, which admits as it always has. Keeping the two apart is what keeps
+admission where it was: an `activate` that also launched would need a new order of lookup,
+admission and launch, and the last time that order moved it opened a scope hole (above).
+
+- **Write-gated and scoped like every driving verb.** Not registered with writes off. Reach is checked
+  first, before LaunchServices is asked anything, so an application out of reach is refused without
+  learning whether it is installed. With "Reach any application" on, that is any installed
+  application but Cupertino; the switch's description now says "start".
+- **No admission and no session.** Nothing is typed or clicked. The notice is the `.launching` one a
+  Notes write lights when it starts Notes ("Cupertino opened Contacts. It was not running. You can
+  keep working."), lit once the open has succeeded, so a refusal shows nothing.
+- **Already running is a no-op**, answering `launched: false`, so the verb is as safe to repeat as
+  `activate`.
+- **Ready means it answers.** The open's completion fires when the application registers, which is
+  before it can be read, so the verb polls until it has finished launching and its application
+  element answers a windows read, up to 10 s. One that answers with no window is given two more
+  seconds to open one, since most do a moment later and some never do.
+- **One that takes the front anyway is sent back.** The frontmost application is read before the
+  launch, and if the launched one is in front afterwards, `handBack` returns the front to it and the
+  answer carries `tookFront` and `handedBack`.
+- **A never-opened application is refused.** Starting one stops at Gatekeeper's "downloaded from the
+  Internet" dialog, in front of the person, about something they never opened. The quarantine
+  attribute's presence alone does not say that, because approval keeps it: of 19 applications in
+  /Applications carrying it on 2026-10-30, 18 had the approved flag, 0x0040 (`01c1`, `01c3`, `03c1`),
+  and only the one never opened lacked it (`0181`). So the refusal reads the flag, and an unreadable
+  value counts as unapproved.
+- **"Not running" points at it.** A verb refused for an application that is not running says
+  `apple_desktop_launch starts it`, with writes on and outside the channel lent to Mail's composer.
+
+**Measured on 2026-10-30**, the real `AccessibilityDriver.launch` compiled into a scratch probe and
+run from the agent shell, which inherits Accessibility, with VS Code in front: Contacts, not
+running, was ready with one window in 0.66 s, VS Code stayed in front, and a second call answered
+`launched: false`. The same probe without a main run loop never saw Contacts start and timed out at
+10 s: `NSWorkspace.runningApplications` changes only when the main run loop runs, which it always
+does in the app, but a probe of this verb has to run one. The first window-server read of the
+frontmost application in that fresh process came back nil, so `launch` falls back to
+`NSWorkspace.frontmostApplication` for the application to hand back to.
+
+**Not measured:** which applications take the front despite `activates = false`. The hand-back is
+written for them and has not met one.
+
 ## Still open
 
+- **An application that takes the front when launched behind.** `launch` hands the front back when
+  one does, and none has been seen to yet. The measurement is a launch of a few third-party
+  applications, Electron ones first, during a hands-off window.
 - **A drop onto another application.** `to.bundleId` is checked for reach and window, and no drop
   across applications has been posted. Whether a Finder file dragged into Mail needs a pause after
   the press, as some drag sources do before starting a drag session, is not known.
