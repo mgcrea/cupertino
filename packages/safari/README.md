@@ -166,10 +166,14 @@ enter the page's own process.
   `APPLE_SAFARI_DOWNLOAD_DIR` as one `Cookie` header value — `A3=…; T=…; Y=…`, with no `Cookie:`
   prefix and no trailing newline, so a tool that takes a cookie string reads the file as is — mode 0600. A bare filename, never over an existing file unless `overwrite: true`, and it needs
   `ALLOW_WRITES`. A name the page lacks writes nothing and says which.
-- **The extension asks for the `cookies` permission**, so after the update that added it Safari asks
-  you to approve the extension again (Safari › Settings › Extensions). Until you do, the tool says
-  `browser.cookies` is not available. It still reads only on sites you have allowed the extension
-  on: there is no new all-sites grant.
+- **The extension asks for the `cookies` permission.** On the install measured, Safari did not ask
+  for approval again and the API worked at once; if yours shows the extension switched off, enable it
+  in Safari › Settings › Extensions, and until then the tool says `browser.cookies` is not
+  available. It still reads only on sites you have allowed the extension on: there is no new
+  all-sites grant.
+- **The Cupertino app cannot pass `APPLE_SAFARI_COOKIE_HOSTS` yet**, since it hands its servers
+  on/off settings only. Start the server yourself with both variables set, from a process with Full
+  Disk Access so it can reach the extension's container.
 
 Buffer limits: 1,000 records and 50 MiB of bodies per page; bodies are kept up to `maxBodyBytes`
 (10 MiB by default, 50 MiB at most). See [docs/safari.md](../../docs/safari.md#network-capture).

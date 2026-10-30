@@ -122,8 +122,8 @@ export const buildDiagnostics = async (
             (client.config.allowWrites
               ? "is available."
               : "needs APPLE_SAFARI_ALLOW_WRITES, which is off.") +
-            " The extension must carry the cookies permission: after the update that added it, " +
-            "Safari asks the user to approve the extension again."
+            " The extension must be a build that carries the cookies permission and be enabled " +
+            "in Safari; a page answering an older build says so."
           : "off — apple_safari_cookies is not registered. Set APPLE_SAFARI_ALLOW_COOKIES and " +
             "list the sites in APPLE_SAFARI_COOKIE_HOSTS to change that.",
         ...(cookieRules.ignored.length > 0

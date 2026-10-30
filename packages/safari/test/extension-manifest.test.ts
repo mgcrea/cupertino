@@ -86,9 +86,9 @@ describe("extension manifest", () => {
 
   /**
    * `cookies` is the one API permission besides native messaging, for
-   * `apple_safari_cookies`. Adding it changes what Safari asks the user to
-   * approve, so the extension has to be approved again after an update that
-   * brings it. It reads only on sites the user has allowed the extension on:
+   * `apple_safari_cookies`. It was expected to make Safari ask for approval
+   * again; on the install measured it did not (docs/safari.md, "The
+   * permission change"). It reads only on sites the user has allowed the extension on:
    * there is still no `host_permissions` entry and so no new `<all_urls>`
    * grant, only the content scripts' `matches`, which Safari asks about one
    * site at a time.

@@ -137,8 +137,8 @@ const explain = (result: CommandResult): PreconditionError =>
   new PreconditionError(
     /Unknown action/.test(result.error ?? "")
       ? "The Safari extension that answered is older than this server and does not know the " +
-          "cookies command. Update Cupertino, approve the extension again in Safari (it now asks " +
-          "for the cookies permission), and reload the tab."
+          "cookies command. Update Cupertino, check the extension is enabled in Safari › Settings " +
+          "› Extensions, and reload the tab."
       : (result.error ?? "The extension could not read this page's cookies."),
   );
 

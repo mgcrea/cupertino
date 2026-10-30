@@ -347,7 +347,8 @@ to a local tool. It is gated twice: `APPLE_SAFARI_ALLOW_COOKIES` registers it, a
 `APPLE_SAFARI_COOKIE_HOSTS` lists the sites it may read (`yahoo.com` covers its subdomains; empty
 means none). It never returns a value inline; `names` plus `saveAs` writes the named cookies to a
 0600 file as one `Cookie` header value, and that needs the write flag too. The extension asks for
-the `cookies` permission for it, so Safari asks you to approve the extension again after the update.
+the `cookies` permission for it, with no new all-sites grant. The app cannot pass the host list yet,
+so for now the tool needs a server started with both variables set.
 
 There is deliberately no `do JavaScript` tool: it needs a developer-menu toggle that is not a TCC
 grant and whose state cannot be read, so diagnostics could never say in advance whether it would

@@ -83,7 +83,7 @@ async function cookies(command, poll) {
       ok: false,
       error:
         "browser.cookies is not available to the extension: this build lacks the cookies " +
-        "permission, or Safari has not granted it. Approve the extension again in Safari " +
+        "permission, or Safari has not granted it. Check the extension is enabled in Safari " +
         "Settings > Extensions.",
     };
   }

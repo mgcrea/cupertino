@@ -1285,8 +1285,9 @@ gone" message, after the action timeout. A `saveAs` onto a name that already exi
 `apple_safari_cookies` lists the cookies Safari would send to an open page, **HttpOnly ones
 included**, and saves named ones to a file, so a signed-in session can be handed to a local tool
 without the user copying it out of Safari by hand. The case that asked for it is
-`mcp-yahoo-finance`, which needs `A3`, `T` and `Y` from a signed-in finance.yahoo.com tab, all three
-HttpOnly.
+`mcp-yahoo-finance`, which needs `A3`, `T` and `Y` from a signed-in finance.yahoo.com tab. The brief
+said all three were HttpOnly; measured, `A3` and `T` are and `Y` is not (see below). Two HttpOnly
+logins are still two cookies nothing else here can reach.
 
 ### Why the extension, and why its background worker
 
@@ -1302,8 +1303,8 @@ that process. So the command still travels the ordinary channel (the handler giv
 polling on its URL, which ties the read to an open page on a site the user allowed), but
 `background.js` takes it out of the poll's reply on the way back, reads the cookies itself, and
 files the result with native. The page never sees the command. An extension older than this ships
-it on to the page, whose runner answers "Unknown action", and the server turns that into "update and
-re-approve".
+it on to the page, whose runner answers "Unknown action", and the server turns that into "update,
+check the extension is enabled, and reload the tab".
 
 ### Gated twice, and why the flag alone is too weak
 
@@ -1352,11 +1353,56 @@ tests use obviously fake ones.
 
 ### The permission change
 
-The manifest asks for `cookies` beside `nativeMessaging`. **That changes what Safari asks the user
-to approve, so after the update that adds it the user has to approve the extension again.** Until
-they do, the worker has no `browser.cookies`, and the tool says so. There is still no
-`host_permissions` entry and so no new `<all_urls>` grant: the read relies on the same per-site
-access the content scripts' `matches` already ask for.
+The manifest asks for `cookies` beside `nativeMessaging`. There is still no `host_permissions` entry
+and so no new `<all_urls>` grant: the read relies on the same per-site access the content scripts'
+`matches` already ask for.
+
+**This was expected to make Safari ask the user to approve the extension again. Measured, it did
+not.** Installing the build that added it over 1.34.0 left Cupertino ticked in Settings ›
+Extensions, with the same permissions text as before ("can read and alter webpages you visit and
+see your browsing history on all websites"; nothing about cookies), no prompt anywhere, and
+`browser.cookies` working on the first call. Two caveats keep this from being the last word: the
+manifest version did not change (both builds said 1.34.0), and a real Sparkle update changes it, so
+whether Safari reacts to a permission added under a NEW version is unmeasured. If it does disable the
+extension, the worker has no `browser.cookies` and the tool says so.
+
+### Measured
+
+2026-10-30, Safari 26 on macOS 26, a notarized build of this branch installed over 1.34.0, the server
+started from a terminal with Full Disk Access with `APPLE_SAFARI_COOKIE_HOSTS=yahoo.com` (the app
+cannot yet pass a host list; see below), on a signed-in `https://finance.yahoo.com/` tab in front.
+
+| Check                                  | Result                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| Listing                                | **17 cookies in 909 ms**, one round trip                                  |
+| HttpOnly visible                       | **Yes**: `A3`, `T`, `A1`, `F`, `OTH`, `dflow` all `httpOnly: true`        |
+| `Y`                                    | present, **`httpOnly: false`** (secure, `no_restriction`)                 |
+| Host access                            | the per-site grant from the content scripts' `matches` was enough         |
+| `www.google.com` (not listed)          | refused before any command, naming `APPLE_SAFARI_COOKIE_HOSTS`            |
+| `saveAs` `A3`, `T`, `Y`                | 684 bytes, mode 0600, three pairs in order, no prefix, no newline         |
+| Any value in anything the server wrote | **none**, checked by searching its whole stdout and stderr for each value |
+
+**What Safari's `cookies` API does, set against Chrome's.** The shape matches Chrome's: `sameSite`
+comes back as `no_restriction`, `lax` or `strict`, `expirationDate` in whole seconds, and `domain`
+with a leading dot for a domain cookie (`.yahoo.com`) and without one for a host-only cookie
+(`finance.yahoo.com`). The difference is host access: Chrome's MV3 `cookies.getAll` needs
+`host_permissions` for the site, and content-script `matches` do not grant it. Safari treats the
+site the user allowed for the content scripts as granted for this API too, which is what lets the
+manifest add no host permission at all.
+
+**Still unmeasured:** which cookie store answers when a Safari profile other than the default holds
+the tab (the extension is active in three profiles here, and the call passes no `storeId`), a
+session cookie's `expires: null` against a real one (all 17 here had an expiry), and a Private
+Browsing tab.
+
+### Not yet in the app
+
+The app hands its servers on/off gates only (`ServerLocator.environment`), so it can set
+`APPLE_SAFARI_ALLOW_COOKIES` once a gate is added to `surfaces.json`, but it has no way to pass
+`APPLE_SAFARI_COOKIE_HOSTS`. Until it grows a host-list setting, the tool is reachable from a server
+an MCP client starts itself (npm, or `node packages/safari/dist/cli.js`) with both variables set,
+in a process that can read the extension's container: Full Disk Access, since a plain shell gets
+`EPERM` there.
 
 ## Still open
 
