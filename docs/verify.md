@@ -32,6 +32,23 @@ apple_mail_get_thread         { "ref": "<a ref from the search>" }
 The Gmail row is the one worth actually doing. It is the check that fails loudly if the labels
 predicate ever breaks, and on this machine the naive query returned 0 against 51,128 real messages.
 
+## Checking the index lane against Apple Events
+
+Run a second server with `APPLE_MAIL_INDEX_MODE=off` beside the normal one and call the same
+`list_messages`, `count_messages` and `get_message` on both: the second answers over Apple Events,
+which is what the first did before it read the index. On 2026-10-27, across four accounts, the two
+agreed on ids, order, subject, read, flagged, dates and totals. Expect two differences that are not
+bugs:
+
+- **`unread`** — the index's count against Mail's badge value, which was off by thousands
+  (2,512 against 23 on one INBOX).
+- **`sender` quoting** — Mail echoes the From header as the sending client wrote it, so a name
+  with a period is quoted by one sender and bare from the next. The index keeps the bare name, and
+  the server quotes it only when it holds a comma. Anything else differing in `sender` is real.
+
+One run also had the Apple Events side return an empty sender for every message of one INBOX,
+which the next run did not repeat. A side that is empty throughout is that lane, not the index.
+
 ## Without the inspector
 
 ```bash
