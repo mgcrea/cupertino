@@ -84,8 +84,22 @@ describe("extension manifest", () => {
     for (const cs of manifest.content_scripts) expect(cs).not.toHaveProperty("world");
   });
 
-  it("asks for native messaging only, now that nothing registers scripts", () => {
-    expect(manifest.permissions).toEqual(["nativeMessaging"]);
+  /**
+   * `cookies` is the one API permission besides native messaging, for
+   * `apple_safari_cookies`. Adding it changes what Safari asks the user to
+   * approve, so the extension has to be approved again after an update that
+   * brings it. It reads only on sites the user has allowed the extension on:
+   * there is still no `host_permissions` entry and so no new `<all_urls>`
+   * grant, only the content scripts' `matches`, which Safari asks about one
+   * site at a time.
+   */
+  it("asks for native messaging and cookies, and nothing that registers scripts", () => {
+    expect(manifest.permissions).toEqual(["nativeMessaging", "cookies"]);
+  });
+
+  it("asks for no host permission, so cookies stay behind the per-site grant", () => {
+    expect(manifest).not.toHaveProperty("host_permissions");
+    expect(manifest).not.toHaveProperty("optional_host_permissions");
   });
 
   it("exposes the hook file to pages, for the src fallback, and nothing else", () => {
