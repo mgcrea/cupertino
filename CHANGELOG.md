@@ -6,13 +6,17 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.35.0`,
-`notes-v1.35.0`, `reminders-v1.35.0`, `core-v1.35.0` for the npm packages, and `app-v1.35.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.36.0`,
+`notes-v1.36.0`, `reminders-v1.36.0`, `core-v1.36.0` for the npm packages, and `app-v1.36.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.36.0] - 2026-10-30
+
+**Desktop waits for a change, and starts the app it needs.** It waits for an element to appear or
+go instead of polling, finds a run step's element when the step runs, and starts an app that is not
+running behind the one in front.
 
 ### Added
 
@@ -3232,7 +3236,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.35.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.36.0...HEAD
+[1.36.0]: https://github.com/mgcrea/cupertino/compare/app-v1.35.0...app-v1.36.0
 [1.35.0]: https://github.com/mgcrea/cupertino/compare/app-v1.34.0...app-v1.35.0
 [1.34.0]: https://github.com/mgcrea/cupertino/compare/app-v1.33.0...app-v1.34.0
 [1.33.0]: https://github.com/mgcrea/cupertino/compare/app-v1.32.0...app-v1.33.0

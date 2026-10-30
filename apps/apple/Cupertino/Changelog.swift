@@ -220,7 +220,60 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_35_0, v1_34_0, v1_33_0, v1_32_0, v1_31_0]
+  static let releases: [Release] = [v1_36_0, v1_35_0, v1_34_0, v1_33_0, v1_32_0]
+
+  // swift-format-ignore
+  private static let v1_36_0: Release = Release(
+    version: "1.36.0",
+    date: "2026-10-30",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Desktop can start an application that is not running.",
+            body: [
+              "`apple_desktop_launch` opens it behind whatever is in front and waits until it answers, up to 10 s, so its controls can be read and pressed while the person keeps their keyboard. It takes a bundle identifier and nothing else, is write-gated and scoped like the other driving tools, and shows the \"Cupertino opened\" notice. An application already running is left alone, one that takes the front anyway is sent back behind, and one never opened on this Mac is refused rather than stopping at a Gatekeeper dialog. With \"Reach any application\" on, any installed application can be started. A verb refused because an application is not running now says so and names the tool.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Desktop can wait for a change instead of polling for it.",
+            body: [
+              "`apple_desktop_wait_for` blocks until an element matching `id`, `role`, `name` or `value` appears, or with `state: \"absent\"` until it is gone, for up to a minute, and answers with the matches and their handles. It re-reads the tree every quarter second and sooner when the app posts a change. A timeout is an error saying what the last read saw, so a `run` stops there, and Esc in Claude Code ends it. It replaces chains of `wait` steps and `find_elements` calls.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "A `run` step can name its element instead of passing a handle.",
+            body: [
+              "A step that takes a `handle` can take `match` and `bundleId` instead, and the element is found when the step runs, waiting up to two seconds by default for it to appear. A step can now press an item in a context menu the step before it opened, which a handle read before the run could never reach. A match that finds several elements fails the step unless `index` picks one.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "`find_elements` matches on `value`.",
+            body: [
+              "A static text keeps its text in its value rather than its name, so it could only be found by reading the whole tree.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 4,
+            headline: "`set_value` reaches SwiftUI text fields.",
+            body: [
+              "Written while the field was not focused, the text showed in the field and read back as written, but the app's own state never received it, so a prompt typed into Drakar and sent went out empty. `set_value` now focuses a text field before writing, without bringing the app forward, and says `focused` in its answer.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "Desktop says an app quit rather than calling it busy.",
+            body: [
+              "A handle into an app that had crashed answered \"did not answer in time. The app may be busy; retry\". It now says the app quit, with its pid and the crash report when there is one.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_35_0: Release = Release(
@@ -481,112 +534,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_31_0: Release = Release(
-    version: "1.31.0",
-    date: "2026-10-25",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Desktop can select a list row without clicking it.",
-            body: [
-              "`apple_desktop_select` chooses a sidebar entry or a table or outline row, given the row or the label inside it that a search by name finds. It is what a click on the row does, without moving the pointer or bringing the app forward. Rows like these usually have no press action, so they were missing from the default tree and a click was the only way in; the tree now lists them, marked `selectable`, and `press` on one says to use `select`. Found driving Xcode's Device Hub, whose device list works this way. It is a `run` step.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Simulator can fold and unfold iPhone Duo.",
-            body: [
-              "`apple_simulator_set_pose` sets a foldable simulator closed, partially open or open through Device Hub's pose buttons, the only way there is, selecting the device first if no window shows it, and confirms which screen it then draws. An open Duo is readable and pressable like any other device; the window listings name the screen as `display`.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "A simulator tap can no longer land outside the simulator.",
-            body: [
-              "`apple_simulator_tap` and `swipe` checked the point against the device screen, then clicked wherever the screen's reported frame put it on the Mac. Device Hub reports iPhone Duo's screen away from where it draws it, so on a Duo that was another app's window. Both now refuse when the screen is not on its window, and when the Mac point is not on the simulator's window, as desktop clicks already did. On the Duo, press works.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "An unfolded iPhone Duo is found.",
-            body: [
-              "Only the device's main screen was matched, which on the Duo is the outer one, so an open Duo was \"not found\". Every built-in screen is matched now, and Device Hub keeps one for each panel once the Duo has been opened, so the one actually drawn is asked of `devicectl`.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "Finding the device screen in Device Hub stops before the app's own tree",
-            body: [
-              ", which made the search run out of time on an iPhone Duo.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Desktop can start an application that is not running.",
-            body: [
-              "`apple_desktop_launch` opens it behind whatever is in front and waits until it answers, up to 10 s, so its controls can be read and pressed while the person keeps their keyboard. It takes a bundle identifier and nothing else, is write-gated and scoped like the other driving tools, and shows the \"Cupertino opened\" notice. An application already running is left alone, one that takes the front anyway is sent back behind, and one never opened on this Mac is refused rather than stopping at a Gatekeeper dialog. With \"Reach any application\" on, any installed application can be started. A verb refused because an application is not running now says so and names the tool.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Desktop can wait for a change instead of polling for it.",
-            body: [
-              "`apple_desktop_wait_for` blocks until an element matching `id`, `role`, `name` or `value` appears, or with `state: \"absent\"` until it is gone, for up to a minute, and answers with the matches and their handles. It re-reads the tree every quarter second and sooner when the app posts a change. A timeout is an error saying what the last read saw, so a `run` stops there, and Esc in Claude Code ends it. It replaces chains of `wait` steps and `find_elements` calls.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A `run` step can name its element instead of passing a handle.",
-            body: [
-              "A step that takes a `handle` can take `match` and `bundleId` instead, and the element is found when the step runs, waiting up to two seconds by default for it to appear. A step can now press an item in a context menu the step before it opened, which a handle read before the run could never reach. A match that finds several elements fails the step unless `index` picks one.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "`find_elements` matches on `value`.",
-            body: [
-              "A static text keeps its text in its value rather than its name, so it could only be found by reading the whole tree.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 4,
-            headline: "`set_value` reaches SwiftUI text fields.",
-            body: [
-              "Written while the field was not focused, the text showed in the field and read back as written, but the app's own state never received it, so a prompt typed into Drakar and sent went out empty. `set_value` now focuses a text field before writing, without bringing the app forward, and says `focused` in its answer.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "Desktop says an app quit rather than calling it busy.",
-            body: [
-              "A handle into an app that had crashed answered \"did not answer in time. The app may be busy; retry\". It now says the app quit, with its pid and the crash report when there is one.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
