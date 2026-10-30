@@ -491,6 +491,15 @@ export const SURFACES: readonly Surface[] = [
         env: "APPLE_SAFARI_ALLOW_NETWORK",
         why: "Reads one recorded request's headers and body, or saves a file out of it. Bodies are not redacted.",
       },
+      // A site's cookies are the session itself, so this is gated twice: the
+      // flag registers it, and a host list decides which sites it may read
+      // (empty means none). Values never come back inline; saving named ones
+      // to a 0600 file needs the write gate on top.
+      {
+        name: "apple_safari_cookies",
+        env: "APPLE_SAFARI_ALLOW_COOKIES",
+        why: "Lists a page's cookies, HttpOnly ones included, on sites you list in APPLE_SAFARI_COOKIE_HOSTS. Never returns a value; saves named ones to a private file for a local tool.",
+      },
     ],
     pitch:
       "History, live tabs, the Reading List — and, through a Safari extension you enable per website, what a page actually says, plus clicking and typing on it. Opens a URL or saves one for later behind the write gate.",

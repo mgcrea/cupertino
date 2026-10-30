@@ -3,6 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
+import { cookieHostRules } from "../client/cookies.js";
 import { extensionState, isQuiet } from "../client/pages.js";
 import type { AppleSafariClient } from "../client/safari.js";
 import { wrap } from "./util.js";
@@ -22,6 +23,7 @@ export const buildDiagnostics = async (
   const pages = client.pagesStatus();
   const beats = client.heartbeatStatus();
   const health = extensionState(pages, beats);
+  const cookieRules = cookieHostRules(client.config.cookieHosts);
   const located = status.located;
   const base = buildBaseDiagnostics({
     build: BUILD_INFO,
@@ -103,6 +105,34 @@ export const buildDiagnostics = async (
         : 'off — a one-time-code field reads back as redacted:"code" and ' +
           "apple_safari_find_codes is not registered. Set APPLE_SAFARI_ALLOW_CODES to change " +
           "that. A password or card number is withheld either way.",
+      // The settings only, never a cookie: diagnostics is read by agents that
+      // have not been granted the tool, and a list of whose sessions are
+      // readable says enough.
+      cookies: {
+        enabled: client.config.allowCookies,
+        hosts: cookieRules.hosts,
+        ignoredHosts: cookieRules.ignored,
+        note: client.config.allowCookies
+          ? (cookieRules.hosts.length === 0
+              ? "apple_safari_cookies is registered but APPLE_SAFARI_COOKIE_HOSTS is empty, so " +
+                "it refuses every page. "
+              : "apple_safari_cookies reads cookies, HttpOnly ones included, on pages of these " +
+                "sites and their subdomains, and refuses every other. ") +
+            "Values never come back inline; saveAs writes named ones to a 0600 file and " +
+            (client.config.allowWrites
+              ? "is available."
+              : "needs APPLE_SAFARI_ALLOW_WRITES, which is off.") +
+            " The extension must carry the cookies permission: after the update that added it, " +
+            "Safari asks the user to approve the extension again."
+          : "off — apple_safari_cookies is not registered. Set APPLE_SAFARI_ALLOW_COOKIES and " +
+            "list the sites in APPLE_SAFARI_COOKIE_HOSTS to change that.",
+        ...(cookieRules.ignored.length > 0
+          ? {
+              ignoredNote:
+                "Entries with no dot are ignored: one would allow a whole top-level domain.",
+            }
+          : {}),
+      },
     },
     history: {
       path: located.historyPath,

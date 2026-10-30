@@ -40,8 +40,20 @@
           "isSecret": false
         },
         {
+          "name": "APPLE_SAFARI_ALLOW_COOKIES",
+          "description": "Register apple_safari_cookies, which lists the cookies Safari would send to an open page, HttpOnly ones included, through the extension's cookies permission. Its own gate rather than allowWrites, because it is a read; off means the tool does not exist. Not enough on its own: only sites in APPLE_SAFARI_COOKIE_HOSTS are readable. Values never come back inline; saveAs writes named ones to a 0600 file and needs APPLE_SAFARI_ALLOW_WRITES.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "APPLE_SAFARI_COOKIE_HOSTS",
+          "description": "Comma-separated registrable domains whose cookies apple_safari_cookies may read, like \"yahoo.com\"; each covers the domain and its subdomains. Empty, the default, means no site is readable. An entry with no dot is ignored.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
           "name": "APPLE_SAFARI_DOWNLOAD_DIR",
-          "description": "Where apple_safari_network_get's saveAs writes a file. Defaults to ~/Downloads. A name is kept to its basename and an existing file is never replaced unless asked.",
+          "description": "Where saveAs writes a file, for apple_safari_network_get and apple_safari_cookies. Defaults to ~/Downloads. A name is kept to its basename and an existing file is never replaced unless asked.",
           "isRequired": false,
           "isSecret": false
         },
