@@ -40,7 +40,7 @@
     "512": "images/icon-512.png"
   },
 
-  "permissions": ["nativeMessaging"],
+  "permissions": ["nativeMessaging", "cookies"],
 
   "web_accessible_resources": [{ "resources": ["network-hook.js"], "matches": ["<all_urls>"] }]
 }
