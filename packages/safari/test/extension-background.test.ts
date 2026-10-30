@@ -163,11 +163,17 @@ describe("cookies command", () => {
     ...extra,
   });
 
-  /** Native answers the poll with `commands`, and records every result filed. */
+  /**
+   * Native answers the poll with `commands`, and records every result filed.
+   *
+   * The polling tab is id 7, and by default the browser has one store holding
+   * it — the shape every read needs now that it reads the TAB's store.
+   */
   const withPoll = (
     commands: unknown[],
     getAll: (...args: unknown[]) => Promise<unknown>,
     cookies: boolean = true,
+    getAllCookieStores: (() => Promise<unknown>) | null = async () => [{ id: "0", tabIds: [7] }],
   ) => {
     const results: Record<string, unknown>[] = [];
     const loaded = load(
@@ -177,9 +183,11 @@ describe("cookies command", () => {
         if (m.kind === "result") results.push(m);
         return { stored: true };
       },
-      cookies ? { getAll } : null,
+      cookies ? { getAll, ...(getAllCookieStores ? { getAllCookieStores } : {}) } : null,
     );
-    return { ...loaded, results };
+    const send = (message: unknown, sender: unknown = { tab: { id: 7 } }) =>
+      loaded.send(message, sender);
+    return { ...loaded, send, results };
   };
 
   it("reads the page's cookies by URL, files metadata only, and hides the command from the page", async () => {
@@ -187,13 +195,14 @@ describe("cookies command", () => {
     const { send, results } = withPoll([command()], getAll);
     const reply = (await send({ kind: "poll", url: PAGE })) as { commands: unknown[] };
     expect(reply.commands).toEqual([]);
-    expect(getAll).toHaveBeenCalledWith({ url: PAGE });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, storeId: "0" });
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
       kind: "result",
       id: command().id,
       ok: true,
       extensionVersion: "9.9.9",
+      data: { store: "0" },
     });
     const filed = results[0]!.data as { cookies: Record<string, unknown>[] };
     expect(filed.cookies).toEqual([
@@ -264,6 +273,56 @@ describe("cookies command", () => {
     expect(reply.commands).toEqual([click]);
     expect(getAll).not.toHaveBeenCalled();
     expect(results).toEqual([]);
+  });
+
+  /**
+   * The bug this pins: Safari keeps a cookie store per profile, and a read with
+   * no `storeId` answers from one fixed store whatever profile the tab is in.
+   * Measured 2026-10-30: a Maker-profile tab got the Personal profile's
+   * session, so a sign-in in Maker left the saved file byte-identical. The
+   * read must come from the store holding the tab that polled.
+   */
+  it("reads from the store holding the polling tab, never the default", async () => {
+    const getAll = vi.fn(async (...args: unknown[]) =>
+      (args[0] as { storeId?: string }).storeId === "persistent-3" ? STORE.slice(0, 1) : STORE,
+    );
+    const { send, results } = withPoll([command()], getAll, true, async () => [
+      { id: "persistent-1", tabIds: [] },
+      { id: "persistent-3", tabIds: [7] },
+    ]);
+    await send({ kind: "poll", url: PAGE });
+    expect(getAll).toHaveBeenCalledTimes(1);
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, storeId: "persistent-3" });
+    const filed = results[0]!.data as { store: string; cookies: { name: string }[] };
+    expect(filed.store).toBe("persistent-3");
+    expect(filed.cookies.map((c) => c.name)).toEqual(["A3"]);
+  });
+
+  it("refuses rather than guess when no store holds the tab", async () => {
+    const getAll = vi.fn(async () => STORE);
+    const { send, results } = withPoll([command()], getAll, true, async () => [
+      { id: "persistent-1", tabIds: [3] },
+    ]);
+    await send({ kind: "poll", url: PAGE });
+    expect(getAll).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ ok: false });
+    expect(String(results[0]!.error)).toMatch(/profile/);
+  });
+
+  it("refuses rather than guess when the browser cannot list its stores", async () => {
+    const getAll = vi.fn(async () => STORE);
+    const { send, results } = withPoll([command()], getAll, true, null);
+    await send({ kind: "poll", url: PAGE });
+    expect(getAll).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ ok: false });
+  });
+
+  it("refuses rather than guess when the poll names no tab", async () => {
+    const getAll = vi.fn(async () => STORE);
+    const { send, results } = withPoll([command()], getAll);
+    await send({ kind: "poll", url: PAGE }, {});
+    expect(getAll).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ ok: false });
   });
 });
 

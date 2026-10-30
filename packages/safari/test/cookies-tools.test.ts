@@ -332,6 +332,26 @@ describe("cookies inline", () => {
     expectNoValue(r.text);
   });
 
+  it("names the cookie store (Safari profile) it read, for the listing and the save", async () => {
+    const dirs = await connectOn({ APPLE_SAFARI_ALLOW_WRITES: "1" });
+    fakeExtension(dirs, (command) => ({
+      ok: true,
+      data: {
+        store: "persistent-3",
+        cookies: COOKIES.map(({ value, ...rest }) =>
+          (command.valuesFor as string[] | undefined)?.includes(rest.name)
+            ? { ...rest, value }
+            : rest,
+        ),
+      },
+    }));
+    const listed = (await cookies(dirs.client)).json() as { store: string };
+    expect(listed.store).toBe("persistent-3");
+    const saved = await cookies(dirs.client, { names: ["A3"], saveAs: "s.cookie" });
+    expect((saved.json() as { store: string }).store).toBe("persistent-3");
+    expectNoValue(saved.text);
+  });
+
   it("narrows the listing to `names`", async () => {
     const dirs = await connectOn();
     fakeExtension(dirs);
