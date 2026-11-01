@@ -699,6 +699,21 @@ struct DesktopCheck {
       !matcher.accepts(
         .init(role: "AXStaticText", identifier: nil, name: "Code rewind", pressable: false)))
 
+    // ─── a write that got no answer ─────────────────────────────────────────
+    // A press whose action holds the main thread (a runModal alert) lands and
+    // still times out, and a retry queues behind it and lands too: 2 presses
+    // for 2 calls, measured 2026-11-01.
+    let timedOutWrite =
+      AccessibilityDriver.failure(
+        for: .cannotComplete, doing: "Pressing 'e1'", wrote: true)?.errorDescription ?? ""
+    check(
+      "a write that timed out says it may have happened, not retry",
+      timedOutWrite.contains("may already have happened") && !timedOutWrite.contains("; retry"))
+    let timedOutRead =
+      AccessibilityDriver.failure(
+        for: .cannotComplete, doing: "Reading Mail windows")?.errorDescription ?? ""
+    check("and a read that timed out still says retry", timedOutRead.contains("; retry"))
+
     // ─── an application that quit ───────────────────────────────────────────
     let reaped = Process()
     reaped.executableURL = URL(fileURLWithPath: "/usr/bin/true")

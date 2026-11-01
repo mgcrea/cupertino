@@ -2056,6 +2056,11 @@ nonisolated enum DesktopServer {
       error, take a fresh tree rather than retrying. If the application has quit, the call
       says so, with its crash report when there is one, rather than calling it busy.
 
+      A read that times out is safe to retry. A press, select or write that times out may
+      already have happened, because an application holds the answer while the action runs
+      and an action that opens a modal alert runs until the alert closes: read the window
+      before repeating it, or it can happen twice.
+
       ## Two switches, and they bound different things
 
       \(writesAllowed
