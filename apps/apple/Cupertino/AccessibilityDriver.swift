@@ -52,6 +52,9 @@ nonisolated enum AccessibilityDriver {
     case noWindows(String)
     case staleHandle(String)
     case busy(String)
+    /// A write that timed out. Kept apart from `busy` because its retry is not
+    /// safe — see `failure(for:doing:wrote:)`.
+    case unconfirmed(String)
     case refused(String)
     /// The process behind a handle is gone. Kept apart from `busy`, which is
     /// what a dead application's element answers with — see `quitFailure`.
@@ -84,6 +87,12 @@ nonisolated enum AccessibilityDriver {
           + "fresh ui_tree."
       case .busy(let what):
         return "\(what) did not answer in time. The app may be busy; retry."
+      case .unconfirmed(let what):
+        return
+          "\(what) got no answer within 2 s, so it may already have happened: the application "
+          + "holds the answer while the action runs, and an action that opens a modal alert runs "
+          + "until the alert closes. Read the window before repeating it, because a repeat waits "
+          + "behind the first and can do it twice."
       case .refused(let what):
         return what
       case .appQuit(let name, let pid, let report?):
@@ -102,11 +111,19 @@ nonisolated enum AccessibilityDriver {
 
   /// The only two AX codes worth turning into an error. Everything else is
   /// either success or an absence the walker skips.
-  private static func failure(for err: AXError, doing what: String) -> Failure? {
+  ///
+  /// `wrote` is for an action or an attribute set, whose timeout is not a
+  /// read's. Measured 2026-11-01 on a scratch AppKit button whose action held
+  /// the main thread for 4 s, as a runModal alert does: the press landed and
+  /// still answered `kAXErrorCannotComplete` at 2.01 s, and a second press sent
+  /// straight after waited behind the first and landed too. Telling the caller
+  /// to retry was telling it to press twice.
+  static func failure(for err: AXError, doing what: String, wrote: Bool = false) -> Failure? {
     switch err {
     case .success, .attributeUnsupported, .noValue, .actionUnsupported: return nil
     case .apiDisabled: return .notTrusted
     case .invalidUIElement: return .staleHandle(what)
+    case .cannotComplete where wrote: return .unconfirmed(what)
     case .cannotComplete: return .busy(what)
     default: return .refused("\(what) failed (AXError \(err.rawValue)).")
     }
@@ -1180,7 +1197,7 @@ nonisolated enum AccessibilityDriver {
       }
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
     }
-    if let problem = failure(for: err, doing: "Pressing '\(handle)'") { throw problem }
+    if let problem = failure(for: err, doing: "Pressing '\(handle)'", wrote: true) { throw problem }
   }
 
   // ─── rows ──────────────────────────────────────────────────────────────────
@@ -1220,7 +1237,9 @@ nonisolated enum AccessibilityDriver {
         "The application does not let that row be selected through Accessibility. Click its "
           + "point instead.")
     }
-    if let problem = failure(for: err, doing: "Selecting '\(handle)'") { throw problem }
+    if let problem = failure(for: err, doing: "Selecting '\(handle)'", wrote: true) {
+      throw problem
+    }
 
     // The row's own handle, so the caller can tell which row a label resolved
     // to. Not re-minted when the handle already was the row.
@@ -1278,7 +1297,9 @@ nonisolated enum AccessibilityDriver {
       throw Failure.refused(
         "That element has no AXShowMenu. Use click with button \"right\" at its point instead.")
     }
-    if let problem = failure(for: err, doing: "Opening the menu of '\(handle)'") { throw problem }
+    if let problem = failure(for: err, doing: "Opening the menu of '\(handle)'", wrote: true) {
+      throw problem
+    }
   }
 
   /// The menus `pid` has open right now: a context menu, a pop-up button's
@@ -1420,7 +1441,7 @@ nonisolated enum AccessibilityDriver {
     try DrivingSession.admit(bundleId)
     DriveActivity.record(bundleId)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
-    if let problem = failure(for: err, doing: "Pressing '\(shown)'") { throw problem }
+    if let problem = failure(for: err, doing: "Pressing '\(shown)'", wrote: true) { throw problem }
     return (resolved, wasChecked)
   }
 
@@ -1549,7 +1570,7 @@ nonisolated enum AccessibilityDriver {
 
     let err = AXUIElementSetAttributeValue(
       element, kAXValueAttribute as CFString, value as CFTypeRef)
-    if let problem = failure(for: err, doing: "Setting '\(handle)'") { throw problem }
+    if let problem = failure(for: err, doing: "Setting '\(handle)'", wrote: true) { throw problem }
 
     return (string(element, kAXValueAttribute as String) == value, focused)
   }
@@ -1565,7 +1586,7 @@ nonisolated enum AccessibilityDriver {
     let element = try resolve(handle, scope: scope)
     try announce(handle)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-    if let problem = failure(for: err, doing: "Raising '\(handle)'") { throw problem }
+    if let problem = failure(for: err, doing: "Raising '\(handle)'", wrote: true) { throw problem }
   }
 
   /// Move or resize a window, and report what the window actually did.
@@ -1640,7 +1661,9 @@ nonisolated enum AccessibilityDriver {
           + "so does a full-screen one.")
     }
     let err = AXUIElementSetAttributeValue(element, attribute as CFString, value)
-    if let problem = failure(for: err, doing: "Setting '\(handle)' \(what)") { throw problem }
+    if let problem = failure(for: err, doing: "Setting '\(handle)' \(what)", wrote: true) {
+      throw problem
+    }
   }
 
   /// Give an element the keyboard focus, and read it back.
@@ -1697,7 +1720,7 @@ nonisolated enum AccessibilityDriver {
 
     let err = AXUIElementSetAttributeValue(
       target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    if let problem = failure(for: err, doing: "Focusing '\(handle)'") { throw problem }
+    if let problem = failure(for: err, doing: "Focusing '\(handle)'", wrote: true) { throw problem }
 
     if holdsFocus(target, in: entry.bundleId) { return true }
 
