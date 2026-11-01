@@ -1328,6 +1328,41 @@ frontmost application in that fresh process came back nil, so `launch` falls bac
 **Not measured:** which applications take the front despite `activates = false`. The hand-back is
 written for them and has not met one.
 
+## A write that times out may have landed, 2026-11-01
+
+Every AX error this surface turns into an answer went through one table, and `kAXErrorCannotComplete`
+came out as "did not answer in time. The app may be busy; retry." for a read and a press alike.
+For a press that is the wrong advice. An application answers an `AXPress` when the action
+returns, and an action that runs `NSAlert.runModal()` returns when the alert closes, so the press
+lands and the 2 s messaging timeout still fires. Comparing with
+[vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop), which stamps every
+error with whether the input may have been delivered and whether a retry is safe, is what
+prompted the measurement.
+
+Measured in a scratch AppKit app, an accessory with its window off screen and never in front,
+whose button counts each press and then holds the main thread for 4 s, as a modal alert does:
+
+|                                                                  |                                  |
+| ---------------------------------------------------------------- | -------------------------------- |
+| `AXPress`, 2 s messaging timeout                                 | `-25204` at 2.01 s               |
+| presses counted when it answered                                 | 1                                |
+| a second `AXPress` sent at once, the retry the message asked for | `-25204` at 2.00 s               |
+| presses counted 10 s later                                       | 2                                |
+| `AccessibilityDriver.press` on the same button, after the fix    | `unconfirmed` at 2.03 s, 1 press |
+
+The retry waits behind the first action and then runs, so following the old message pressed twice.
+
+`failure(for:doing:wrote:)` now keeps the two apart. The eight writes (press, a menu item's press,
+select, show_menu, set_value, the window frame, raise and focus) map a timeout to `unconfirmed`,
+which says the action may already have happened and asks for a read before repeating it. Reads
+still answer `busy` and still say retry. `run` needed nothing, since a stopped run already says to
+read the screen before retrying. Raise, focus, select and a value write are harmless to repeat, but
+one rule is easier to follow than a list of exceptions, and reading first costs one call.
+
+**Not measured:** a real `runModal` alert. Its modal session would have activated the scratch app
+while the Mac was in use, so the probe reproduced only the part that matters, an action that holds
+the main thread past the timeout.
+
 ## Still open
 
 - **An application that takes the front when launched behind.** `launch` hands the front back when
