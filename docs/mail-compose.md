@@ -684,7 +684,7 @@ Both are answered only on the channel the app lends to the Mail server (the peer
     command-V                                the replacement, as text or text plus HTML
     read back the own text and the quote     must be what was pasted, quote still level 1
     command-S                                the save
-    restore the pasteboard and the front app
+    restore the pasteboard, and the front app unless the edit was verified and handBack is off
 
 What it refuses, changing nothing: a `find` that matches zero or several places (compared ignoring
 whitespace, against the own text only, never the quote), a window whose own text cannot be told
@@ -696,6 +696,17 @@ once instead of for the whole walk.
 Two windows under one subject are no longer refused. `update_draft` takes a `composer` handle, or
 `ref` (matched to its window by content), or neither: with exactly one compose window open it edits
 that one, and with none or several it refuses and lists them.
+
+**A draft stays in front (2026-11-02).** Most drafts are read and sent by the person, and the
+draft kept disappearing under the app they had been in. Two hand-backs did it: the edit verb's own,
+straight after the save, and the driving session's idle release, which brings back the app that
+was in front when the session opened, 45 seconds after the last verb, so in the middle of reading.
+Now a verified edit hands back only when asked (`handBack`), and after a draft the Mail server
+ends the session itself with `apple_desktop_mail_release`, which never ends a session that also
+drove another application. Both follow Mail's "Return to the previous app after a draft" gate
+(`APPLE_MAIL_HAND_BACK_AFTER_DRAFT`), off by default; on, the release hands back at once instead of
+45 seconds later. A send, a refusal and a failure hand back as they always did. The System Events
+path follows the same setting for its drafts.
 
 **A compose keeps the signature (2026-10-27).** A new composer's own text is the account's
 signature, and a `body` replaces the own text, so `send_message`, `reply_to_message` and

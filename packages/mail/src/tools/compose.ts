@@ -118,8 +118,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "then may it be described to the user as ready. A failure is NOT automatically an empty " +
         "draft: read the note, which says what was actually found — including that the composer " +
         "was taken by someone using the Mac, in which case the reply may already have been SENT " +
-        "and a retry would send it twice. Filling the composer brings Mail to the front for a " +
-        "moment to paste; the clipboard is borrowed by the app and restored.",
+        "and a retry would send it twice. Filling the composer brings Mail to the front to paste, " +
+        "and a draft leaves it there for the person to read unless they set Mail to hand back; " +
+        "the clipboard is borrowed by the app and restored.",
       inputSchema: z.object({
         ref: messageRefArg,
         body: bodyArg,
@@ -154,8 +155,9 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "Only pass sendNow: true (with confirm: true) when explicitly asked to send now. " +
         "When a note is given, success means it was read back out of the composer window and " +
         "matched. The note goes in above the account's signature, which Mail adds and which is " +
-        "kept, image and all. Filling the composer brings Mail to the front for a moment to " +
-        "paste; the clipboard is borrowed by the app and restored.",
+        "kept, image and all. Filling the composer brings Mail to the front to paste, and a " +
+        "draft leaves it there for the person to read unless they set Mail to hand back; the " +
+        "clipboard is borrowed by the app and restored.",
       inputSchema: z.object({
         ref: messageRefArg,
         to: z.array(z.string().email()).min(1).describe("Who to forward to."),
@@ -202,7 +204,7 @@ export const registerComposeTools = (server: McpServer, client: AppleMailClient)
         "though Mail may renumber a saved draft within seconds, so re-find it by subject " +
         "rather than reusing a ref across turns. The app reads the window back before it " +
         "reports anything, and saves only what it could verify. Mail comes to the front " +
-        "briefly to paste; the clipboard is borrowed by the app and restored. When Mail shows " +
+        "to paste and stays there unless the person set Mail to hand back; the clipboard is borrowed by the app and restored. When Mail shows " +
         "drafts as tabs of one window, a draft in a tab it is not showing is selected for the " +
         "edit, and once saved that tab is LEFT SHOWN in place of the one that was (Mail does " +
         "not say when a save has landed, and switching back early could save the other " +

@@ -172,6 +172,15 @@ const nativeOnlyRefusal = (what: string): Record<string, unknown> => ({
     "draft the older way.",
 });
 
+/** A verified native edit ends the session it opened: see `MailAxLane.release`. */
+const released = async (
+  lane: MailAxLane,
+  result: Record<string, unknown>,
+): Promise<Record<string, unknown>> => {
+  if (result.replaced === true) await lane.release();
+  return result;
+};
+
 export class AppleMailClient {
   readonly config: Config;
   readonly runner: OsascriptRunner;
@@ -209,7 +218,10 @@ export class AppleMailClient {
       allowlist: opts.config.accounts,
       ttlMs: opts.config.mailboxCacheTtlMs,
     });
-    this.#ax = opts.ax !== undefined ? opts.ax : MailAxLane.open();
+    this.#ax =
+      opts.ax !== undefined
+        ? opts.ax
+        : MailAxLane.open(process.env, { handBack: opts.config.handBackAfterDraft });
   }
 
   /** Which composer lane is live, for `diagnostics` to report. */
@@ -1537,7 +1549,10 @@ export class AppleMailClient {
             ? "Editing a composer by handle"
             : "Editing the open composer",
         );
-      return this.#editComposerDirectly(this.#ax, target.composer, opts, attachments);
+      return released(
+        this.#ax,
+        await this.#editComposerDirectly(this.#ax, target.composer, opts, attachments),
+      );
     }
     // Edits are the native verb's, and the System Events route has no way to make them.
     if (opts.edits !== undefined && !this.#ax)
@@ -1591,9 +1606,9 @@ export class AppleMailClient {
           attachments,
         });
         // Null, and only null, means there was no composer to edit.
-        if (edited) return edited;
+        if (edited) return released(lane, edited);
       }
-      return rebuildDraft(
+      const rebuilt = await rebuildDraft(
         {
           lane,
           runner: this.runner,
@@ -1615,6 +1630,7 @@ export class AppleMailClient {
           attachments,
         },
       );
+      return released(lane, rebuilt);
     }
 
     // No accessibility lane from here on. Recreating writes a body, so with
@@ -1646,6 +1662,7 @@ export class AppleMailClient {
         body: opts.body,
         subject: opts.subject ?? null,
         attachments,
+        handBack: this.config.handBackAfterDraft,
       }),
     );
   }
@@ -1910,6 +1927,7 @@ export class AppleMailClient {
       body: opts.body,
       attachments,
       sendNow: opts.sendNow,
+      handBack: this.config.handBackAfterDraft,
     });
   }
 
@@ -1943,7 +1961,10 @@ export class AppleMailClient {
     // difference a person sees is that the native path needs ONE grant where
     // the other needs two.
     if (this.#ax) return composeNatively(this.#ax, this.runner, params);
-    return this.runner.run(REPLY_OR_FORWARD, params);
+    return this.runner.run(REPLY_OR_FORWARD, {
+      ...params,
+      handBack: this.config.handBackAfterDraft,
+    });
   }
 
   /**

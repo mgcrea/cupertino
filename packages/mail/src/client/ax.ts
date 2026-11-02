@@ -165,15 +165,25 @@ export type ReachReport = {
 
 export class MailAxLane {
   readonly #channel: AxChannel;
+  /**
+   * Whether a draft ends by bringing back the app that was in front (config's
+   * `handBackAfterDraft`). Carried here so every edit and every `release`
+   * says it, whichever path made the draft.
+   */
+  readonly #handBack: boolean;
 
-  private constructor(channel: AxChannel) {
+  private constructor(channel: AxChannel, handBack: boolean) {
     this.#channel = channel;
+    this.#handBack = handBack;
   }
 
   /** Null when this server is not hosted by Cupertino — see the note above. */
-  static open(env: NodeJS.ProcessEnv = process.env): MailAxLane | null {
+  static open(
+    env: NodeJS.ProcessEnv = process.env,
+    opts: { handBack?: boolean } = {},
+  ): MailAxLane | null {
     const channel = openAxChannel(MAIL_SURFACE, env);
-    return channel ? new MailAxLane(channel) : null;
+    return channel ? new MailAxLane(channel, opts.handBack ?? false) : null;
   }
 
   close(): void {
@@ -204,7 +214,21 @@ export class MailAxLane {
    * (bad arguments, Accessibility not trusted) throws, as every `#call` does.
    */
   async editComposer(args: EditComposerArgs): Promise<Record<string, unknown>> {
-    return (await this.#call("mail_composer_edit", { ...args })) as Record<string, unknown>;
+    return (await this.#call("mail_composer_edit", {
+      ...args,
+      handBack: this.#handBack,
+    })) as Record<string, unknown>;
+  }
+
+  /**
+   * End the driving session a draft opened, now rather than on the app's idle
+   * release 45 seconds later, which brought back the app the person had been
+   * in while they were reading the draft. Whether it does that is the setting.
+   * Best effort: the draft is saved whatever this answers, and the app does
+   * not end a session that also drove another application.
+   */
+  async release(): Promise<void> {
+    await this.#call("mail_release", { handBack: this.#handBack }).catch(() => undefined);
   }
 
   /**

@@ -231,6 +231,7 @@ nonisolated struct Surface: Identifiable, Hashable {
       gates: [
         Surface.Gate(id: "allowWatches", envSuffix: "ALLOW_WATCHES", label: "Watch for incoming mail", description: "Lets a client register a watch on senders or domains and be notified when matching mail arrives. Off by default."),
         Surface.Gate(id: "allowEvents", envSuffix: "ALLOW_EVENTS", label: "Experimental: MCP Events for incoming mail", description: "Serves the draft MCP Events extension (mail.received) to clients on the 2026 protocol. Off by default."),
+        Surface.Gate(id: "handBackAfterDraft", envSuffix: "HAND_BACK_AFTER_DRAFT", label: "Return to the previous app after a draft", description: "Once a draft is written or edited, brings back the app you were in. Off by default, so Mail stays in front with the draft open for you to read and send."),
       ]
     ),
     Surface(

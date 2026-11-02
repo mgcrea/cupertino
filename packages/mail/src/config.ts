@@ -104,6 +104,13 @@ const ConfigSchema = BaseConfigSchema.extend({
    * reach a session. Off, no `events/*` method exists and nothing is declared.
    */
   allowEvents: z.boolean().default(false),
+  /**
+   * Once a draft is written or edited, bring back the app that was in front.
+   * Off by default: most drafts are read and sent by the person, and handing
+   * the front back hid the window they were about to read. A send, a refusal
+   * and a failure are not drafts left to read, and hand back as they always did.
+   */
+  handBackAfterDraft: z.boolean().default(false),
   mailboxCacheTtlMs: z.number().int().min(0).max(3_600_000).default(60_000),
 }).strict();
 
@@ -133,6 +140,7 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): Config => {
     allowFileSend: parseBool(env.APPLE_MAIL_ALLOW_FILE_SEND),
     allowWatches: parseBool(env.APPLE_MAIL_ALLOW_WATCHES),
     allowEvents: parseBool(env.APPLE_MAIL_ALLOW_EVENTS),
+    handBackAfterDraft: parseBool(env.APPLE_MAIL_HAND_BACK_AFTER_DRAFT),
     mailboxCacheTtlMs: parseIntOpt(env.APPLE_MAIL_MAILBOX_CACHE_TTL_MS),
   };
 

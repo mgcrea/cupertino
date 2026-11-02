@@ -874,6 +874,17 @@ struct DesktopCheck {
         && DrivingSession.target() == driven)
     DrivingSession.release(.agent)
 
+    // Mail's lane ends its own session after a draft, and only its own.
+    try? DrivingSession.admit(driven, settings: quiet)
+    check(
+      "a release for one application leaves a session that drove another",
+      DrivingSession.release(.agent, handBack: false, drivenOnly: "com.example.other") == nil
+        && DrivingSession.target() == driven)
+    check(
+      "and ends one that drove only it, handing nothing back",
+      DrivingSession.release(.agent, handBack: false, drivenOnly: driven)?.restored == nil
+        && DrivingSession.target() == nil)
+
     // Stop, from the card's cross or the menu bar. It leaves a cooldown like a
     // cancel does, so it is dated 29 s back: the cooldown is live for about a
     // second, long enough to be refused by it, and gone before the half below.

@@ -222,6 +222,7 @@ and a tripwire that refuses to run any script containing a `${`.
 | `APPLE_MAIL_ALLOW_FILE_SEND`       | off           | Let a compose tool attach local files and send in the same call.                            |
 | `APPLE_MAIL_ALLOW_WATCHES`         | off           | Register `watch` and `unwatch`: a resource agents read and hosts can subscribe to.          |
 | `APPLE_MAIL_ALLOW_EVENTS`          | off           | Serve the experimental `mail.received` event (draft MCP Events extension, 2026-07-28 only). |
+| `APPLE_MAIL_HAND_BACK_AFTER_DRAFT` | off           | Bring back the app you were in after a draft. Off leaves Mail in front with the draft.      |
 | `APPLE_MAIL_MAILBOX_CACHE_TTL_MS`  | `60000`       | How long the account/mailbox map is cached.                                                 |
 
 ## Notes

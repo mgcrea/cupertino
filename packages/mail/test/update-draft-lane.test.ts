@@ -89,6 +89,8 @@ const world = (
   // The files the composer shows.
   const files: string[] = [];
   const edited: Record<string, unknown>[] = [];
+  // How many times the draft's driving session was ended.
+  let releases = 0;
   const lane = {
     watch: () => ({ check: async () => null }),
     reach: async () => ({ ok: true, reason: null, windows: [] }),
@@ -179,6 +181,9 @@ const world = (
     // What a send needs: a window, and a body to read.
     findComposer: async () => ({ window: "w9", body: "b9", index: 9 }),
     composerGone: async () => false,
+    release: async () => {
+      releases++;
+    },
   } as unknown as MailAxLane;
 
   const client = new AppleMailClient({
@@ -186,7 +191,15 @@ const world = (
     osascript: runner,
     ax: composers < 0 ? null : lane,
   });
-  return { client, scripts, runner, edited, shownNow: () => shown, files };
+  return {
+    client,
+    scripts,
+    runner,
+    edited,
+    shownNow: () => shown,
+    files,
+    releases: () => releases,
+  };
 };
 
 describe("which lane a draft rewrite takes", () => {
@@ -195,11 +208,13 @@ describe("which lane a draft rewrite takes", () => {
    * open. Recreation would have refused it on threading grounds.
    */
   it("edits the open composer rather than recreating a reply draft", async () => {
-    const { client, scripts, shownNow } = world(1);
+    const { client, scripts, shownNow, releases } = world(1);
     const result = await client.updateDraft({ ref: REF }, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: true, method: "inPlace", threadingKept: true });
     expect(scripts).toEqual(["DRAFT_FACTS"]);
     expect(shownNow()).toBe("BRAVO");
+    // The session ends with the edit, not 45 seconds into the person reading it.
+    expect(releases()).toBe(1);
   });
 
   it("falls back to rebuilding when no composer is open", async () => {
@@ -427,9 +442,16 @@ describe("choosing the composer to edit", () => {
   });
 
   it("returns the verb's refusal for a handle as it answered", async () => {
-    const { client } = world(1, { refuseEdit: true });
+    const { client, releases } = world(1, { refuseEdit: true });
     const result = await client.updateDraft({ composer: "mc-0" }, { body: "BRAVO" });
     expect(result).toMatchObject({ replaced: false, capability: "composer" });
+    expect(releases()).toBe(0);
+  });
+
+  it("ends the session after a verified edit by handle", async () => {
+    const { client, releases } = world(1);
+    await client.updateDraft({ composer: "mc-0" }, { body: "BRAVO" });
+    expect(releases()).toBe(1);
   });
 
   /*

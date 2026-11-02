@@ -856,7 +856,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_hover", "apple_desktop_set_window_frame", "apple_desktop_run",
       "apple_desktop_release",
       "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
-      "apple_desktop_select", "apple_desktop_mail_composer_edit",
+      "apple_desktop_select", "apple_desktop_mail_composer_edit", "apple_desktop_mail_release",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -1356,6 +1356,19 @@ nonisolated enum DesktopServer {
             // registry's mark) is refused without `expectHead`, and a
             // verified edit is recorded as the handle's sighting.
             handle: handle))
+
+      // The end of a draft: the session Mail's lane opened ends now rather than
+      // on idle release 45 seconds later, which handed the front back while the
+      // person was reading the draft. `handBack` is the Mail setting; a session
+      // that also drove anything else is left to whoever else is driving.
+      case "apple_desktop_mail_release" where scope == AXComposerWindow.scope:
+        if let handBack = args["handBack"], !(handBack is Bool) {
+          return failure(id, "'handBack' is a boolean.")
+        }
+        let released = DrivingSession.release(
+          .agent, handBack: args["handBack"] as? Bool ?? true,
+          drivenOnly: AXComposerWindow.bundleId)
+        return ok(id, DrivingSession.answer(released))
 
       default:
         return failure(id, "unknown tool '\(name)'")

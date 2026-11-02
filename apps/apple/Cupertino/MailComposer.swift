@@ -432,6 +432,11 @@ nonisolated enum MailComposer {
     var save = true
     /// The opening the caller expects the own text to have (the old `sameDraft`).
     var expectHead: String?
+    /// The front goes back to the application that had it once the edit is
+    /// verified. False (Mail's "Return to the previous app after a draft",
+    /// off) leaves Mail in front with the draft in it, for the person to read.
+    /// A refused or failed edit hands back either way.
+    var handBack = true
   }
 
   /// The arguments the Mail server sends.
@@ -495,6 +500,10 @@ nonisolated enum MailComposer {
       guard let head = head as? String else { throw ArgumentError("'expectHead' is a string.") }
       request.expectHead = head
     }
+    if let handBack = args["handBack"] {
+      guard let handBack = handBack as? Bool else { throw ArgumentError("'handBack' is a boolean.") }
+      request.handBack = handBack
+    }
     return request
   }
 
@@ -534,10 +543,11 @@ nonisolated enum MailComposer {
   /// 11. files are pasted at the end of the own text and their names polled for;
   /// 12. command-S;
   /// 13. the pasteboard is restored, unless someone copied over it meanwhile,
-  ///     and the front given back. When the last command-V went unanswered,
-  ///     the restore waits up to `grace` for Mail to answer a read: a hung Mail
-  ///     handles the keystroke when it wakes, and with the person's clipboard
-  ///     back on the board it would paste THAT into a window Mail autosaves.
+  ///     and the front given back (after a verified edit, only when `handBack`
+  ///     asks). When the last command-V went unanswered, the restore waits up
+  ///     to `grace` for Mail to answer a read: a hung Mail handles the
+  ///     keystroke when it wakes, and with the person's clipboard back on the
+  ///     board it would paste THAT into a window Mail autosaves.
   ///
   /// ## A body inserted above the own text (`insert`)
   ///
@@ -605,7 +615,8 @@ nonisolated enum MailComposer {
   /// still the one shown (a person who picked another is left there), and
   /// never after a command-V Mail did not answer, which may still land in
   /// whatever tab is shown when it does. Then the front goes back to the
-  /// application noted before Mail came forward.
+  /// application noted before Mail came forward, unless the edit was verified
+  /// and `handBack` is off.
   static func edit(
     _ w: ComposerWindow, request: EditRequest, board: Pasteboard, front: Front,
     handle: String? = nil, readbackTimeout: TimeInterval = 5, filesTimeout: TimeInterval = 12,
@@ -727,7 +738,7 @@ nonisolated enum MailComposer {
     // After the pasteboard is given back, before the front: as `editShown`
     // orders its own hand-back.
     reselect(outcome)
-    front.give(to: frontBefore)
+    if handsBack(request, answer) { front.give(to: frontBefore) }
     return sighted(handle, request, answer)
   }
 
@@ -743,6 +754,12 @@ nonisolated enum MailComposer {
       registry.edited(handle, text: text, proved: proved)
     }
     return answer
+  }
+
+  /// Whether an edit ends by giving the front back: always unless it was
+  /// verified, and then as the request asks.
+  private static func handsBack(_ request: EditRequest, _ answer: [String: Any]) -> Bool {
+    request.handBack || answer["replaced"] as? Bool != true
   }
 
   /// What `editShown` leaves for the caller to act on.
@@ -995,7 +1012,7 @@ nonisolated enum MailComposer {
     }
     borrow.giveBack()
     outcome.unanswered = borrow.unanswered
-    front?.give(to: previous)
+    if handsBack(request, answer) { front?.give(to: previous) }
     return answer
   }
 

@@ -295,7 +295,12 @@ describe("reviseDraftInPlace", () => {
       lane.close();
       expect(result).toMatchObject({ replaced: true });
       expect(edits(seen)).toHaveLength(1);
-      expect(edits(seen)[0]!.args).toEqual({ composer: "mc-1", body: "BRAVO", expectHead: "" });
+      expect(edits(seen)[0]!.args).toEqual({
+        composer: "mc-1",
+        body: "BRAVO",
+        expectHead: "",
+        handBack: false,
+      });
     });
 
     it("refuses when the shown tab matches but a background tab under the subject could too", async () => {

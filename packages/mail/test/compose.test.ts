@@ -73,6 +73,7 @@ const healthyHost = (over: Record<string, unknown> = {}, subject = "Re: lunch") 
 
 const laneOver = async (
   answers: Record<string, unknown>,
+  opts: { handBack?: boolean } = {},
 ): Promise<{ lane: MailAxLane; seen: { tool: string; args: Record<string, unknown> }[] }> => {
   const dir = mkdtempSync(join(tmpdir(), "compose-"));
   scratch.add(dir);
@@ -124,7 +125,7 @@ const laneOver = async (
   });
   open.add(server);
   await new Promise<void>((resolve) => server.listen(path, resolve));
-  const lane = MailAxLane.open({ CUPERTINO_AX_SOCKET: path, CUPERTINO_AX_FOR: "mail" })!;
+  const lane = MailAxLane.open({ CUPERTINO_AX_SOCKET: path, CUPERTINO_AX_FOR: "mail" }, opts)!;
   return { lane, seen };
 };
 
@@ -691,6 +692,7 @@ describe("composeNatively", () => {
       insert: true,
       expectHead: "-- \nOlivier",
       save: true,
+      handBack: false,
     });
     lane.close();
   });
@@ -1362,10 +1364,53 @@ describe("composeNatively", () => {
     );
     expect(result).toMatchObject({ ok: true, sent: false, bodyVerified: null });
     expect(edits(seen)).toEqual([]);
-    expect(seen.at(-1)).toEqual({
+    expect(seen.at(-2)).toEqual({
       tool: "key",
       args: { key: "s", modifiers: ["command"], handle: "w1" },
     });
+    lane.close();
+  });
+
+  /*
+   * The draft is the person's to read. Ending the session right after the save
+   * stops the app's idle release from handing the front back 45 seconds into
+   * their reading; whether the release hands back is the setting, off by default.
+   */
+  it("ends the session after a draft, leaving Mail in front by default", async () => {
+    const { lane, seen } = await laneOver(healthyHost({}, "Fwd: lunch"));
+    await composeNatively(
+      lane,
+      runnerReturning("Fwd: lunch"),
+      { ...PARAMS, mode: "forward", body: null, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(seen.at(-1)).toEqual({ tool: "mail_release", args: { handBack: false } });
+    lane.close();
+  });
+
+  it("asks for the front back when the setting is on, edits included", async () => {
+    const { lane, seen } = await laneOver(healthyHost({}, "Fwd: lunch"), { handBack: true });
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Fwd: lunch"),
+      { ...PARAMS, mode: "forward", body: null, attachments: ["/a.pdf"], sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: true, attachments: 1 });
+    expect(edits(seen)[0]?.args).toMatchObject({ handBack: true });
+    expect(seen.at(-1)).toEqual({ tool: "mail_release", args: { handBack: true } });
+    lane.close();
+  });
+
+  it("does not end the session for a send", async () => {
+    const { lane, seen } = await laneOver(healthyHost({}, "Re: lunch"));
+    await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: true },
+      TIMEOUTS,
+    );
+    expect(seen.map((c) => c.tool)).not.toContain("mail_release");
     lane.close();
   });
 
@@ -1382,6 +1427,7 @@ describe("composeNatively", () => {
       composer: "mc-1",
       attachments: ["/a.pdf"],
       save: true,
+      handBack: false,
     });
     lane.close();
   });

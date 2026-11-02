@@ -327,7 +327,9 @@ export const SEND_MESSAGE = script(
 
   pause(1.2);
   var unquoted = false;
-  try { unquoted = stripCitation(String(p.subject || "")); } catch (e) { unquoted = false; }
+  try {
+    unquoted = stripCitation(String(p.subject || ""), p.sendNow || p.handBack !== false);
+  } catch (e) { unquoted = false; }
 
   /*
    * Assigning content made Mail wrap the body in a quotation that Mail itself
@@ -742,7 +744,7 @@ export const UPDATE_DRAFT = script(
 
   pause(1.2);
   var unquoted = false;
-  try { unquoted = stripCitation(subject); } catch (e) { unquoted = false; }
+  try { unquoted = stripCitation(subject, p.handBack !== false); } catch (e) { unquoted = false; }
 
   /*
    * Assigning content made Mail wrap the whole body in a hidden quotation, and
@@ -1207,7 +1209,8 @@ export const REPLY_OR_FORWARD = script(
                 verifiedChars: verifiedChars, subject: subject });
   }
 
-  restore();
+  // A draft is left for the person to read, unless the setting asks otherwise.
+  if (p.handBack !== false) restore();
   return ok({
     sent: false,
     draft: true,
