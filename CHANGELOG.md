@@ -6,13 +6,17 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.36.0`,
-`notes-v1.36.0`, `reminders-v1.36.0`, `core-v1.36.0` for the npm packages, and `app-v1.36.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.36.1`,
+`notes-v1.36.1`, `reminders-v1.36.1`, `core-v1.36.1` for the npm packages, and `app-v1.36.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.36.1] - 2026-11-02
+
+**Mail drafts work on any desktop, and stay in front.** A draft works with Mail full screen or on
+another desktop, and stays open in front for you to read. A Desktop press that times out asks for
+a read, not a retry that could press twice.
 
 ### Fixed
 
@@ -23,7 +27,17 @@ summary.
   `onAnotherDesktop: true`. Editing one brings Mail forward on that desktop first, and a composer
   that cannot be brought forward is refused before anything is touched. A compose that reads no Mail
   window at all no longer says "this is not a permission".
-
+- **A Mail draft stays in front for you to read.** Once a draft was written or edited, Cupertino
+  brought back the app you had been in, straight after the save and again 45 seconds later, so the
+  draft disappeared under it while you were reading. Mail now stays in front with the draft open.
+  To get the old behaviour, turn on **Return to the previous app after a draft** in Mail's settings
+  in Cupertino, or `APPLE_MAIL_HAND_BACK_AFTER_DRAFT` outside the app. A send, a refusal or a
+  failure still brings back your app as before.
+- **A Desktop press or write that times out says it may have landed.** An app answers a press only
+  when the action returns, and an action that opens a modal alert returns when the alert closes, so
+  a press that worked still answered "did not answer in time … retry", and the retry pressed a
+  second time. A press or write with no answer within 2 s now says it may already have happened
+  and asks for a read of the window before repeating it. A read that times out still says busy.
 - **The Activity log shows a watch update that no one was listening for.** When matching mail or
   a message arrived and the host had not subscribed to the watch, the update went nowhere and the
   Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and
@@ -3263,7 +3277,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.36.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.36.1...HEAD
+[1.36.1]: https://github.com/mgcrea/cupertino/compare/app-v1.36.0...app-v1.36.1
 [1.36.0]: https://github.com/mgcrea/cupertino/compare/app-v1.35.0...app-v1.36.0
 [1.35.0]: https://github.com/mgcrea/cupertino/compare/app-v1.34.0...app-v1.35.0
 [1.34.0]: https://github.com/mgcrea/cupertino/compare/app-v1.33.0...app-v1.34.0

@@ -220,7 +220,43 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_36_0, v1_35_0, v1_34_0, v1_33_0, v1_32_0]
+  static let releases: [Release] = [v1_36_1, v1_36_0, v1_35_0, v1_34_0, v1_33_0]
+
+  // swift-format-ignore
+  private static let v1_36_1: Release = Release(
+    version: "1.36.1",
+    date: "2026-11-02",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Mail drafts work with Mail in full screen or on another desktop.",
+            body: [
+              "Accessibility lists only the windows on the desktop shown, so with Mail full screen every draft failed after 8 seconds with \"no such window was readable\", and `apple_mail_list_open_drafts` said no draft was open while one was. The app now finds Mail's windows on other desktops and reads them where they are, listed with `onAnotherDesktop: true`. Editing one brings Mail forward on that desktop first, and a composer that cannot be brought forward is refused before anything is touched. A compose that reads no Mail window at all no longer says \"this is not a permission\".",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "A Mail draft stays in front for you to read.",
+            body: [
+              "Once a draft was written or edited, Cupertino brought back the app you had been in, straight after the save and again 45 seconds later, so the draft disappeared under it while you were reading. Mail now stays in front with the draft open. To get the old behaviour, turn on **Return to the previous app after a draft** in Mail's settings in Cupertino, or `APPLE_MAIL_HAND_BACK_AFTER_DRAFT` outside the app. A send, a refusal or a failure still brings back your app as before.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "A Desktop press or write that times out says it may have landed.",
+            body: [
+              "An app answers a press only when the action returns, and an action that opens a modal alert returns when the alert closes, so a press that worked still answered \"did not answer in time … retry\", and the retry pressed a second time. A press or write with no answer within 2 s now says it may already have happened and asks for a read of the window before repeating it. A read that times out still says busy.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "The Activity log shows a watch update that no one was listening for.",
+            body: [
+              "When matching mail or a message arrived and the host had not subscribed to the watch, the update went nowhere and the Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and Messages now log `push dropped (no listener): cupertino://mail/watch/…` with the reason: no open `subscriptions/listen` names the watch (2026-07-28 protocol), or it was not subscribed with `resources/subscribe` (2025). In Claude Code every watch update is such a line, since it never subscribes to a watch; its agents read the watch instead.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_36_0: Release = Release(
@@ -410,155 +446,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_32_0: Release = Release(
-    version: "1.32.0",
-    date: "2026-10-27",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "The npm servers also speak the 2026-07-28 MCP protocol.",
-            body: [
-              "Mail, Notes, Reminders, Calendar, Contacts, Messages, Safari and Maps answer `server/discover` and serve a client that opens with the new per-request handshake, alongside the 2025 `initialize` one. Clients on the older protocol see no change.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Mail and Messages can tell a session when something arrives.",
-            body: [
-              "`apple_mail_watch` and `apple_messages_watch` take a sender filter, `from` or `domains`, and hand back a resource the host can subscribe to; when a matching message lands, the server pushes `notifications/resources/updated`, and a read of the resource returns what came in. Off by default behind `APPLE_MAIL_ALLOW_WATCHES` and `APPLE_MESSAGES_ALLOW_WATCHES`, and a sender is required, since there is no watch on everything. A watch carries envelope metadata only, never a body or message text. It works with both the 2025 and the 2026-07-28 protocol, and lives as long as the connection that made it. Claude Code does not subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log shows each subscription, and the Activity log and the audit file record each push, so what Cupertino sent into a session reads the same as what it was asked.",
-              "**Correction, added after release: Claude Code does subscribe, just never to a watch.** On the 2026-07-28 protocol it opens one `subscriptions/listen` when it connects, for the list-changed notifications only, and never one naming a watch's URI. On the 2025 protocol it never sends `resources/subscribe`. Measured on Claude Code 2.1.311 to 2.1.316. The conclusion stands: nothing is pushed into a Claude Code session, and an agent there reads the watch.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A draft whose window was closed can still be edited.",
-            body: [
-              "`apple_mail_update_draft` used to refuse once the window was gone. A reply is now rebuilt as a reply to its original, so it stays in the thread and keeps its files and formatting, and the old draft is deleted only after the new one is confirmed in Drafts. It still refuses, leaving the draft as it was, for a forward and for an original Mail can't find. When the quote Mail writes into the new reply is not the one the draft had, the draft is left as it was too, but that new reply window stays open, unfilled and unsaved, for you to close without saving.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "Edits can be find and replace.",
-            body: [
-              "`update_draft` takes `edits`, pairs of text to find and what replaces it, applied to what you wrote and never to the quoted message. Each `find` must match exactly once, and only the matched words change, so the rest of the draft, its formatting and its files are left alone.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "A draft can be named by its window, or not at all.",
-            body: [
-              "`update_draft` takes a `composer` handle from `apple_mail_list_open_drafts`, and with neither a `ref` nor a handle it edits the one compose window that is open. With none or several open it refuses and lists them.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "Drafts open as tabs of one window are handled.",
-            body: [
-              "With macOS set to prefer tabs, Mail opens every compose window as a tab, and only the tab it shows can be read. `apple_mail_list_open_drafts` now lists each tab with its own handle, a hidden one by subject only. `update_draft` selects a hidden tab, checks it is the draft, edits and saves it, and then leaves that tab shown, because Mail does not say when a save has landed and switching back early could save the other draft. A handle can come back marked `rebound` after Mail rebuilds its tab bar; it then edits only by `ref`, which checks the text, until that text is proved.",
-            ]),
-          Entry(
-            ordinal: 6,
-            headline: "The Mail pane says when drafts need Accessibility.",
-            body: [
-              "Writing into a compose window requires it, and the rest of Mail doesn't, so the pane now shows a row with an Allow button when Mail writes are on and the grant is missing.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 7,
-            headline: "Mail's everyday reads no longer wait on Mail.",
-            body: [
-              "With Full Disk Access, `list_messages`, `count_messages`, `list_mailboxes` with counts, `get_message` and `list_attachments` answer from Mail's search index and the message files, and send Mail no Apple Event at all. On a 210,000-message store, listing twenty messages took 8.4 s and now takes milliseconds; `list_mailboxes` took 1.2 s, `count_messages` 0.77 s and `get_message` 0.45 s, nearly all of it Apple Events for columns the index already holds. `list_messages` is no longer capped at 50 when the index answers, and its `source` says which lane did. `count_messages` reports `unread.index` alone when the index answers, and Mail's cached badge figure only when it cannot; counts from `list_mailboxes` now agree with it, Gmail labels included, and are null for a mailbox the index does not hold rather than zero. Without Full Disk Access, or for a mailbox the index has no row for, each still asks Mail.",
-            ]),
-          Entry(
-            ordinal: 8,
-            headline: "A sender's display name is quoted the way Mail writes it.",
-            body: [
-              "Results built from the index, `search_messages` and `get_thread` included, gave `Doe, Jane <jane@example.com>`, which reads as two recipients. They now give `\"Doe, Jane\" <jane@example.com>`, matching Mail's own `sender` — which differed on 18 of 20 messages of an Exchange account.",
-            ]),
-          Entry(
-            ordinal: 9,
-            headline: "The account list stops costing a second a minute.",
-            body: [
-              "It was cached for 60 s, so the first call after every pause waited about a second for Mail to list its accounts again. An expired list is now served at once and refreshed behind the call, and an account name it does not know is read afresh before it is refused.",
-            ]),
-          Entry(
-            ordinal: 10,
-            headline: "A new message, reply or forward keeps your signature.",
-            body: [
-              "The text you give goes in above the signature Mail adds, as it always did, and the signature stays below it, an image in it included; the check that the text landed reads back your text followed by the signature. Changing a draft that already exists with `update_draft` and a `body` still replaces everything you wrote in it, signature included.",
-            ]),
-          Entry(
-            ordinal: 11,
-            headline: "Editing a draft is faster and interrupts less.",
-            body: [
-              "The text is selected without moving the caret line by line and without a copy for every step, so Mail comes to the front once, to paste, and your clipboard and the app you were in are put back afterwards.",
-            ]),
-          Entry(
-            ordinal: 12,
-            headline: "`apple_mail_list_open_drafts` returns a handle for each window.",
-            body: [
-              "It also reports From, To, Cc and Bcc, and the start of the quoted message, so a draft can be reviewed and then edited without searching for it first.",
-            ]),
-          Entry(
-            ordinal: 13,
-            headline: "Reminders' `list_lists` takes seconds, not half a minute.",
-            body: [
-              "It sent five Apple Events per list and took 17–29 s for twelve lists. It now reads the list tree in bulk, and takes each list's counts from the Reminders store with Full Disk Access (1 ms, agreeing with Reminders on every list measured) or from one chained Apple Event without it. A list whose counts could not be read reports null rather than zero. `list_accounts` reports an account's `reminderCount` as null when Reminders will not count it, which it never does on macOS 27, instead of 0.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 14,
-            headline: "Two drafts with the same subject are no longer refused.",
-            body: [
-              "Two replies in one thread share a title, and the old edit gave up rather than guess which window was meant. Each window now has its own handle, so the right one is edited and the other is left as it was.",
-            ]),
-          Entry(
-            ordinal: 15,
-            headline: "A missing Accessibility grant is explained once, in plain words.",
-            body: [
-              "Each draft tool said so in its own way, and some only said it could not read the window. They now say what the missing grant stopped and where to turn it on.",
-            ]),
-          Entry(
-            ordinal: 16,
-            headline: "`apple_reminders_get_reminder` answers instead of timing out.",
-            body: [
-              "It read sixteen properties as separate Apple Events, each costing about a second while Reminders resolved the reminder again, and ran past the 30 s timeout on every call. It now reads them in one event of about a second, and names the reminder's list from the store when it can. A reminder Reminders no longer has is reported as not found rather than as a row of empty fields.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "The Activity log shows a watch update that no one was listening for.",
-            body: [
-              "When matching mail or a message arrived and the host had not subscribed to the watch, the update went nowhere and the Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and Messages now log `push dropped (no listener): cupertino://mail/watch/…` with the reason: no open `subscriptions/listen` names the watch (2026-07-28 protocol), or it was not subscribed with `resources/subscribe` (2025). In Claude Code every watch update is such a line, since it never subscribes to a watch; its agents read the watch instead.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
