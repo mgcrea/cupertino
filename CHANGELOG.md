@@ -12,6 +12,18 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **The Activity log shows a watch update that no one was listening for.** When matching mail or
+  a message arrived and the host had not subscribed to the watch, the update went nowhere and the
+  Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and
+  Messages now log `push dropped (no listener): cupertino://mail/watch/…` with the reason: no open
+  `subscriptions/listen` names the watch (2026-07-28 protocol), or it was not subscribed with
+  `resources/subscribe` (2025). In Claude Code every watch update is such a line, since it never
+  subscribes to a watch; its agents read the watch instead.
+
 ## [1.36.0] - 2026-10-30
 
 **Desktop waits for a change, and starts the app it needs.** It waits for an element to appear or
@@ -194,6 +206,13 @@ Messages can tell a session when something arrives.
   subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log
   shows each subscription, and the Activity log and the audit file record each push, so what
   Cupertino sent into a session reads the same as what it was asked.
+
+  **Correction, added after release: Claude Code does subscribe, just never to a watch.** On the
+  2026-07-28 protocol it opens one `subscriptions/listen` when it connects, for the list-changed
+  notifications only, and never one naming a watch's URI. On the 2025 protocol it never sends
+  `resources/subscribe`. Measured on Claude Code 2.1.311 to 2.1.316. The conclusion stands: nothing
+  is pushed into a Claude Code session, and an agent there reads the watch.
+
 - **A draft whose window was closed can still be edited.** `apple_mail_update_draft` used to refuse
   once the window was gone. A reply is now rebuilt as a reply to its original, so it stays in the
   thread and keeps its files and formatting, and the old draft is deleted only after the new one is

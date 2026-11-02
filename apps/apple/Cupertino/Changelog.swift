@@ -430,6 +430,7 @@ nonisolated enum Changelog {
             headline: "Mail and Messages can tell a session when something arrives.",
             body: [
               "`apple_mail_watch` and `apple_messages_watch` take a sender filter, `from` or `domains`, and hand back a resource the host can subscribe to; when a matching message lands, the server pushes `notifications/resources/updated`, and a read of the resource returns what came in. Off by default behind `APPLE_MAIL_ALLOW_WATCHES` and `APPLE_MESSAGES_ALLOW_WATCHES`, and a sender is required, since there is no watch on everything. A watch carries envelope metadata only, never a body or message text. It works with both the 2025 and the 2026-07-28 protocol, and lives as long as the connection that made it. Claude Code does not subscribe yet, in either protocol, so an agent there checks a watch by reading it. The Activity log shows each subscription, and the Activity log and the audit file record each push, so what Cupertino sent into a session reads the same as what it was asked.",
+              "**Correction, added after release: Claude Code does subscribe, just never to a watch.** On the 2026-07-28 protocol it opens one `subscriptions/listen` when it connects, for the list-changed notifications only, and never one naming a watch's URI. On the 2025 protocol it never sends `resources/subscribe`. Measured on Claude Code 2.1.311 to 2.1.316. The conclusion stands: nothing is pushed into a Claude Code session, and an agent there reads the watch.",
             ]),
           Entry(
             ordinal: 2,
@@ -539,6 +540,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "The Activity log shows a watch update that no one was listening for.",
+            body: [
+              "When matching mail or a message arrived and the host had not subscribed to the watch, the update went nowhere and the Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and Messages now log `push dropped (no listener): cupertino://mail/watch/…` with the reason: no open `subscriptions/listen` names the watch (2026-07-28 protocol), or it was not subscribed with `resources/subscribe` (2025). In Claude Code every watch update is such a line, since it never subscribes to a watch; its agents read the watch instead.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }
