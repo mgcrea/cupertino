@@ -2,6 +2,7 @@ import {
   createWatches,
   registerEvents,
   type Era,
+  type ListenLedger,
   type Logger,
   type OsascriptRunner,
   registerSurfaceResources,
@@ -33,6 +34,8 @@ export type CreateServerOptions = {
   contacts?: ConstructorParameters<typeof AppleMessagesClient>[0]["contacts"];
   /** Which protocol era this instance serves. Only watches care. Default `legacy`. */
   era?: Era;
+  /** The connection's open listens, so a watch update nobody listens for is logged. */
+  listens?: ListenLedger;
 };
 
 export type CreatedServer = {
@@ -81,6 +84,8 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
       era: opts.era ?? "legacy",
       source: service.source,
       startTrigger: service.startTrigger,
+      ...(opts.logger ? { logger: opts.logger } : {}),
+      ...(opts.listens ? { listens: opts.listens } : {}),
     });
     service.bind(registry);
     closers.push(() => {

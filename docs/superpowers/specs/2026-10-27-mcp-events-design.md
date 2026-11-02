@@ -10,6 +10,13 @@
 Watches tell a host that something arrived through `notifications/resources/updated`, and Claude Code
 never subscribes to it (measured 2026-10-27, see the watches spec, Measure first item 1). The
 `claude/channel` route works only on the 2025 handshake and behind a per-session development flag.
+Measured again from 2026-10-30 to 2026-11-02 on Claude Code 2.1.311 to 2.1.316, it reaches only the
+terminal CLI: there, with `--dangerously-load-development-channels server:<name>`, an idle session
+wakes on each message in about 2 s. The VS Code panel and stream-json clients pass the flag and
+never register the channel, and their `channel_enable` control request takes only a server from a
+marketplace plugin on the approved-channels allowlist. A server that answers `server/discover` with
+-32601 gets Claude Code's fallback to `initialize` at 2025-11-25. See
+[alternatives.md](../../alternatives.md), "No channel lane".
 
 The protocol's own answer is [SEP-3415, the Events extension](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/3415)
 (`io.modelcontextprotocol/events`), a draft from the Triggers & Events Working Group, defined for

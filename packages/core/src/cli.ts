@@ -4,6 +4,7 @@ import { serveStdio, StdioServerTransport } from "@modelcontextprotocol/server/s
 import type { BuildInfo } from "./build-info.js";
 import { parseBool } from "./config.js";
 import type { SurfaceContext } from "./errors.js";
+import { ListenLedger, withListenLedger } from "./listens.js";
 import { withTrimmedListing } from "./listing.js";
 import type { Logger } from "./osascript.js";
 
@@ -26,8 +27,14 @@ export type StdioServerOptions = {
    * that opens with `server/discover` gets a probe instance that is thrown
    * away if it then falls back to `initialize`. So `start` must be safe to run
    * more than once, and `ctx.era` says which protocol the instance will serve.
+   *
+   * `ctx.listens` is the connection's, not the instance's: it watches the wire,
+   * so it holds what the router acknowledged whichever instance is pinned.
    */
-  start: (logger: Logger, ctx: { era: Era }) => Promise<{ server: McpServer; banner: string }>;
+  start: (
+    logger: Logger,
+    ctx: { era: Era; listens: ListenLedger },
+  ) => Promise<{ server: McpServer; banner: string }>;
 };
 
 /**
@@ -62,13 +69,17 @@ export const runStdioServer = async (opts: StdioServerOptions): Promise<void> =>
     process.exit(1);
   }
 
+  // One stdio process serves one connection, so one ledger, read by every
+  // instance the SDK builds for it.
+  const listens = new ListenLedger();
+
   // The SDK owns the era decision and calls this per instance. `legacy` stays
   // at its default, `serve`: `reject` would turn away every 2025-era host.
   serveStdio(
     async ({ era }) => {
       let started;
       try {
-        started = await opts.start(logger, { era });
+        started = await opts.start(logger, { era, listens });
       } catch (err) {
         // The SDK would answer -32603 and keep serving, re-running `start` on
         // every request. A server that cannot start should die saying why, as
@@ -80,7 +91,7 @@ export const runStdioServer = async (opts: StdioServerOptions): Promise<void> =>
       return started.server;
     },
     {
-      transport: withTrimmedListing(new StdioServerTransport()),
+      transport: withListenLedger(withTrimmedListing(new StdioServerTransport()), listens),
       onerror: (err) => logger.error(err),
     },
   );

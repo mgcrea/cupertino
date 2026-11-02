@@ -8,6 +8,8 @@ import {
 } from "@modelcontextprotocol/server";
 
 import type { Era } from "./cli.js";
+import type { ListenLedger } from "./listens.js";
+import type { Logger } from "./osascript.js";
 import { guardedRead, surfaceUri } from "./resources.js";
 import {
   publicView,
@@ -50,6 +52,18 @@ import {
  * URIs itself, but only in that era: a second subscription table beside the
  * router's would be a place for the two to disagree.
  *
+ * ## Why a dropped push is logged
+ *
+ * In either era an update nobody asked for goes nowhere, and nothing on the
+ * wire says so. The app's Activity log records the pushes the bridge sees, so a
+ * dropped one left no line, and "never sent" read the same as "sent, nobody
+ * listening". So each update that will go nowhere is said on stderr, which the
+ * app relays into the Activity log. In the 2025 era the server knows, from its
+ * own table. In the 2026 era only the router knows, so the server asks a
+ * `ListenLedger` that mirrors the router's acknowledgements (see listens.ts),
+ * and sends anyway: the ledger only words the log line, the router still
+ * decides. Without a ledger a modern drop cannot be seen, and nothing is logged.
+ *
  * The handlers are registered by method name because v2's `McpServer` answers
  * -32601 to `resources/subscribe` until one exists, and the request schemas are
  * not part of the public surface.
@@ -63,6 +77,10 @@ export type WatchesOptions<R extends ArrivalRow> = {
   era: Era;
   source: ArrivalSource<R>;
   startTrigger?: WatchRegistryOptions<R>["startTrigger"];
+  /** Where a dropped push is said. Without one, nothing is. */
+  logger?: Logger | undefined;
+  /** 2026 era only: which URIs an open `subscriptions/listen` names, from `start`'s context. */
+  listens?: Pick<ListenLedger, "covers"> | undefined;
 };
 
 /**
@@ -141,17 +159,28 @@ export const createWatches = <R extends ArrivalRow>(
   server: McpServer,
   opts: WatchesOptions<R>,
 ): WatchRegistry<R> => {
-  const { surface, displayName, era } = opts;
+  const { surface, displayName, era, logger, listens } = opts;
 
   /** URIs a 2025-era client subscribed to. Unused in the modern era. */
   const subscribed = new Set<string>();
+
+  /** The line the Activity log shows: `push dropped (no listener): <uri>, <why>`. */
+  const dropped = (uri: string, why: string): void => {
+    logger?.warn?.(`push dropped (no listener): ${uri}, ${why}`);
+  };
 
   const registry = new WatchRegistry<R>({
     surface,
     source: opts.source,
     ...(opts.startTrigger ? { startTrigger: opts.startTrigger } : {}),
     onUpdate: (uri) => {
-      if (era === "legacy" && !subscribed.has(uri)) return;
+      if (era === "legacy" && !subscribed.has(uri)) {
+        dropped(uri, "not subscribed with resources/subscribe");
+        return;
+      }
+      if (era === "modern" && listens && !listens.covers(uri)) {
+        dropped(uri, "no open subscriptions/listen names it");
+      }
       // The registry's `onUpdate` is synchronous and a send is not. A transport
       // that is closing rejects, and an unhandled rejection would take the
       // process down over a notification nobody is left to read.

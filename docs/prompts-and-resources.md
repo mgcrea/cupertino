@@ -146,17 +146,29 @@ by name.
 
 **The model does not subscribe.** `subscriptions/listen` is a message the host sends, not a tool.
 A host that never subscribes still has a working watch, since a read is "what came in since I last
-asked", but nothing is pushed. Claude Code is such a host: on 2.1.311 it opens
-`subscriptions/listen` for the list-changed notifications only and never asks for
-`resourceSubscriptions`, and on a 2025-era connection it never sends `resources/subscribe`. Its
-agents read the watch instead, which works. See [alternatives.md](alternatives.md).
+asked", but nothing is pushed. Claude Code is such a host: from 2.1.311 to 2.1.316 it opens one
+`subscriptions/listen` at connect, for the list-changed notifications only, and never asks for
+`resourceSubscriptions`, even after a watch tool returns its URI; on a 2025-era connection it never
+sends `resources/subscribe`. Its agents read the watch instead, which works. See
+[alternatives.md](alternatives.md).
 
 In the app, a `subscriptions/listen` is logged as a subscription rather than a call that never
-returns, and the Activity log shows it as `subscribed …`. Each pushed
+returns: the Activity log shows it as `subscribed …` with the URIs it names, or as a bare
+`subscriptions/listen` when it names none, which is what Claude Code opens. Each pushed
 `notifications/resources/updated` is a row (`pushed …`) in both the Activity log and the audit file,
 so "what did Cupertino push into this session" has the
 same answer as "what did it call". The design is in
 [the incoming-watches spec](superpowers/specs/2026-10-25-incoming-watches-design.md).
+
+An update nobody listens for never reaches the wire, so the bridge cannot see it. The server says
+so itself, on stderr, which the app relays into the Activity log as
+`push dropped (no listener): <uri>, <reason>`. On a 2025-era connection the server knows from its own
+subscribed set. On a 2026-era one only the SDK's router knows, and its table is private, so the
+server reads it off the wire: a `ListenLedger` (`packages/core/src/listens.ts`) records each
+`notifications/subscriptions/acknowledged` the router writes, with the filter it honoured, and
+forgets one on `notifications/cancelled` or the close the router writes at teardown. The ledger
+only words the log line; every update is still handed to the router, which decides. The line is
+not in the audit file, which records what was sent.
 
 ## Events (experimental)
 

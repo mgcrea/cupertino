@@ -257,7 +257,10 @@ Three more questions, each still pending the live run, so the session has one ch
 
 - **`claude/channel`.** Measure first item 1 found Claude Code never subscribes, so a channel adapter on
   this same watcher is the follow-up that actually wakes a session. It needs its own access-control
-  and permission-relay design, so it is a separate spec.
+  and permission-relay design, so it is a separate spec. Measured from 2026-10-30 to 2026-11-02, a
+  channel wakes only a terminal session started with a development flag, never the VS Code panel or
+  a stream-json client, so on 2026-11-02 it was decided not to build it now; see
+  [alternatives.md](../../alternatives.md), "No channel lane".
 - **Running a command, a Shortcut or a webhook on arrival** with no session open. That needs a
   watcher outliving every client, which means the app and not the npm servers.
 - Watches surviving a reconnect, persisted handles, watches shared across clients.

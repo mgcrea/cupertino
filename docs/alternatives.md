@@ -158,13 +158,42 @@ silent cap reported as an absence. See [mail-body.md](mail-body.md).
 register a resource watch behind `allowWatches` (off by default), and push
 `notifications/resources/updated` to a host that subscribed, in both protocol eras. See
 [prompts-and-resources.md](prompts-and-resources.md#watches). Whether Claude Code acts on that
-notification is moot: **it never subscribes**. Measured on 2026-10-27 with Claude Code 2.1.311
-against the built Mail server and a logging proxy: on a 2026-era connection it opens
-`subscriptions/listen` for the list-changed notifications only, on a 2025-era one it never sends
-`resources/subscribe`, and the model has no tool to ask for either. A Claude Code agent can still
-read the watch, and does, but nothing wakes the session when mail lands, so the README says
-nothing about "push" next to Claude Code. That is what keeps the channel half open. What follows is the
-channel as first recorded, a gap and not a plan. Anthropic's iMessage plugin declares
+notification is moot: **it never subscribes to a watch**. Measured on 2026-10-27 with Claude Code
+2.1.311 against the built Mail server and a logging proxy, and again live from 2026-10-30 to
+2026-11-02 on 2.1.311 to 2.1.316: on a 2026-era connection it opens one `subscriptions/listen` at
+connect, for the list-changed notifications only (`toolsListChanged`, `promptsListChanged`,
+`resourcesListChanged`), and never a second one with `resourceSubscriptions` after a watch tool
+returns its URI; on a 2025-era one it never sends `resources/subscribe`; and the model has no tool
+to ask for either. In the live session the Activity log showed the listen at 18:22:34, watch
+`w_8cc22c4d` made at 18:29:34, the matching mail indexed at 18:29:41, and no push line: the SDK's
+router dropped the update because no listen named the URI. The servers now log that drop as
+`push dropped (no listener): <uri>`, so the Activity log tells it apart from an update never sent.
+A Claude Code agent can still read the watch, and does, but nothing wakes the session when mail
+lands, so the README says nothing about "push" next to Claude Code.
+
+`claude/channel`, Claude Code's own way for a server to push into a session, was measured over the
+same days and versions, and it reaches only the terminal:
+
+- It registers only on a 2025-era connection. On a 2026-07-28 one Claude Code skips it ("connection
+  negotiated a modern protocol revision with no unsolicited notification path"). A server that
+  answers `server/discover` with -32601 gets the fallback: Claude Code then sends `initialize` at
+  2025-11-25 (confirmed on 2.1.312 and 2.1.314).
+- In the terminal CLI, started with `claude --dangerously-load-development-channels server:<name>`,
+  it works: an idle session wakes and takes a turn per message, about 2 s after it is sent, shown
+  as `← <server>: <content>`.
+- In the VS Code panel, and in any client that drives Claude Code over stream-json, Drakar
+  included, the flag is passed and ignored. Claude Code's per-server MCP log says neither "Channel
+  notifications registered" nor "skipped", and no channel notification was logged as received.
+- The stream-json path has its own switch, a `control_request` with `subtype: "channel_enable"`
+  and a `serverName`. It refuses a server that does not come from a marketplace plugin ("channel_enable
+  requires a marketplace plugin"), and the plugin must also pass the approved-channels allowlist:
+  `claude-plugins-official`, or `allowedChannelPlugins` in managed settings.
+
+So a channel lane would serve one host, the terminal, from a 2025-only mode behind a development
+flag per session, and reaching the VS Code panel would take a plugin on the official marketplace or
+a managed-settings allowlist. **Decided 2026-11-02: Cupertino does not build a channel lane now.**
+
+What follows is the channel as first recorded. Anthropic's iMessage plugin declares
 `claude/channel` and `claude/channel/permission` and pushes `notifications/claude/channel`, which
 is the host protocol that lets a phone drive a Claude Code session — including relaying tool
 permission prompts to self-chat and reading `yes <id>` back. Nothing here references it, and
@@ -174,7 +203,8 @@ The reason to write it down rather than shrug: the one differentiator on this pa
 directly. A channel needs Full Disk Access to poll `chat.db`, and every implementation of one will
 tell the user to grant that to Terminal. This project already puts a signed app at the top of that
 launch chain. Whether that is worth a background poll loop, an access-control gate and a permission
-relay — none of which exist here — is undecided and deliberately left so.
+relay — none of which exist here — was left undecided until the measurements above, which make it
+a lane for terminal sessions started with a development flag, and no more than that for now.
 
 **Surface breadth.** LMCP covers 25+ domains including non-Apple apps. Cupertino covers twelve
 surfaces deliberately — [surfaces.md](surfaces.md) records what each additional one costs and why

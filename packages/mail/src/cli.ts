@@ -14,7 +14,7 @@ runStdioServer({
   logPrefix: LOG_PREFIX,
   start: async (logger, ctx) => {
     const config = loadConfig();
-    const { server } = createServer({ config, logger, era: ctx.era });
+    const { server } = createServer({ config, logger, era: ctx.era, listens: ctx.listens });
     return {
       server,
       banner:
