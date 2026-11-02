@@ -62,6 +62,11 @@ describe("loadConfig", () => {
     expect(loadConfig({ APPLE_MAIL_ALLOW_EVENTS: "1" }).allowEvents).toBe(true);
   });
 
+  it("leaves Mail in front after a draft unless asked to hand back", () => {
+    expect(loadConfig({}).handBackAfterDraft).toBe(false);
+    expect(loadConfig({ APPLE_MAIL_HAND_BACK_AFTER_DRAFT: "1" }).handBackAfterDraft).toBe(true);
+  });
+
   it("ignores a non-numeric override rather than producing NaN", () => {
     expect(loadConfig({ APPLE_MAIL_MAX_RESULTS: "lots" }).maxResults).toBe(200);
   });

@@ -551,8 +551,10 @@ export const composeNatively = async (
 
   const known = () => (bodyVerified === true ? { verified: true, chars: verifiedChars } : null);
 
-  // Filled and saved by the verb: there is nothing left to press.
+  // Filled and saved by the verb: there is nothing left to press. The session
+  // ends here, as after a pressed save below.
   if (filling && !params.sendNow) {
+    await lane.release();
     return {
       ok: true,
       subject,
@@ -690,6 +692,9 @@ export const composeNatively = async (
   // A send closes the window. Checked rather than assumed: nothing here may
   // report success on the strength of a keystroke having been delivered.
   const sent = params.sendNow ? await lane.composerGone(subject, sendTimeoutMs) : false;
+  // A draft is left for the person to read: the session ends now, as the
+  // setting says, rather than handing the front back 45 seconds into reading.
+  if (!params.sendNow) await lane.release();
 
   return {
     ok: params.sendNow ? sent : true,

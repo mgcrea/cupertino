@@ -458,8 +458,12 @@ function maxQuoteLevel(el, depth) {
  * of a composer coming forward is worth less than a window stuck at [1, 1].
  *
  * Failure is reported, never fatal: a quoted send still beats a lost one.
+ *
+ * handBack false leaves Mail in front once the window is put back: a draft
+ * the person is about to read (the Mail setting "Return to the previous app
+ * after a draft", off).
  */
-function stripCitation(windowName) {
+function stripCitation(windowName, handBack) {
   var SE = Application("System Events");
   var proc = SE.processes.byName("Mail");
 
@@ -527,7 +531,7 @@ function stripCitation(windowName) {
   // failure path too: a strip that threw must not cost the user their composer.
   unhide();
 
-  if (previous && previous !== "Mail") {
+  if (handBack !== false && previous && previous !== "Mail") {
     try { SE.processes.byName(previous).frontmost = true; } catch (e) {}
   }
   return stripped;

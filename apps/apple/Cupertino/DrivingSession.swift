@@ -305,10 +305,21 @@ nonisolated enum DrivingSession {
   /// open and started another, behind a countdown at best and with no warning
   /// at all under a policy of `.none`, so the person who said stop watched it
   /// carry on.
+  ///
+  /// `handBack: false` ends it leaving the screen as it is: Mail's lane, after a
+  /// draft the person is about to read. `drivenOnly` ends it only when nothing
+  /// but that application was driven in it, so a lane that drives one
+  /// application cannot end a session another client is using; nil then.
   @discardableResult
-  static func release(_ reason: Reason, now: Date = Date()) -> Released? {
+  static func release(
+    _ reason: Reason, handBack: Bool = true, drivenOnly: String? = nil, now: Date = Date()
+  ) -> Released? {
     lock.lock()
     let session = open
+    if let only = drivenOnly, let session, session.driven != [only] {
+      lock.unlock()
+      return nil
+    }
     closeLocked()
     if reason == .person, let session {
       declinedUntil = now.addingTimeInterval(DrivingPolicy.declineCooldown)
@@ -316,7 +327,7 @@ nonisolated enum DrivingSession {
     }
     lock.unlock()
     guard let session else { return nil }
-    return finish(session, reason, now: now)
+    return finish(session, reason, handBack: handBack, now: now)
   }
 
   /// End a session nobody is using: every connection that drove in it has
@@ -352,10 +363,13 @@ nonisolated enum DrivingSession {
   /// already switched to something themselves, pulling their previous app
   /// forward would undo a choice they just made, so the rule is: bring it back
   /// when the screen is still the way the agent left it, otherwise leave it.
-  private static func finish(_ session: Open, _ reason: Reason, now: Date) -> Released {
+  /// And never when the release asked for the screen to be left as it is.
+  private static func finish(
+    _ session: Open, _ reason: Reason, handBack: Bool = true, now: Date
+  ) -> Released {
     DriveActivity.clearDriving()
     var restored: String?
-    if let back = session.handsBackTo, !session.driven.contains(back),
+    if handBack, let back = session.handsBackTo, !session.driven.contains(back),
       let front = frontmost(), session.driven.contains(front),
       AccessibilityDriver.handBack(to: back)
     {

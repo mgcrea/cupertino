@@ -778,6 +778,26 @@ struct MailComposerCheck {
       check("saved only after the paste", before("paste", "save", in: fake.log))
     }
 
+    // Mail's "Return to the previous app after a draft", off: a verified edit
+    // leaves Mail in front for the person to read the draft. The clipboard is
+    // still theirs again, and a refusal still hands the front back.
+    do {
+      let fake = EditFake(own: "Old")
+      let (result, board, front) = run(fake, Request(body: "New", handBack: false))
+      check(
+        "with handBack off a verified edit leaves Mail in front",
+        result["replaced"] as? Bool == true && fake.saves == 1 && front.given.isEmpty)
+      check("and still restores the board", board.restores == 1 && board.untouchedOrRestored)
+    }
+    do {
+      let fake = EditFake(own: "Old")
+      fake.onPaste = { $0.own += " and what they typed" }
+      let (result, board, front) = run(fake, Request(body: "New", handBack: false))
+      check(
+        "with handBack off a refused edit still hands the front back",
+        capability(result) == "confirmation" && handedBack(fake, board, front))
+    }
+
     // Review Focus 1: the person types between selection and paste.
     do {
       let fake = EditFake(own: "Old")
@@ -2253,6 +2273,14 @@ struct MailComposerCheck {
           && note(result).contains("tab is left shown") && front.given == [4242])
     }
     do {
+      let (group, _, _, gamma) = tabbed()
+      let (result, board, front) = tabRun(group, gamma, Request(body: "New gamma", handBack: false))
+      check(
+        "with handBack off a background tab's verified edit leaves Mail in front",
+        result["replaced"] as? Bool == true && gamma.saves == 1 && front.given.isEmpty
+          && board.untouchedOrRestored)
+    }
+    do {
       // An untabbed window and the selected tab save as before, with no wait.
       let fake = EditFake(own: "Old")
       let (result, _, _) = run(fake, Request(body: "New"))
@@ -2749,15 +2777,34 @@ struct MailComposerCheck {
       check(
         "edit is refused as unknown outside the Mail scope (\(scope))",
         editError && editText.contains("unknown tool"))
+      let (releaseText, releaseError) = call("apple_desktop_mail_release", writes: true, scope: scope)
+      check(
+        "release is refused as unknown outside the Mail scope (\(scope))",
+        releaseError && releaseText.contains("unknown tool"))
     }
     for scope in [AccessibilityDriver.Scope.brokered, .any, .only(["com.apple.notes"])] {
-      for name in ["apple_desktop_mail_composers", "apple_desktop_mail_composer_edit"] {
+      for name in [
+        "apple_desktop_mail_composers", "apple_desktop_mail_composer_edit",
+        "apple_desktop_mail_release",
+      ] {
         let (text, isError) = call(name, writes: false, scope: scope)
         check(
           "\(name) with writes off is unknown outside the Mail scope (\(scope))",
           isError && text.contains("unknown tool") && !text.contains("switched off"))
       }
     }
+    let (released, releasedError) = call(
+      "apple_desktop_mail_release", args: ["handBack": false], writes: true, scope: mail)
+    let releasedBody =
+      (try? JSONSerialization.jsonObject(with: Data(released.utf8))) as? [String: Any]
+    check(
+      "release with nothing driven answers that nothing was",
+      !releasedError && releasedBody?["released"] is NSNull)
+    let (badRelease, badReleaseError) = call(
+      "apple_desktop_mail_release", args: ["handBack": "no"], writes: true, scope: mail)
+    check(
+      "release with a handBack that is not a boolean is an argument error",
+      badReleaseError && badRelease.contains("'handBack'"))
     let (off, offError) = call("apple_desktop_mail_composer_edit", writes: false, scope: mail)
     check("edit with writes off is refused before AX", offError && off.contains("switched off"))
     let (missing, missingError) = call(
@@ -2794,6 +2841,11 @@ struct MailComposerCheck {
       "insert rides on a plain body",
       (try? MailComposer.request(from: ["body": "a", "insert": true]))?.insert == true
         && (try? MailComposer.request(from: ["body": "a"]))?.insert == false)
+    check(
+      "handBack defaults on and is read as a boolean",
+      (try? MailComposer.request(from: ["body": "a"]))?.handBack == true
+        && (try? MailComposer.request(from: ["body": "a", "handBack": false]))?.handBack == false
+        && (try? MailComposer.request(from: ["body": "a", "handBack": "no"])) == nil)
     let (gone, goneError) = call(
       "apple_desktop_mail_composer_edit", args: ["composer": "mc-999999", "body": "x"],
       writes: true, scope: mail)
