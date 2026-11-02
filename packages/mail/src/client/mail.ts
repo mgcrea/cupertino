@@ -1849,6 +1849,12 @@ export class AppleMailClient {
                 "its tab and checks it, and once the edit is saved leaves that tab shown in " +
                 "place of the one that was: tell the person which draft Mail now shows."
               : "") +
+            (composers.some((c) => c.onAnotherDesktop === true)
+              ? " A draft with `onAnotherDesktop: true` is on a desktop that is not the one " +
+                "shown (another Space, or Mail in full screen): it is read where it is, and " +
+                "editing it with apple_mail_update_draft brings Mail forward on that desktop " +
+                "first, which switches the person's screen to it."
+              : "") +
             (composers.some((c) => c.rebound === true)
               ? " A draft with `rebound: true` is a tab whose window Mail rebuilt since its " +
                 "handle was given, so the handle may now name another draft under the same " +

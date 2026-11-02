@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// A composer that is not Mail's: lets the registry and the listing be asserted
@@ -11,6 +12,8 @@ final class FakeComposer: ComposerWindow {
   var isMain = false
   var body: [ComposerBlock]
   var isAlive = true
+  var onAnotherDesktop = false
+  var windowNumber: Int? = nil
   init(subject: String, recipients: [String] = [], body: [ComposerBlock] = []) {
     self.subject = subject
     self.to = recipients
@@ -50,6 +53,8 @@ final class EditFake: ComposerWindow {
   /// The body cannot be read at all: Mail still loading it, or not answering.
   var bodyUnreadable = false
   var isAlive = true
+  var onAnotherDesktop = false
+  var windowNumber: Int? = nil
   var rangeText: String?
   var readBack: ((String) -> String?)?
   var activates = true
@@ -2750,6 +2755,108 @@ struct MailComposerCheck {
     }
   }
 
+  /// A composer on another desktop (a Space, or Mail full screen): Accessibility
+  /// lists only the windows on the active one, so these come from the token
+  /// lookup, and can be read where they are but not pasted into.
+  static func desktopChecks() {
+    print("\nanother desktop")
+    let here = FakeComposer(
+      subject: "Here", body: [ComposerBlock(text: "near", quoteLevel: 0, fileNames: [])])
+    let away = FakeComposer(
+      subject: "Away", body: [ComposerBlock(text: "far", quoteLevel: 0, fileNames: [])])
+    away.onAnotherDesktop = true
+    away.windowNumber = 5561
+    let listed = MailComposer.listing([here, away])
+    check(
+      "a composer on this desktop carries no desktop mark",
+      listed[0]["onAnotherDesktop"] == nil && listed[0]["windowId"] == nil)
+    check(
+      "one on another desktop is marked, with its window id",
+      listed[1]["onAnotherDesktop"] as? Bool == true && listed[1]["windowId"] as? Int == 5561)
+    check("and is read where it is", listed[1]["text"] as? String == "far")
+
+    let fake = EditFake(own: "Old text")
+    fake.onAnotherDesktop = true
+    fake.windowNumber = 5561
+    let (result, board, front) = run(fake, Request(body: "New text"))
+    check("an edit on another desktop is refused as such", capability(result) == "desktop")
+    check(
+      "naming the window to bring forward", result["windowId"] as? Int == 5561)
+    check("before anything is selected, pasted or activated", untouched(fake, board, front))
+    check("and nothing was selected", fake.selection == nil)
+
+    // MEASURED 2026-11-02, Mail with its viewer full screen and two composers:
+    // the window server's layer-0 list for its pid, every Space.
+    let server: [[String: Any]] = [
+      (5912, 864, 1084), (5561, 864, 1084), (5421, 1728, 88), (4965, 3008, 30),
+      (977, 53, 48), (124, 1728, 33), (915, 1728, 1084), (96, 420, 632), (95, 64, 64),
+    ].map { number, width, height in
+      [
+        kCGWindowNumber as String: number, kCGWindowOwnerPID as String: 1316,
+        kCGWindowLayer as String: 0,
+        kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": width, "Height": height],
+      ]
+    } + [
+      [
+        kCGWindowNumber as String: 7, kCGWindowOwnerPID as String: 1316,
+        kCGWindowLayer as String: 25,
+        kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 800, "Height": 800],
+      ],
+      [
+        kCGWindowNumber as String: 8, kCGWindowOwnerPID as String: 99,
+        kCGWindowLayer as String: 0,
+        kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 800, "Height": 800],
+      ],
+    ]
+    check(
+      "the window server's real windows are the app's layer-0 ones of 100 points or more",
+      AccessibilityDriver.windowCandidates(server, pid: 1316) == [5912, 5561, 915, 96])
+
+    // Element numbers as measured: sparse, windows among them, then nothing.
+    typealias Probe = AccessibilityDriver.ElementProbe
+    let elements: [UInt64: Probe] = [
+      3: .element, 569: .window(915), 3227: .element, 4012: .window(5561), 4059: .window(5912),
+      4099: .element,
+    ]
+    var probed: [UInt64] = []
+    let probe = { (n: UInt64) -> Probe in
+      probed.append(n)
+      return elements[n] ?? .none
+    }
+    let some = AccessibilityDriver.scanElements(
+      for: [5561], deadRun: 8_000, budget: 5, probe: probe)
+    check("a scan finds the window asked for", some.found.keys.sorted() == [5561])
+    check("and stops as soon as it has it", probed.last == 4012 && some.complete)
+    probed = []
+    let missing = AccessibilityDriver.scanElements(
+      for: [5561, 96], deadRun: 8_000, budget: 5, probe: probe)
+    check(
+      "a number that is no window is not found, and the scan ends after a long dead run",
+      missing.found.keys.sorted() == [5561] && missing.complete && probed.last == 4099 + 8_000)
+    probed = []
+    let starved = AccessibilityDriver.scanElements(
+      for: [96], deadRun: 8_000, budget: 0, probe: probe)
+    check("a scan out of time says it is incomplete", !starved.complete)
+
+    let mail = AccessibilityDriver.Scope.only(["com.apple.mail"])
+    let forward = "apple_desktop_mail_bring_forward"
+    for scope in [AccessibilityDriver.Scope.brokered, .any, .only(["com.apple.notes"])] {
+      let (text, isError) = call(forward, args: ["windowId": 5561], writes: true, scope: scope)
+      check(
+        "bring forward is refused as unknown outside the Mail scope (\(scope))",
+        isError && text.contains("unknown tool"))
+    }
+    let (off, offError) = call(forward, args: ["windowId": 5561], writes: false, scope: mail)
+    check("bring forward with writes off is refused before AX", offError && off.contains("switched off"))
+    for (label, args) in [
+      ("no windowId", [:] as [String: Any]), ("a windowId that is a string", ["windowId": "5561"]),
+      ("a windowId of 0", ["windowId": 0]),
+    ] {
+      let (text, isError) = call(forward, args: args, writes: true, scope: mail)
+      check("bring forward with \(label) is an argument error", isError && text.contains("'windowId'"))
+    }
+  }
+
   static func dispatchChecks() {
     print("\ndispatch")
     let mail = AccessibilityDriver.Scope.only(["com.apple.mail"])
@@ -2918,6 +3025,7 @@ struct MailComposerCheck {
     frontChecks()
     quoteChecks()
     tabChecks()
+    desktopChecks()
     dispatchChecks()
 
     print("\(checks) checks, \(failures) failures")

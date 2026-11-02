@@ -857,6 +857,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_release",
       "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
       "apple_desktop_select", "apple_desktop_mail_composer_edit", "apple_desktop_mail_release",
+      "apple_desktop_mail_bring_forward",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -1369,6 +1370,24 @@ nonisolated enum DesktopServer {
           .agent, handBack: args["handBack"] as? Bool ?? true,
           drivenOnly: AXComposerWindow.bundleId)
         return ok(id, DrivingSession.answer(released))
+
+      // A composer on another desktop (a Space, or Mail full screen) is brought
+      // onto the one shown before it is edited: `mail_composer_edit` refuses it
+      // with its windowId until then. `broughtForward` false is not an error:
+      // the edit's refusal then stands, and says which window.
+      case "apple_desktop_mail_bring_forward" where scope == AXComposerWindow.scope:
+        guard let number = args["windowId"] as? NSNumber, !CFNumberIsFloatType(number),
+          number.intValue > 0
+        else { return failure(id, "'windowId' is a positive window number.") }
+        guard AccessibilityDriver.isTrusted() else {
+          return failure(id, "Accessibility is not granted to Cupertino.")
+        }
+        return ok(
+          id,
+          [
+            "broughtForward": try AXComposerWindow.bringForward(
+              windowNumber: number.intValue, scope: scope)
+          ])
 
       default:
         return failure(id, "unknown tool '\(name)'")

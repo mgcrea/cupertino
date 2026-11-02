@@ -28,6 +28,14 @@ nonisolated protocol ComposerWindow: AnyObject {
   /// Whether `other` is this same window. Identity for a fake; `CFEqual` on the
   /// `AXUIElement` for the live type, since AX hands back a new wrapper on every read.
   func isSame(as other: ComposerWindow) -> Bool
+  /// On a desktop that is not the one shown: another Space, or Mail full
+  /// screen. Accessibility lists only the active Space's windows, so such a
+  /// composer is found by its window number (`AccessibilityDriver.offSpaceWindows`)
+  /// and can be read where it is, but a paste needs it in front.
+  var onAnotherDesktop: Bool { get }
+  /// The window server's number for this window: what `mail_bring_forward`
+  /// takes. (It is also Mail's scripting window `id`, MEASURED 2026-11-02.)
+  var windowNumber: Int? { get }
 
   // ─── editing ─────────────────────────────────────────────────────────────
   //
@@ -127,6 +135,8 @@ extension ComposerWindow {
   nonisolated func windowBody() -> AnyObject? { nil }
   nonisolated func sameBody(_ a: AnyObject, _ b: AnyObject) -> Bool { a === b }
   nonisolated func rebound() -> ComposerWindow? { nil }
+  nonisolated var onAnotherDesktop: Bool { false }
+  nonisolated var windowNumber: Int? { nil }
   /// To and Cc together, as the listing's `recipients` has always been.
   nonisolated var recipientNames: [String] { to + cc }
   func isSame(as other: ComposerWindow) -> Bool { self === other }
@@ -341,17 +351,29 @@ nonisolated enum MailComposer {
   static func listing(_ windows: [ComposerWindow], quoteChars: Int = 2000) -> [[String: Any]] {
     let handles = register(windows)
     return zip(windows, handles).map { window, handle in
-      let tab = window.tab
-      if tab == .background { return background(window, handle) }
-      var entry = shown(window, handle, quoteChars: quoteChars)
-      entry["tab"] = tab?.rawValue ?? NSNull()
-      // Switched away from while it was read, what it answered may be the
-      // next tab's: listed as what it now is, and not taken as a sighting.
-      if tab == .selected, window.tab != .selected { return background(window, handle) }
-      if let text = entry["text"] as? String { registry.sighted(handle, text: text) }
-      entry["rebound"] = registry.isRebound(handle)
+      var entry = listed(window, handle, quoteChars: quoteChars)
+      // Present only when true, as `pressable` is in the desktop tree.
+      if window.onAnotherDesktop {
+        entry["onAnotherDesktop"] = true
+        entry["windowId"] = window.windowNumber ?? NSNull()
+      }
       return entry
     }
+  }
+
+  private static func listed(_ window: ComposerWindow, _ handle: String, quoteChars: Int)
+    -> [String: Any]
+  {
+    let tab = window.tab
+    if tab == .background { return background(window, handle) }
+    var entry = shown(window, handle, quoteChars: quoteChars)
+    entry["tab"] = tab?.rawValue ?? NSNull()
+    // Switched away from while it was read, what it answered may be the
+    // next tab's: listed as what it now is, and not taken as a sighting.
+    if tab == .selected, window.tab != .selected { return background(window, handle) }
+    if let text = entry["text"] as? String { registry.sighted(handle, text: text) }
+    entry["rebound"] = registry.isRebound(handle)
+    return entry
   }
 
   private static func background(_ window: ComposerWindow, _ handle: String) -> [String: Any] {
@@ -629,6 +651,18 @@ nonisolated enum MailComposer {
       return refusal(
         "composer", "The composer is gone: it was sent or closed, or Mail quit. \(untouched)",
         "List the composers again and edit the one that holds this draft.")
+    }
+    // Readable where it is, but a paste lands in the window in front, and
+    // activating Mail lands on whichever desktop Mail last used (MEASURED
+    // 2026-11-02: the full-screen viewer, not the composer). Bringing this
+    // window forward is the server's to do, by its id, before asking again.
+    if w.onAnotherDesktop {
+      return refusal(
+        "desktop",
+        "This composer is on another desktop (a Space, or Mail in full screen), which a paste "
+          + "cannot reach from here. \(untouched)",
+        "Bring its window forward by its windowId, then edit it again.",
+        ["windowId": w.windowNumber ?? NSNull()])
     }
     if let handle, isRebound(handle), request.expectHead == nil {
       return refusal(
@@ -1576,6 +1610,80 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
     self.pid = pid
   }
 
+  /// Bring Mail's window `number` onto the desktop shown: Mail activated
+  /// (admission first, as every activation), then this window raised, made
+  /// main and focused, which switches to its desktop. True once Accessibility
+  /// lists it among the shown desktop's windows; false when it never did
+  /// within `timeout`, or no window has that number.
+  ///
+  /// MEASURED 2026-11-02 in the Debug app, Mail's viewer full screen and a
+  /// composer on another desktop: in this order the composer came forward and
+  /// the edit landed. Raised and made main FIRST, with Mail in the background,
+  /// then activated, Mail came forward on the viewer's desktop and the
+  /// composer never did. Activating alone does the same.
+  static func bringForward(
+    windowNumber: Int, scope: AccessibilityDriver.Scope, timeout: TimeInterval = 2
+  ) throws -> Bool {
+    let number = CGWindowID(windowNumber)
+    let shown = { () -> [AXUIElement] in
+      (try? AccessibilityDriver.windowElements(bundleId: bundleId, scope: scope)) ?? []
+    }
+    let isShown = { (window: AXUIElement) in shown().contains { CFEqual($0, window) } }
+    let listed = shown().first { AccessibilityDriver.windowNumber(of: $0) == number }
+    guard
+      let window = try listed
+        ?? AccessibilityDriver.offSpaceWindows(bundleId: bundleId, scope: scope, numbers: [number])
+        .first
+    else { return false }
+    let started = Date()
+    // Logged either way: which route brought a composer forward is the one
+    // thing about this the edit's answer does not say.
+    let landed = { (yes: Bool) -> Bool in
+      AccessibilityDriver.frontLog(
+        "Mail window \(number) "
+          + (yes
+            ? "brought onto the shown desktop in "
+              + "\(Int(Date().timeIntervalSince(started) * 1000)) ms"
+            : "did not come onto the shown desktop; its edit is refused"))
+      return yes
+    }
+    // Mail active first, THEN this window raised, made main and focused: the
+    // order is what switches desktops (see above).
+    guard try AccessibilityDriver.activateAndWait(bundleId: bundleId, scope: scope) else {
+      return landed(false)
+    }
+    AXUIElementPerformAction(window, kAXRaiseAction as CFString)
+    AXUIElementSetAttributeValue(window, kAXMainAttribute as CFString, kCFBooleanTrue)
+    var owner: pid_t = 0
+    if AXUIElementGetPid(window, &owner) == .success {
+      AXUIElementSetAttributeValue(
+        AccessibilityDriver.element(for: owner), kAXFocusedWindowAttribute as CFString, window)
+    }
+    let deadline = Date().addingTimeInterval(timeout)
+    while !isShown(window) {
+      guard Date() < deadline else { return landed(false) }
+      usleep(50_000)
+    }
+    return landed(true)
+  }
+
+  /// Asked each time rather than kept: Mail can be brought to this window's
+  /// desktop between two calls. Not listed among the windows Accessibility
+  /// sees is another desktop; a read that fails for another reason answers
+  /// false, so a slow Mail never turns into a refusal of an edit that would land.
+  var onAnotherDesktop: Bool {
+    do {
+      return try !AccessibilityDriver.windowElements(bundleId: Self.bundleId, scope: Self.scope)
+        .contains { CFEqual($0, window) }
+    } catch AccessibilityDriver.Failure.noWindows(_) {
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  var windowNumber: Int? { AccessibilityDriver.windowNumber(of: window).map(Int.init) }
+
   /// A composer's text was asked for while its tab is not the one shown.
   struct NotShown: LocalizedError {
     var errorDescription: String? {
@@ -1590,15 +1698,22 @@ nonisolated final class AXComposerWindow: ComposerWindow, @unchecked Sendable {
   /// its messaging timeout: a hung Mail answers `busy` instead of holding the
   /// connection. Mail not running, or with no window, is no composer; any other
   /// failure is thrown, because "none open" is an answer the Mail server acts on.
+  ///
+  /// Accessibility lists only the windows on the desktop shown, so the ones
+  /// the window server counts beyond them are looked up where they are
+  /// (`AccessibilityDriver.offSpaceWindows`): a composer on another Space, or
+  /// with Mail full screen, is listed too, `onAnotherDesktop`.
   static func all(scope: AccessibilityDriver.Scope) throws -> [AXComposerWindow] {
-    let windows: [AXUIElement]
+    var windows: [AXUIElement]
     do {
       windows = try AccessibilityDriver.windowElements(bundleId: bundleId, scope: scope)
     } catch AccessibilityDriver.Failure.appNotRunning(_) {
       return []
     } catch AccessibilityDriver.Failure.noWindows(_) {
-      return []
+      windows = []
     }
+    windows += try AccessibilityDriver.offSpaceWindows(
+      bundleId: bundleId, scope: scope, besides: windows)
     // A window holding tabs is one element for all of them, its content the
     // selected tab's: each titled tab is a composer of its own, named by its
     // button, never by the window.

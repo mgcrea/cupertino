@@ -411,8 +411,15 @@ export const composeNatively = async (
       sent: false,
       note:
         `Mail was asked to open a ${params.mode} window for "${subject}" and no such window was ` +
-        `readable within ${composerTimeoutMs / 1000}s, although Mail's other windows read ` +
-        `fine — so this is not a permission. Nothing was written. The window may still be on ` +
+        `readable within ${composerTimeoutMs / 1000}s, ` +
+        // An empty list read nothing, so it shows nothing readable: the
+        // customer report that found this was told "not a permission" over
+        // `Windows visible at the time: []` (2026-11-02).
+        ((reach.windows ?? []).length > 0
+          ? `although Mail's other windows read fine — so this is not a permission. `
+          : `and no Mail window could be read at all, on any desktop. Run ` +
+            `apple_mail_diagnostics before retrying. `) +
+        `Nothing was written. The window may still be on ` +
         `screen: look for an empty ${params.mode} in Mail before retrying, because a retry ` +
         `would leave a second one behind. Windows visible at the time: ` +
         `${JSON.stringify(reach.windows)}.` +
