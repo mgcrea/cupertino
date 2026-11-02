@@ -4,6 +4,7 @@ import {
   registerSurfaceResources,
   withLazyTools,
   type Era,
+  type ListenLedger,
 } from "@mgcrea/mcp-apple-core";
 import { McpServer } from "@modelcontextprotocol/server";
 
@@ -28,6 +29,8 @@ export type CreateServerOptions = {
   osascript?: OsascriptRunner;
   /** Which protocol era this instance serves. Only watches care. Default `legacy`. */
   era?: Era;
+  /** The connection's open listens, so a watch update nobody listens for is logged. */
+  listens?: ListenLedger;
   /** Injected by tests so a watch never runs `pgrep`. */
   isMailRunning?: () => Promise<boolean>;
 };
@@ -78,6 +81,8 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
       era: opts.era ?? "legacy",
       source: service.source,
       startTrigger: service.startTrigger,
+      ...(opts.logger ? { logger: opts.logger } : {}),
+      ...(opts.listens ? { listens: opts.listens } : {}),
     });
     service.bind(registry);
     closers.push(() => {

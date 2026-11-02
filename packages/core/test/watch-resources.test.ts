@@ -1,10 +1,23 @@
 import { Client } from "@modelcontextprotocol/client";
-import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
-import { describe, expect, it, vi } from "vitest";
+import {
+  InMemoryTransport,
+  McpServer,
+  SUBSCRIPTION_ID_META_KEY,
+  type JSONRPCMessage,
+  type Transport,
+} from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ListenLedger, withListenLedger } from "../src/listens.js";
 import { registerSurfaceResources } from "../src/resources.js";
 import { createWatches, type WatchesOptions } from "../src/watch-resources.js";
-import { normalizeFilter, type ArrivalRow, type ArrivalSource } from "../src/watches.js";
+import {
+  normalizeFilter,
+  type ArrivalRow,
+  type ArrivalSource,
+  type WatchRegistry,
+} from "../src/watches.js";
 
 /** `at` stands in for a surface's public fields: everything else on a row is the registry's. */
 type Row = ArrivalRow & { at: number };
@@ -223,6 +236,192 @@ describe("createWatches: notifications by era", () => {
     // The router answers modern subscriptions; a legacy handler here would be
     // a second, competing subscription table.
     await expect(client.subscribeResource({ uri: w.uri })).rejects.toMatchObject({ code: -32601 });
+  });
+});
+
+/** A logger that keeps what `warn` was given, one string per line. */
+const warnings = () => {
+  const lines: string[] = [];
+  return { lines, logger: { warn: (...args: unknown[]) => lines.push(args.join(" ")) } };
+};
+
+describe("createWatches: a dropped push is said", () => {
+  it("legacy: says so for a URI nobody subscribed to, and not once it is", async () => {
+    const { lines, logger } = warnings();
+    const { client, watches, store } = await setup({ logger });
+    const w = watches.add(acme);
+    store.arrive(1, "jo@acme.com");
+    watches.tick();
+    expect(lines).toEqual([
+      `push dropped (no listener): ${w.uri}, not subscribed with resources/subscribe`,
+    ]);
+    await client.subscribeResource({ uri: w.uri });
+    store.arrive(2, "jo@acme.com");
+    watches.tick();
+    expect(lines).toHaveLength(1);
+  });
+
+  it("modern: says so when no listen covers the URI, and sends it anyway", async () => {
+    const { lines, logger } = warnings();
+    const covered = new Set<string>();
+    const { server, watches, store } = await setup({
+      era: "modern",
+      logger,
+      listens: { covers: (uri) => covered.has(uri) },
+    });
+    const spy = vi.spyOn(server.server, "sendResourceUpdated").mockResolvedValue(undefined);
+    const w = watches.add(acme);
+    store.arrive(1, "jo@acme.com");
+    watches.tick();
+    expect(lines).toEqual([
+      `push dropped (no listener): ${w.uri}, no open subscriptions/listen names it`,
+    ]);
+    covered.add(w.uri);
+    store.arrive(2, "jo@acme.com");
+    watches.tick();
+    expect(lines).toHaveLength(1);
+    // The router, not the ledger, decides: both updates were handed to it.
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+
+  it("modern: says nothing without a ledger, since a drop there cannot be seen", async () => {
+    const { lines, logger } = warnings();
+    const { server, watches, store } = await setup({ era: "modern", logger });
+    vi.spyOn(server.server, "sendResourceUpdated").mockResolvedValue(undefined);
+    watches.add(acme);
+    store.arrive(1, "jo@acme.com");
+    watches.tick();
+    expect(lines).toEqual([]);
+  });
+});
+
+/**
+ * The ledger against the SDK's real router: `serveStdio` over a transport the
+ * test writes JSON-RPC into, as event-handlers.test.ts does for streams. What is
+ * asserted is that the log line and the wire agree, in each state a listen can
+ * be in: a drop is logged exactly when the router sent nothing.
+ */
+describe("createWatches: the drop line agrees with serveStdio's router", () => {
+  const ENVELOPE = {
+    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+    "io.modelcontextprotocol/clientInfo": { name: "test", version: "0.0.0" },
+    "io.modelcontextprotocol/clientCapabilities": {},
+  };
+
+  let teardown: (() => Promise<void>) | undefined;
+  afterEach(async () => {
+    await teardown?.();
+    teardown = undefined;
+  });
+
+  const wired = () => {
+    const sent: JSONRPCMessage[] = [];
+    const { lines, logger } = warnings();
+    const store = fakeSource();
+    const listens = new ListenLedger();
+    let registry: WatchRegistry<Row> | undefined;
+    const transport: Transport = {
+      start: async () => {},
+      send: async (message) => {
+        sent.push(message);
+      },
+      close: async () => {
+        transport.onclose?.();
+      },
+    };
+    const handle = serveStdio(
+      ({ era }) => {
+        const server = new McpServer({ name: "test", version: "0.0.0" });
+        registry = createWatches(server, {
+          surface: "widget",
+          displayName: "Widget",
+          era,
+          source: store.source,
+          logger,
+          listens,
+        });
+        return server;
+      },
+      { transport: withListenLedger(transport, listens) },
+    );
+    teardown = () => handle.close();
+    const write = (msg: Record<string, unknown>) =>
+      transport.onmessage?.({ jsonrpc: "2.0", ...msg } as JSONRPCMessage);
+    const acked = (id: number) =>
+      sent.some((m) => {
+        if (!("method" in m) || m.method !== "notifications/subscriptions/acknowledged")
+          return false;
+        const { _meta: meta } = (m.params ?? {}) as { _meta?: Record<string, unknown> };
+        return meta?.[SUBSCRIPTION_ID_META_KEY] === id;
+      });
+    const listen = async (id: number, notifications: Record<string, unknown>) => {
+      write({ id, method: "subscriptions/listen", params: { notifications, _meta: ENVELOPE } });
+      for (let i = 0; i < 100 && !acked(id); i++) await settle();
+      expect(acked(id)).toBe(true);
+    };
+    const cancel = async (id: number) => {
+      write({
+        method: "notifications/cancelled",
+        params: { requestId: id, reason: "test done", _meta: ENVELOPE },
+      });
+      await settle();
+    };
+    const pushes = () =>
+      sent.filter((m) => "method" in m && m.method === "notifications/resources/updated");
+    const watches = () => {
+      if (!registry) throw new Error("no instance yet: open a listen first");
+      return registry;
+    };
+    return { sent, lines, store, listens, listen, cancel, pushes, watches };
+  };
+
+  it("logs while only a list-changed listen is open, and the router sends nothing", async () => {
+    const { lines, store, listen, pushes, watches } = wired();
+    // What Claude Code opens at connect, and the only listen it opens.
+    await listen(1, { toolsListChanged: true, resourcesListChanged: true });
+    const w = watches().add(acme);
+    store.arrive(1, "jo@acme.com");
+    watches().tick();
+    await settle();
+    expect(pushes()).toEqual([]);
+    expect(lines).toEqual([
+      `push dropped (no listener): ${w.uri}, no open subscriptions/listen names it`,
+    ]);
+  });
+
+  it("stays quiet while a listen names the URI, and logs again once it is cancelled", async () => {
+    const { lines, store, listens, listen, cancel, pushes, watches } = wired();
+    await listen(1, { resourcesListChanged: true });
+    const w = watches().add(acme);
+    await listen(2, { resourceSubscriptions: [w.uri] });
+    expect(listens.covers(w.uri)).toBe(true);
+
+    store.arrive(1, "jo@acme.com");
+    watches().tick();
+    await settle();
+    expect(pushes()).toHaveLength(1);
+    expect(lines).toEqual([]);
+
+    await cancel(2);
+    expect(listens.covers(w.uri)).toBe(false);
+    store.arrive(2, "jo@acme.com");
+    watches().tick();
+    await settle();
+    expect(pushes()).toHaveLength(1);
+    expect(lines).toEqual([
+      `push dropped (no listener): ${w.uri}, no open subscriptions/listen names it`,
+    ]);
+  });
+
+  it("forgets every listen the router closes when the connection ends", async () => {
+    const { listens, listen, watches } = wired();
+    await listen(1, { resourcesListChanged: true });
+    const w = watches().add(acme);
+    await listen(2, { resourceSubscriptions: [w.uri] });
+    expect(listens.size).toBe(2);
+    await teardown?.();
+    teardown = undefined;
+    expect(listens.size).toBe(0);
   });
 });
 

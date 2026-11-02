@@ -52,6 +52,7 @@ export {
 } from "./errors.js";
 export { withLazyTools, type LazyToolsOptions } from "./facade.js";
 export { describeStore, inspectFile, type FileFacts, type StoreFacts } from "./fs.js";
+export { ListenLedger, withListenLedger } from "./listens.js";
 export { trimToolListing, withTrimmedListing } from "./listing.js";
 export {
   assertStaticScript,

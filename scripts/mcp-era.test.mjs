@@ -174,13 +174,25 @@ const mailEnv = (fx) => {
 /**
  * A spawned server and every line it writes: `request` resolves with the
  * response to its id, `next` with the first message a predicate accepts, seen
- * already or still to come.
+ * already or still to come. `logged` does the same for a stderr line, which is
+ * what the app relays into the Activity log.
  */
 const session = (env, era, surface = "mail") => {
   const child = spawn("node", [join(root, "packages", surface, "dist", "cli.js")], {
     env,
-    stdio: ["pipe", "pipe", "ignore"],
+    stdio: ["pipe", "pipe", "pipe"],
   });
+  const logs = [];
+  createInterface({ input: child.stderr }).on("line", (line) => logs.push(line));
+  const logged = async (pattern, what, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const hit = logs.find((line) => pattern.test(line));
+      if (hit) return hit;
+      await new Promise((ok) => setTimeout(ok, 50));
+    }
+    throw new Error(`timed out waiting for ${what}`);
+  };
   const seen = [];
   const waiters = [];
   createInterface({ input: child.stdout }).on("line", (line) => {
@@ -219,7 +231,7 @@ const session = (env, era, surface = "mail") => {
     write({ id: rid, method, params: meta ? { ...params, _meta: meta } : params });
     return next((m) => m.id === rid && ("result" in m || "error" in m), `a response to ${method}`);
   };
-  return { child, seen, write, next, request, meta };
+  return { child, seen, logs, logged, write, next, request, meta };
 };
 
 const callJson = async (s, name, args) => {
@@ -264,6 +276,11 @@ test(
         body.messages.map((m) => [m.senderAddress, m.subject]),
         [["jo@acme.com", "Quote"]],
       );
+      assert.equal(
+        s.logs.find((line) => line.includes("push dropped")),
+        undefined,
+        "a delivered push is not logged as dropped",
+      );
     } finally {
       s.child.kill();
       fx.close();
@@ -293,6 +310,69 @@ test(
     }
   },
 );
+
+// What Claude Code does, measured 2026-10-30 to 2026-11-02: one listen at
+// connect for list-changed notifications only, never one naming the watch. The
+// router drops the update without a word on the wire, so the server says so on
+// stderr, and the app relays that line into the Activity log.
+test(
+  "modern: an update no listen names is logged as dropped, and nothing is pushed",
+  onMac,
+  async () => {
+    const fx = mailFixture();
+    const s = session(mailEnv(fx), "modern");
+    try {
+      s.write({
+        id: "listen-1",
+        method: "subscriptions/listen",
+        params: {
+          notifications: {
+            toolsListChanged: true,
+            promptsListChanged: true,
+            resourcesListChanged: true,
+          },
+          _meta: s.meta,
+        },
+      });
+      await s.next(
+        (m) => m.method === "notifications/subscriptions/acknowledged",
+        "the subscription to be acknowledged",
+      );
+      const made = await callJson(s, "apple_mail_watch", { domains: ["acme.com"] });
+      fx.arrive(102);
+      const line = await s.logged(/push dropped \(no listener\)/, "the dropped-push line");
+      assert.equal(
+        line,
+        `[apple-mail-mcp] push dropped (no listener): ${made.uri}, no open subscriptions/listen names it`,
+      );
+      assert.equal(s.seen.find(updatedFor(made.uri)), undefined, "nothing reached the wire");
+    } finally {
+      s.child.kill();
+      fx.close();
+    }
+  },
+);
+
+test("legacy: an update nobody subscribed to is logged as dropped", onMac, async () => {
+  const fx = mailFixture();
+  const s = session(mailEnv(fx), "legacy");
+  try {
+    const init = await s.request("initialize", initialize[2]);
+    assert.equal(init.error, undefined);
+    s.write({ method: "notifications/initialized" });
+    const made = await callJson(s, "apple_mail_watch", { from: ["jo@acme.com"] });
+    fx.arrive(102);
+    const line = await s.logged(/push dropped \(no listener\)/, "the dropped-push line");
+    assert.equal(
+      line,
+      `[apple-mail-mcp] push dropped (no listener): ${made.uri}, not subscribed with resources/subscribe`,
+    );
+    assert.equal(s.seen.find(updatedFor(made.uri)), undefined, "nothing reached the wire");
+  } finally {
+    s.child.kill();
+    fx.close();
+  }
+});
 
 // ── MCP Events (draft SEP-3415), end to end ──────────────────────────────────
 //
