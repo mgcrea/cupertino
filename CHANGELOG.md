@@ -16,6 +16,14 @@ summary.
 
 ### Fixed
 
+- **Mail drafts work with Mail in full screen or on another desktop.** Accessibility lists only the
+  windows on the desktop shown, so with Mail full screen every draft failed after 8 seconds with
+  "no such window was readable", and `apple_mail_list_open_drafts` said no draft was open while one
+  was. The app now finds Mail's windows on other desktops and reads them where they are, listed with
+  `onAnotherDesktop: true`. Editing one brings Mail forward on that desktop first, and a composer
+  that cannot be brought forward is refused before anything is touched. A compose that reads no Mail
+  window at all no longer says "this is not a permission".
+
 - **The Activity log shows a watch update that no one was listening for.** When matching mail or
   a message arrived and the host had not subscribed to the watch, the update went nowhere and the
   Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and
