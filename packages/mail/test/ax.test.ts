@@ -395,3 +395,77 @@ describe("composers", () => {
     lane.close();
   });
 });
+
+const edits = (seen: { tool: string }[]) => seen.filter((c) => c.tool === "mail_composer_edit");
+
+describe("editComposer on another desktop", () => {
+  const ON_ANOTHER_DESKTOP = {
+    replaced: false,
+    degraded: true,
+    method: "inPlace",
+    capability: "desktop",
+    reason: "This composer is on another desktop.",
+    hint: "Bring its window forward by its windowId, then edit it again.",
+    windowId: 5561,
+  };
+  const FILLED = { replaced: true, method: "inPlace", text: "Hi", quoteKept: true };
+
+  it("brings that window forward by its id, then edits it", async () => {
+    const { env, seen } = await hostStub({
+      mail_composer_edit: (_a, n) => (n === 1 ? ON_ANOTHER_DESKTOP : FILLED),
+      mail_bring_forward: { broughtForward: true },
+    });
+    const lane = MailAxLane.open(env)!;
+    const result = await lane.editComposer({ composer: "mc-1", body: "Hi" });
+    expect(result).toEqual(FILLED);
+    expect(seen.find((c) => c.tool === "mail_bring_forward")?.args).toEqual({ windowId: 5561 });
+    expect(edits(seen)).toHaveLength(2);
+    lane.close();
+  });
+
+  it("passes the refusal back when the window did not come forward", async () => {
+    const { env, seen } = await hostStub({
+      mail_composer_edit: ON_ANOTHER_DESKTOP,
+      mail_bring_forward: { broughtForward: false },
+    });
+    const lane = MailAxLane.open(env)!;
+    const result = await lane.editComposer({ composer: "mc-1", body: "Hi" });
+    expect(result).toMatchObject({ capability: "desktop", windowId: 5561 });
+    expect(edits(seen)).toHaveLength(1);
+    lane.close();
+  });
+
+  it("passes it back as well from an app that predates bringing a window forward", async () => {
+    const { env, seen } = await hostStub({
+      mail_composer_edit: ON_ANOTHER_DESKTOP,
+      mail_bring_forward: { refusal: "unknown tool: apple_desktop_mail_bring_forward" },
+    });
+    const lane = MailAxLane.open(env)!;
+    const result = await lane.editComposer({ composer: "mc-1", body: "Hi" });
+    expect(result).toMatchObject({ capability: "desktop", windowId: 5561 });
+    expect(edits(seen)).toHaveLength(1);
+    lane.close();
+  });
+
+  it("asks again while the desktop is still switching, then gives up with the refusal", async () => {
+    const { env, seen } = await hostStub({
+      mail_composer_edit: ON_ANOTHER_DESKTOP,
+      mail_bring_forward: { broughtForward: true },
+    });
+    const lane = MailAxLane.open(env, { desktopTimeoutMs: 300 })!;
+    const result = await lane.editComposer({ composer: "mc-1", body: "Hi" });
+    expect(result).toMatchObject({ replaced: false, capability: "desktop", windowId: 5561 });
+    expect(edits(seen).length).toBeGreaterThan(2);
+    lane.close();
+  });
+
+  it("does not bring anything forward for any other refusal", async () => {
+    const { env, seen } = await hostStub({
+      mail_composer_edit: { ...ON_ANOTHER_DESKTOP, capability: "identity", windowId: undefined },
+    });
+    const lane = MailAxLane.open(env)!;
+    await lane.editComposer({ composer: "mc-1", body: "Hi" });
+    expect(seen.map((c) => c.tool)).toEqual(["mail_composer_edit"]);
+    lane.close();
+  });
+});

@@ -3,6 +3,15 @@ import ApplicationServices
 import Carbon.HIToolbox
 import os
 
+// Private HIServices, for windows on other Spaces: see `offSpaceWindows`.
+@_silgen_name("_AXUIElementCreateWithRemoteToken")
+nonisolated private func _AXUIElementCreateWithRemoteToken(_ token: CFData)
+  -> Unmanaged<AXUIElement>?
+@_silgen_name("_AXUIElementGetWindow")
+nonisolated private func _AXUIElementGetWindow(
+  _ element: AXUIElement, _ window: UnsafeMutablePointer<CGWindowID>
+) -> AXError
+
 /// The Accessibility layer for the `desktop` surface: read a window's element
 /// tree, address a control, press it.
 ///
@@ -694,6 +703,164 @@ nonisolated enum AccessibilityDriver {
       throw Failure.noWindows(running.localizedName ?? bundleId)
     }
     return list
+  }
+
+  // ─── windows on other Spaces ───────────────────────────────────────────────
+
+  /// The window server's number for a window element; nil when it has none.
+  /// For Mail this is also its scripting window `id` (MEASURED 2026-11-02).
+  static func windowNumber(of window: AXUIElement) -> CGWindowID? {
+    var number: CGWindowID = 0
+    return _AXUIElementGetWindow(window, &number) == .success && number != 0 ? number : nil
+  }
+
+  /// The app's real windows by the window server's count, every Space: its
+  /// layer-0 windows of at least 100 points each way. MEASURED 2026-11-02 on
+  /// Mail: of 15 layer-0 windows, that leaves the viewer, two composers and
+  /// one hidden panel; the rest are 30- to 88-point strips and icons.
+  static func windowCandidates(_ info: [[String: Any]], pid: pid_t) -> Set<CGWindowID> {
+    Set(
+      info.compactMap { window -> CGWindowID? in
+        guard (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == pid,
+          (window[kCGWindowLayer as String] as? NSNumber)?.intValue == 0,
+          let bounds = window[kCGWindowBounds as String] as? [String: Any],
+          ((bounds["Width"] as? NSNumber)?.doubleValue ?? 0) >= 100,
+          ((bounds["Height"] as? NSNumber)?.doubleValue ?? 0) >= 100,
+          let number = (window[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+        else { return nil }
+        return number
+      })
+  }
+
+  /// What one element number turned out to be.
+  enum ElementProbe: Equatable {
+    case none
+    case element
+    case window(CGWindowID)
+  }
+
+  /// Walk element numbers from 0 for the windows `wanted`, keeping each one's
+  /// element number. Ends when all are found; when `deadRun` numbers in a row
+  /// answered nothing, which is past the last element the app has (`complete`,
+  /// so what was not found is no window); or when `budget` runs out, which is
+  /// not complete. MEASURED on Mail: 140 live elements below 4099, the longest
+  /// dead run between them 2487, so a run of 8000 is well past the end, and
+  /// costs about 120 ms there.
+  static func scanElements(
+    for wanted: Set<CGWindowID>, deadRun: UInt64 = 8_000, budget: TimeInterval,
+    probe: (UInt64) -> ElementProbe
+  ) -> (found: [CGWindowID: UInt64], complete: Bool) {
+    var remaining = wanted
+    var found: [CGWindowID: UInt64] = [:]
+    var dead: UInt64 = 0
+    var number: UInt64 = 0
+    let deadline = Date().addingTimeInterval(budget)
+    while !remaining.isEmpty {
+      if number % 256 == 0, Date() >= deadline { return (found, false) }
+      switch probe(number) {
+      case .none:
+        dead += 1
+        if dead >= deadRun { return (found, true) }
+      case .element:
+        dead = 0
+      case .window(let window):
+        dead = 0
+        if remaining.remove(window) != nil { found[window] = number }
+      }
+      number += 1
+    }
+    return (found, true)
+  }
+
+  /// Per process: the element number of each window found, and the windows a
+  /// complete walk showed are none (Mail's hidden panel), so a listing walks
+  /// again only for a window it has not met. Keyed by pid: a relaunched app
+  /// starts over. `nonisolated(unsafe)` is vouched for by `offSpaceLock`.
+  private nonisolated(unsafe) static var offSpaceMemory:
+    (pid: pid_t, elements: [CGWindowID: UInt64], none: Set<CGWindowID>) = (0, [:], [])
+  private static let offSpaceLock = NSLock()
+
+  /// Windows that `windowElements` cannot list, found by their numbers.
+  ///
+  /// **`kAXWindows` and `AXChildren` list only the windows on the active
+  /// Space.** With Mail full screen, or a composer on another desktop, both
+  /// answer nothing for it, so every verb here read Mail as having no window
+  /// while it had three (scripts/spike-mail-other-space.swift, and the report
+  /// that found it: a customer whose drafts never opened, 2026-11-02).
+  ///
+  /// An element can still be made for any of the app's elements from its pid
+  /// and element number (`_AXUIElementCreateWithRemoteToken`, private, the
+  /// lookup window switchers use), and one whose role is `AXWindow` is a full
+  /// element: its tree reads, and its body takes text-marker selections, with
+  /// the app in the background and its Space not shown. Element numbers are
+  /// not window numbers, so they are walked (`scanElements`), about 30 ms per
+  /// thousand; a window met once is remembered. A number not found is simply
+  /// not returned.
+  static func offSpaceWindows(
+    bundleId: String, scope: Scope, numbers: Set<CGWindowID>, budget: TimeInterval = 1.5
+  ) throws -> [AXUIElement] {
+    guard isTrusted() else { throw Failure.notTrusted }
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    guard !numbers.isEmpty else { return [] }
+    let owner = pid(of: try app(forBundleId: bundleId))
+
+    // pid, 0, "coco", then the element number: the layout AltTab uses.
+    var token = Data(count: 20)
+    token.replaceSubrange(0..<4, with: withUnsafeBytes(of: owner) { Data($0) })
+    token.replaceSubrange(8..<12, with: withUnsafeBytes(of: Int32(0x636f_636f)) { Data($0) })
+    let element = { (number: UInt64) -> AXUIElement? in
+      token.replaceSubrange(12..<20, with: withUnsafeBytes(of: number) { Data($0) })
+      return _AXUIElementCreateWithRemoteToken(token as CFData)?.takeRetainedValue()
+    }
+
+    offSpaceLock.lock()
+    if offSpaceMemory.pid != owner { offSpaceMemory = (owner, [:], []) }
+    let memory = offSpaceMemory
+    offSpaceLock.unlock()
+
+    // Remembered elements first, each checked to be that window still.
+    var found: [AXUIElement] = []
+    var wanted = numbers.subtracting(memory.none)
+    for (window, number) in memory.elements where wanted.contains(window) {
+      guard let candidate = element(number), windowNumber(of: candidate) == window else { continue }
+      found.append(candidate)
+      wanted.remove(window)
+    }
+    guard !wanted.isEmpty else { return found }
+
+    let scan = scanElements(for: wanted, budget: budget) { number in
+      guard let candidate = element(number), let role = string(candidate, kAXRoleAttribute as String)
+      else { return .none }
+      guard role == (kAXWindowRole as String), let window = windowNumber(of: candidate) else {
+        return .element
+      }
+      return .window(window)
+    }
+    for number in scan.found.values {
+      if let candidate = element(number) { found.append(candidate) }
+    }
+    offSpaceLock.lock()
+    if offSpaceMemory.pid == owner {
+      offSpaceMemory.elements.merge(scan.found) { _, new in new }
+      if scan.complete { offSpaceMemory.none.formUnion(wanted.subtracting(scan.found.keys)) }
+    }
+    offSpaceLock.unlock()
+    return found
+  }
+
+  /// Every window of the app the window server counts that `listed` does not
+  /// hold: what `windowElements` misses on other Spaces.
+  static func offSpaceWindows(bundleId: String, scope: Scope, besides listed: [AXUIElement])
+    throws -> [AXUIElement]
+  {
+    guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    let owner = pid(of: try app(forBundleId: bundleId))
+    let info =
+      (CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+      as? [[String: Any]]) ?? []
+    let missing = windowCandidates(info, pid: owner).subtracting(
+      listed.compactMap(windowNumber(of:)))
+    return try offSpaceWindows(bundleId: bundleId, scope: scope, numbers: missing)
   }
 
   // ─── the tree ──────────────────────────────────────────────────────────────

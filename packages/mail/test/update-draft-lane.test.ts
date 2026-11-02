@@ -80,6 +80,8 @@ const world = (
     tabs?: boolean;
     /** Composers (by index) whose handle Mail's tab rebuild re-bound: listed `rebound: true`. */
     rebound?: number[];
+    /** Composers (by index) on another desktop: listed `onAnotherDesktop` with a window id. */
+    elsewhere?: number[];
   } = {},
 ) => {
   const scripts: string[] = [];
@@ -131,6 +133,9 @@ const world = (
               quote: quoteChars > 0 ? "On Monday, Ann wrote:".slice(0, quoteChars) : null,
               quoteTruncated: quoteChars > 0 && quoteChars < "On Monday, Ann wrote:".length,
               files: [...files],
+              ...(over.elsewhere?.includes(at)
+                ? { onAnotherDesktop: true as const, windowId: 5561 + at }
+                : {}),
             },
       ),
       // A composer Mail was asked to open appears in the list once it has been:
@@ -648,6 +653,35 @@ describe("listing the open drafts", () => {
     expect(result.drafts[1]).toHaveProperty("savedDrafts");
     expect(result.note).toMatch(/`tab: "background"`/);
     expect(result.note).toMatch(/selected/);
+  });
+
+  /*
+   * Mail full screen, or a draft on another desktop: Accessibility lists only
+   * the desktop shown, and the app finds the rest. Such a draft is read where
+   * it is; the note says that editing it brings it, and the person, to it.
+   */
+  it("lists a draft on another desktop, read in full, and says what editing it does", async () => {
+    const { client } = world(2, { elsewhere: [1] });
+    const result = (await client.listOpenDrafts()) as {
+      drafts: Record<string, unknown>[];
+      note: string;
+    };
+    expect(result.drafts[0]).not.toHaveProperty("onAnotherDesktop");
+    expect(result.drafts[1]).toMatchObject({
+      composer: "mc-1",
+      text: "ALPHA one",
+      onAnotherDesktop: true,
+      windowId: 5562,
+    });
+    expect(result.note).toMatch(/`onAnotherDesktop: true`/);
+    expect(result.note).toMatch(/full screen/);
+    expect(result.note).toMatch(/brings Mail forward/);
+  });
+
+  it("says nothing of other desktops when every draft is on the one shown", async () => {
+    const { client } = world(2);
+    const result = (await client.listOpenDrafts()) as { note: string };
+    expect(result.note).not.toMatch(/onAnotherDesktop/);
   });
 
   it("says plainly that none is open", async () => {

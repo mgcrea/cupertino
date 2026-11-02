@@ -820,6 +820,35 @@ prints `close the Mail window "<subject>" (tab)` and waits up to 120 s for someo
 holding its own Accessibility grant, to press that window's close button. It leaves a forward and a
 new-message draft as evidence.
 
+### Composers on another desktop
+
+Found 2026-11-02 from a customer report: on 1.32.0 every draft failed with _"no such window was
+readable within 8s … Windows visible at the time: []"_, and `list_open_drafts` said no composer was
+open with one open by hand. Reproduced here the same day with Mail full screen and VS Code in front.
+Measured with [`scripts/spike-mail-other-space.swift`](../scripts/spike-mail-other-space.swift),
+whose header carries every number.
+
+- **`kAXWindows` and `AXChildren` list only the windows on the active Space.** With Mail full
+  screen or on another desktop both are empty, `windowElements` throws `noWindows`, and every verb
+  saw a Mail with no window. The window server still counted them.
+- **They can be reached anyway.** `_AXUIElementCreateWithRemoteToken` (private) makes an element
+  from the pid and an element number, and an `AXWindow` made that way reads in full, body and text
+  markers included, with Mail in the background and its desktop not shown. `_AXUIElementGetWindow`
+  gives its window number, which is also Mail's scripting `id`. Element numbers are sparse (140 live
+  below 4099, a dead run of 2487 between them), so `AccessibilityDriver.offSpaceWindows` walks them
+  for the window server's real windows (layer 0, 100 points or more) that Accessibility missed, stops
+  after 8000 dead numbers in a row, and remembers what it found, including Mail's hidden panel,
+  which is no window.
+- **A paste still needs the composer in front**, and activating Mail lands on the desktop it last
+  used, not the composer's. Raised and made main FIRST, then activated, it did not switch. Activated
+  FIRST, then raised, made main and focused, it did: the edit landed. So `mail_composer_edit`
+  refuses a composer on another desktop (`capability: "desktop"`, with its `windowId`) before
+  touching anything, and the server calls `mail_bring_forward` with that id and asks again.
+- **Writing without a paste was found, and not taken.** `AXTextOperation` (replace, over a marker
+  range) changes the body in 8 to 17 ms with Mail in the background, but autosave does not see it as
+  an edit and File › Save is disabled until Mail is in front, so the save would still need Mail
+  forward. Left for a separate change.
+
 ## Still open
 
 - **Where an attachment lands in a native-lane reply, and whether the read-back still passes.** **STILL OPEN 2026-10-26.**

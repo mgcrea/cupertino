@@ -831,8 +831,33 @@ describe("composeNatively", () => {
     expect(result).toMatchObject({ ok: false, sent: false, bodyVerified: null, verifiedChars: 0 });
     expect(result.note).toContain("no such window was readable within");
     expect(result.note).toContain("Nothing was written");
+    expect(result.note).toContain("so this is not a permission");
     expect(edits(seen)).toEqual([]);
     expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+    lane.close();
+  });
+
+  /*
+   * Maël Szabelski's report, 2026-11-02: "Windows visible at the time: []",
+   * and the note still said Mail's other windows read fine, so not a
+   * permission. With none read, nothing was shown to be readable.
+   */
+  it("does not call it no permission when no Mail window could be read at all", async () => {
+    const { lane } = await laneOver(
+      healthyHost({ list_windows: { windows: [] }, mail_composers: { composers: [] } }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerReturning("Re: lunch"),
+      { ...PARAMS, sendNow: false },
+      TIMEOUTS,
+    );
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(result.note).toContain("no such window was readable within");
+    expect(result.note).not.toContain("not a permission");
+    expect(result.note).not.toContain("read fine");
+    expect(result.note).toContain("no Mail window could be read at all");
+    expect(result.note).toContain("apple_mail_diagnostics");
     lane.close();
   });
 

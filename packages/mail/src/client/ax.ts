@@ -137,6 +137,14 @@ export type NativeComposer = {
   quoted: boolean | null;
   /** Named files in the own text. Empty for a background tab, which is not read. */
   files: string[];
+  /**
+   * On a desktop that is not the one shown (another Space, or Mail full
+   * screen): read where it is, and brought forward by `windowId` to be
+   * edited. Absent otherwise, and from an app that predates it.
+   */
+  onAnotherDesktop?: true;
+  /** The window server's number for its window; present with `onAnotherDesktop`. */
+  windowId?: number | null;
 };
 
 export type EditComposerArgs = {
@@ -163,6 +171,25 @@ export type ReachReport = {
   windows: string[] | null;
 };
 
+/** The window id an edit was refused for as being on another desktop; null for any other answer. */
+const onAnotherDesktop = (result: Record<string, unknown>): number | null =>
+  result.replaced === false &&
+  result.capability === "desktop" &&
+  typeof result.windowId === "number"
+    ? result.windowId
+    : null;
+
+/** How long an edit waits for a composer brought from another desktop to arrive. */
+const DESKTOP_TIMEOUT_MS = 3_000;
+
+/** Between asks while it arrives. */
+const DESKTOP_POLL_MS = 150;
+
+export type MailAxLaneOptions = {
+  handBack?: boolean;
+  desktopTimeoutMs?: number;
+};
+
 export class MailAxLane {
   readonly #channel: AxChannel;
   /**
@@ -171,19 +198,21 @@ export class MailAxLane {
    * says it, whichever path made the draft.
    */
   readonly #handBack: boolean;
+  readonly #desktopTimeoutMs: number;
 
-  private constructor(channel: AxChannel, handBack: boolean) {
+  private constructor(channel: AxChannel, opts: MailAxLaneOptions) {
     this.#channel = channel;
-    this.#handBack = handBack;
+    this.#handBack = opts.handBack ?? false;
+    this.#desktopTimeoutMs = opts.desktopTimeoutMs ?? DESKTOP_TIMEOUT_MS;
   }
 
   /** Null when this server is not hosted by Cupertino — see the note above. */
   static open(
     env: NodeJS.ProcessEnv = process.env,
-    opts: { handBack?: boolean } = {},
+    opts: MailAxLaneOptions = {},
   ): MailAxLane | null {
     const channel = openAxChannel(MAIL_SURFACE, env);
-    return channel ? new MailAxLane(channel, opts.handBack ?? false) : null;
+    return channel ? new MailAxLane(channel, opts) : null;
   }
 
   close(): void {
@@ -199,7 +228,12 @@ export class MailAxLane {
     return this.#channel.call({ tool: `apple_desktop_${tool}`, args });
   }
 
-  /** Every open composer, with its handle and own text. */
+  /**
+   * Every open composer, with its handle and own text. Those on another
+   * desktop (a Space, or Mail full screen) are listed too, read where they
+   * are, with `onAnotherDesktop`: the app finds them by the window server's
+   * count, which Accessibility's own list does not reach.
+   */
   async composers(quoteChars?: number): Promise<NativeComposer[]> {
     const result = (await this.#call(
       "mail_composers",
@@ -212,12 +246,46 @@ export class MailAxLane {
    * Edit a composer in one verified native step. The verb's JSON comes back
    * verbatim: a refusal is an answer, not an error. A failure of the call itself
    * (bad arguments, Accessibility not trusted) throws, as every `#call` does.
+   *
+   * A composer on another desktop is refused by the app before anything is
+   * touched, with its `windowId`. It is then brought forward here, which
+   * switches to its desktop, and asked about again until it is on the one
+   * shown or `desktopTimeoutMs` runs out: so every path that edits a
+   * composer (compose, revise, rebuild) reaches one wherever it is.
    */
   async editComposer(args: EditComposerArgs): Promise<Record<string, unknown>> {
-    return (await this.#call("mail_composer_edit", {
-      ...args,
-      handBack: this.#handBack,
-    })) as Record<string, unknown>;
+    const edit = async () =>
+      (await this.#call("mail_composer_edit", {
+        ...args,
+        handBack: this.#handBack,
+      })) as Record<string, unknown>;
+    let result = await edit();
+    const windowId = onAnotherDesktop(result);
+    if (windowId === null || !(await this.#bringForward(windowId))) return result;
+    const deadline = Date.now() + this.#desktopTimeoutMs;
+    for (;;) {
+      result = await edit();
+      if (onAnotherDesktop(result) === null || Date.now() >= deadline) return result;
+      await new Promise((resolve) => setTimeout(resolve, DESKTOP_POLL_MS));
+    }
+  }
+
+  /**
+   * Bring the window `windowId` onto the desktop shown, through the app's
+   * `mail_bring_forward`, which activates Mail, raises the window and says
+   * whether it landed. False when it did not, when the person said no to
+   * being driven, and from an app that predates the verb: the edit's own
+   * refusal then stands, naming the window.
+   */
+  async #bringForward(windowId: number): Promise<boolean> {
+    try {
+      const answer = (await this.#call("mail_bring_forward", { windowId })) as {
+        broughtForward?: boolean;
+      };
+      return answer.broughtForward === true;
+    } catch {
+      return false;
+    }
   }
 
   /**
