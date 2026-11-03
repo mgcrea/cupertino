@@ -125,9 +125,10 @@ export const buildDiagnostics = async (
               "own Accessibility driver, for a new message as for a reply or forward: the body " +
               "is pasted, never assigned. Automation to System Events is NOT required for it, " +
               "and `automationSystemEvents` above can be denied. The one exception is a new " +
-              "message with no subject, which still has its body assigned and then needs " +
-              "System Events to take off the quotation Mail wraps an assigned body in; without " +
-              "it, the result says `quoted: true` and the message is not sent.",
+              "message with no subject that is sent at once, or saved with no body or files: " +
+              "it still has its body assigned and then needs System Events to take off the " +
+              "quotation Mail wraps an assigned body in; without it, the result says " +
+              "`quoted: true` and the message is not sent.",
           }
         : {}),
       ...((composer.uiRead === "granted" && composer.systemEvents === "granted") ||

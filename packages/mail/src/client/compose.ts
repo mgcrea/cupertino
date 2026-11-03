@@ -355,6 +355,34 @@ export const composeNatively = async (
   // cannot exclude the very message this call is about.
   const startedAt = Date.now();
 
+  /*
+   * A new message with no subject has no title to aim a keystroke by: its tab
+   * is titled in the locale, and sending one makes Mail ask about the missing
+   * subject with localised buttons. So it is composed only when the verb does
+   * all of it, filling and saving, and refused here, before anything is opened,
+   * when it would need a key pressed. Everything after the fill is addressed by
+   * the composer's handle for it, never by its title.
+   */
+  if (!params.subject?.trim() && params.mode === "new") {
+    const pressing = params.sendNow || (!params.body && !params.attachments?.length);
+    if (pressing) {
+      return {
+        ok: false,
+        subject: params.subject ?? "",
+        bodyVerified: null,
+        verifiedChars: 0,
+        sent: false,
+        note:
+          (params.sendNow
+            ? "A new message with no subject cannot be sent from here: Mail asks before sending " +
+              "one, and its buttons are named in the Mac's language."
+            : "A new message with no subject and nothing to fill cannot be saved from here: " +
+              "the only way to save it is a keystroke aimed by its title, and it has none.") +
+          " Nothing was opened. Give it a subject, or leave out sendNow and give it a body.",
+      };
+    }
+  }
+
   // Asked BEFORE anything is opened, keeping the ordering the System Events path
   // established: the failure this tool was best known for left an empty reply
   // window on screen on every attempt.
@@ -369,7 +397,16 @@ export const composeNatively = async (
   // handle that is absent from this list afterwards.
   const before = await lane.composers();
   const subject = ((await runner.run(OPEN_COMPOSER, toOpen)) as { subject: string }).subject;
-  const found = await awaitNewComposer(lane, before, composerTimeoutMs, subject);
+  // Whether the subject can stand for the window. Without one, the new composer
+  // is whichever handle appeared, under any title.
+  const keyed = subject.trim() !== "";
+  const titled = keyed ? `for "${subject}"` : "with no subject";
+  const found = await awaitNewComposer(
+    lane,
+    before,
+    composerTimeoutMs,
+    keyed ? subject : undefined,
+  );
   if (found && "ambiguous" in found) {
     return {
       ok: false,
@@ -378,13 +415,13 @@ export const composeNatively = async (
       verifiedChars: 0,
       sent: false,
       note:
-        `Mail was asked to open a ${params.mode} window for "${subject}", and ` +
+        `Mail was asked to open a ${params.mode} window ${titled}, and ` +
         (found.ambiguous.length === 1
           ? `the one new composer under that title (${found.ambiguous[0]}) could not be told ` +
             `from the draft already open under it: its text reads as that draft's, or could ` +
             `not be read. Nothing was filled, pressed or sent, and every window is left open ` +
             `in Mail. Close the extra one, finish the other by hand, then retry.`
-          : `${found.ambiguous.length} new composers titled that appeared ` +
+          : `${found.ambiguous.length} new composers${keyed ? " titled that" : ""} appeared ` +
             `(${found.ambiguous.join(", ")}), so this path cannot tell which one it opened. ` +
             `Nothing was filled, pressed or sent, and all of them are left open in Mail. Close ` +
             `the extra one, finish the other by hand, then retry.`) +
@@ -410,7 +447,7 @@ export const composeNatively = async (
       verifiedChars: 0,
       sent: false,
       note:
-        `Mail was asked to open a ${params.mode} window for "${subject}" and no such window was ` +
+        `Mail was asked to open a ${params.mode} window ${titled} and no such window was ` +
         `readable within ${composerTimeoutMs / 1000}s, ` +
         // An empty list read nothing, so it shows nothing readable: the
         // customer report that found this was told "not a permission" over
@@ -452,12 +489,22 @@ export const composeNatively = async (
       verifiedChars: knownBody?.chars ?? 0,
       sent: verdict.sent,
       note:
-        `The ${params.mode} window for "${subject}" is GONE. Nothing here closed it — this path ` +
+        `The ${params.mode} window ${titled} is GONE. Nothing here closed it — this path ` +
         `never discards a composer — so someone using the Mac sent it or closed it while this ` +
         `was running. ${verdict.sentence}` +
         interferenceNote(await watch.check()),
     };
   };
+
+  // Has the composer gone? By its title when it has one, as everywhere below;
+  // by its handle when it has none. A listing that fails is not a yes.
+  const gone = (): Promise<boolean> =>
+    keyed
+      ? lane.composerGone(subject, 0)
+      : lane.composers().then(
+          (listed) => !listed.some((c) => c.composer === handle),
+          () => false,
+        );
 
   const body = params.body ?? "";
   const filling = body !== "" || files.length > 0;
@@ -479,7 +526,7 @@ export const composeNatively = async (
         save: !params.sendNow,
       });
     } catch (error) {
-      if (await lane.composerGone(subject, 0)) return vanished();
+      if (await gone()) return vanished();
       return {
         ok: false,
         degraded: true,
@@ -488,7 +535,7 @@ export const composeNatively = async (
         verifiedChars: 0,
         sent: false,
         note:
-          `The ${params.mode} window for "${subject}" was opened and addressed, but filling it ` +
+          `The ${params.mode} window ${titled} was opened and addressed, but filling it ` +
           `failed: ${error instanceof Error ? error.message : String(error)} Its window is ` +
           `still open in Mail: finish it there, or close it without saving and retry.` +
           interferenceNote(await watch.check()),
@@ -498,7 +545,7 @@ export const composeNatively = async (
     if (edit["replaced"] !== true) {
       // A composer that has gone refuses like one that cannot be filled; only
       // this tells them apart.
-      if (await lane.composerGone(subject, 0)) return vanished();
+      if (await gone()) return vanished();
       const reason = typeof edit["reason"] === "string" ? edit["reason"] : "The edit was refused.";
       const hint = typeof edit["hint"] === "string" ? ` ${edit["hint"]}` : "";
       return {
@@ -509,7 +556,7 @@ export const composeNatively = async (
         verifiedChars: 0,
         sent: false,
         note:
-          `${reason}${hint} The ${params.mode} window for "${subject}" is still open in Mail.` +
+          `${reason}${hint} The ${params.mode} window ${titled} is still open in Mail.` +
           interferenceNote(await watch.check()),
       };
     }
@@ -530,7 +577,7 @@ export const composeNatively = async (
           verifiedChars,
           sent: false,
           note:
-            `The ${params.mode} window for "${subject}" was opened and correctly addressed, but ` +
+            `The ${params.mode} window ${titled} was opened and correctly addressed, but ` +
             `reading the composer back does not show the text that was sent. It MUST NOT be ` +
             `described to the user as ready. It was left open rather than discarded, and may ` +
             `already be saved as it stands: look at it in Mail, then fix or close it.` +
@@ -548,7 +595,7 @@ export const composeNatively = async (
         sent: false,
         ...(files.length > 0 ? { attachments: files.length } : {}),
         note:
-          `The ${params.mode} window for "${subject}" was filled` +
+          `The ${params.mode} window ${titled} was filled` +
           (bodyVerified ? " and its body verified" : "") +
           `, but it was NOT saved. Its window is still open in Mail: save it there.` +
           interferenceNote(await watch.check()),
@@ -605,7 +652,7 @@ export const composeNatively = async (
       sent: false,
       ...(files.length > 0 ? { attachments: files.length } : {}),
       note:
-        `The ${params.mode} for "${subject}" was ${filling ? "filled" : "opened"}` +
+        `The ${params.mode} ${titled} was ${filling ? "filled" : "opened"}` +
         (bodyVerified ? " and its body verified" : "") +
         `, but it was NOT ${action}: ` +
         (sharing === null
@@ -632,7 +679,7 @@ export const composeNatively = async (
       verifiedChars,
       sent: false,
       note:
-        `The ${params.mode} for "${subject}" was composed, but its window could not be read to ` +
+        `The ${params.mode} ${titled} was composed, but its window could not be read to ` +
         `press anything, so it was NOT ${action}. It is open in Mail for review.` +
         interferenceNote(await watch.check()),
     };
@@ -666,7 +713,7 @@ export const composeNatively = async (
       sent: false,
       ...(files.length > 0 ? { attachments: files.length } : {}),
       note:
-        `The ${params.mode} for "${subject}" was ${filling ? "filled" : "opened"}` +
+        `The ${params.mode} ${titled} was ${filling ? "filled" : "opened"}` +
         (bodyVerified ? " and its body verified" : "") +
         `, but it was NOT ${action}: ` +
         (rebound
@@ -689,7 +736,7 @@ export const composeNatively = async (
       verifiedChars,
       sent: false,
       note:
-        `The ${params.mode} for "${subject}" was composed, but Mail could not be brought to the ` +
+        `The ${params.mode} ${titled} was composed, but Mail could not be brought to the ` +
         `front, so nothing was pressed and it was not ${action}. ` +
         `Its window is still open in Mail. Someone is probably using the Mac; retry once it ` +
         `is free, or finish it in Mail.` +

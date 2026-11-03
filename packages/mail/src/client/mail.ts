@@ -1907,10 +1907,14 @@ export class AppleMailClient {
      * Natively when the app hosts this server: the body is pasted, because
      * assigning it — which is all SEND_MESSAGE can do — makes Mail wrap it in a
      * quotation that recipients see (the 2026-10-21 incident). A message with no
-     * subject stays on the old path: the subject is the only handle the native
-     * half has on the window, and a subjectless one is titled in the locale.
+     * subject goes natively too when the verb can do all of it, filling and
+     * saving a draft. Sending one, or saving one with nothing to fill, needs a
+     * key aimed by the window's title, and a subjectless one is titled in the
+     * locale: those stay on the old path.
      */
-    if (this.#ax && opts.subject.trim()) {
+    const native =
+      opts.subject.trim() !== "" || (!opts.sendNow && (opts.body !== "" || attachments.length > 0));
+    if (this.#ax && native) {
       return composeNatively(this.#ax, this.runner, {
         mode: "new",
         accountUuid: account?.id ?? null,
