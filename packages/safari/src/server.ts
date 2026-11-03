@@ -1,4 +1,5 @@
 import {
+  type AxChannel,
   type Logger,
   type OsascriptRunner,
   registerSurfaceResources,
@@ -24,6 +25,8 @@ export type CreateServerOptions = {
   osascript?: OsascriptRunner;
   /** Injected by tests so discovery never reaches the developer's real home. */
   home?: string;
+  /** Injected by tests; null pins the Apple Events activation. */
+  ax?: AxChannel | null;
 };
 
 export type CreatedServer = {
@@ -45,6 +48,7 @@ export const createServer = (opts: CreateServerOptions): CreatedServer => {
     ...(opts.logger ? { logger: opts.logger } : {}),
     ...(opts.osascript ? { osascript: opts.osascript } : {}),
     ...(opts.home ? { home: opts.home } : {}),
+    ...(opts.ax !== undefined ? { ax: opts.ax } : {}),
   });
 
   withLazyTools(

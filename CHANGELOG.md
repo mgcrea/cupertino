@@ -21,6 +21,11 @@ summary.
   off needed Automation for System Events. It is now filled and saved through Cupertino's own
   Accessibility driver, like every other draft. Sending a message with no subject at once still
   takes the old path, because Mail asks about the missing subject before sending it.
+- **Safari brought to the front by `apple_safari_open_url` is announced like any other driving.**
+  With `activate: true` Safari came forward through an Apple Event, with no notice and no say for
+  the person at the keyboard. It now goes through Cupertino's driver, and the result says whether
+  it happened (`activated`). Safari stays in front afterwards rather than being handed back when the
+  session idles out.
 
 ## [1.36.1] - 2026-11-02
 

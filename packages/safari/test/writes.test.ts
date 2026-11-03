@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
+import type { AxChannel, OsascriptRunner } from "@mgcrea/mcp-apple-core";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
@@ -109,7 +109,25 @@ const isClose = (s: { script: string }) => s.script.includes(".close()");
 /** A fresh record per test, so no test sees another's opened tabs. */
 const openedDir = () => join(mkdtempSync(join(tmpdir(), "safari-writes-")), "opened-tabs");
 
-const connect = async (env: NodeJS.ProcessEnv = {}, rec: Recorder = recorder()) => {
+/** A stand-in for the channel Cupertino lends, recording what it was asked. */
+const lentChannel = (answers: Record<string, (args: unknown) => unknown> = {}) => {
+  const calls: { tool: string; args: Record<string, unknown> }[] = [];
+  const channel: AxChannel = {
+    call: async (request) => {
+      calls.push({ tool: request.tool, args: request.args });
+      const answer = answers[request.tool];
+      return answer ? answer(request.args) : {};
+    },
+    close: () => undefined,
+  };
+  return { calls, channel };
+};
+
+const connect = async (
+  env: NodeJS.ProcessEnv = {},
+  rec: Recorder = recorder(),
+  ax: AxChannel | null = null,
+) => {
   const config: Config = loadConfig({
     APPLE_SAFARI_INDEX_MODE: "off",
     APPLE_SAFARI_BOOKMARKS: FIXTURE_BOOKMARKS,
@@ -121,7 +139,12 @@ const connect = async (env: NodeJS.ProcessEnv = {}, rec: Recorder = recorder()) 
     APPLE_SAFARI_READING_LIST_CONFIRM_MS: "0",
     ...env,
   });
-  const { server } = createServer({ config, home: "/nonexistent-home", osascript: rec.runner });
+  const { server } = createServer({
+    config,
+    home: "/nonexistent-home",
+    osascript: rec.runner,
+    ax,
+  });
   const client = new Client({ name: "test", version: "0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(a), client.connect(b)]);
@@ -294,6 +317,79 @@ describe("apple_safari_open_url", () => {
       url: "https://example.com/",
     });
     expect(r.json()).toMatchObject({ launchedSafari: true });
+  });
+});
+
+/*
+ * Bringing Safari forward is driving the Mac. Hosted by Cupertino, it goes
+ * through the app's driver, which announces it, and the session it opened ends
+ * at once without handing the front back, since Safari in front was the point.
+ */
+describe("apple_safari_open_url, brought forward by Cupertino", () => {
+  it("activates through the lent driver, not the script, and ends the session leaving it", async () => {
+    const rec = recorder();
+    const { calls, channel } = lentChannel();
+    const r = await call(await connect({}, rec, channel), "apple_safari_open_url", {
+      url: "https://example.com/",
+      activate: true,
+    });
+    expect(rec.sent[0]?.params).toMatchObject({ activate: false });
+    expect(calls).toEqual([
+      { tool: "apple_desktop_activate", args: { bundleId: "com.apple.Safari" } },
+      { tool: "apple_desktop_lent_release", args: { handBack: false } },
+    ]);
+    expect(r.json()).toMatchObject({ activated: true, ref: expect.any(String) });
+  });
+
+  it("reports a refused activation without failing the open, and releases nothing", async () => {
+    const { calls, channel } = lentChannel({
+      apple_desktop_activate: () => {
+        throw new Error("The person said no to being driven.");
+      },
+    });
+    const r = await call(await connect({}, recorder(), channel), "apple_safari_open_url", {
+      url: "https://example.com/",
+      activate: true,
+    });
+    expect(r.isError).toBe(false);
+    expect(r.json()).toMatchObject({
+      activated: false,
+      activationNote: expect.stringContaining("said no"),
+      ref: expect.any(String),
+    });
+    expect(calls.map((c) => c.tool)).toEqual(["apple_desktop_activate"]);
+  });
+
+  it("still calls it activated when the release is refused", async () => {
+    const { channel } = lentChannel({
+      apple_desktop_lent_release: () => {
+        throw new Error("unknown tool");
+      },
+    });
+    const r = await call(await connect({}, recorder(), channel), "apple_safari_open_url", {
+      url: "https://example.com/",
+      activate: true,
+    });
+    expect(r.json()).toMatchObject({ activated: true });
+  });
+
+  it("touches the driver not at all when activation was not asked for", async () => {
+    const { calls, channel } = lentChannel();
+    const r = await call(await connect({}, recorder(), channel), "apple_safari_open_url", {
+      url: "https://example.com/",
+    });
+    expect(calls).toEqual([]);
+    expect(r.json()).not.toHaveProperty("activated");
+  });
+
+  it("keeps the script's activate without Cupertino", async () => {
+    const rec = recorder();
+    const r = await call(await connect({}, rec, null), "apple_safari_open_url", {
+      url: "https://example.com/",
+      activate: true,
+    });
+    expect(rec.sent[0]?.params).toMatchObject({ activate: true });
+    expect(r.json()).not.toHaveProperty("activated");
   });
 });
 

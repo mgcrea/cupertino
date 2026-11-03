@@ -71,7 +71,9 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
           .describe(
             "Bring Safari to the front. Off by default, so opening a page in the background " +
               "does not steal focus from what the user is doing. Safari may come forward anyway " +
-              "when it had no window to put the tab in.",
+              "when it had no window to put the tab in. When Cupertino hosts this server, " +
+              "bringing it forward is driving the Mac: the person sees it announced and may be " +
+              "asked first, and `activated` says whether it happened.",
           ),
       }),
       annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
@@ -92,6 +94,8 @@ export const registerWriteTools = (server: McpServer, client: AppleSafariClient)
             ref: result.ref ?? undefined,
             refNote: result.refNote ?? undefined,
             launchedSafari: result.launchedSafari ? true : undefined,
+            activated: result.activated,
+            activationNote: result.activationNote,
             // Only when it happened. A note about imprecise placement on a run
             // that placed the tab precisely is noise that trains a reader to
             // skip the field.
