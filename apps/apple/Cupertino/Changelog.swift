@@ -451,6 +451,31 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "A Mail draft with no subject is pasted, not assigned, when Cupertino hosts the server.",
+            body: [
+              "It went through Apple Events, which wraps the body in a quotation the recipient sees, and taking that off needed Automation for System Events. It is now filled and saved through Cupertino's own Accessibility driver, like every other draft. Sending a message with no subject at once still takes the old path, because Mail asks about the missing subject before sending it.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Safari brought to the front by `apple_safari_open_url` is announced like any other driving.",
+            body: [
+              "With `activate: true` Safari came forward through an Apple Event, with no notice and no say for the person at the keyboard. It now goes through Cupertino's driver, and the result says whether it happened (`activated`). Safari stays in front afterwards rather than being handed back when the session idles out.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }
