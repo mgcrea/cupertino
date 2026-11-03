@@ -630,10 +630,22 @@ export class AppleSafariClient {
           `${cause instanceof Error ? cause.message : String(cause)}`,
       };
     }
-    await ax
+    // Null when the session also drove another application, which leaves it to
+    // whoever else is driving: its own end may then hand the front back.
+    const released = await ax
       .call({ tool: "apple_desktop_lent_release", args: { handBack: false } })
-      .catch(() => undefined);
-    return { activated: true };
+      .then(
+        (answer) => (answer as { released?: unknown } | null)?.released ?? null,
+        () => null,
+      );
+    if (released !== null) return { activated: true };
+    return {
+      activated: true,
+      activationNote:
+        "Safari is in front, but the driving session it was brought forward in was not ended " +
+        "here, so when that session ends it may bring back the application that was in front " +
+        "before.",
+    };
   }
 
   /** Where the record of tabs `openUrl` opened lives; see `opened.ts`. */

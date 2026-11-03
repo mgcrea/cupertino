@@ -184,7 +184,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * could each be it (never picked between), one that could be the older draft
  * under its subject (`ambiguous` with one handle), or nothing in time (null).
  */
-export type NewComposer = { handle: string; text: string | null } | { ambiguous: string[] };
+export type NewComposer =
+  | { handle: string; text: string | null; subject?: string }
+  | { ambiguous: string[] };
 
 /** A composer as `before` carries it: its handle and subject, and its text when listed. */
 type Seen = Pick<NativeComposer, "composer" | "subject"> & Partial<Pick<NativeComposer, "text">>;
@@ -210,8 +212,12 @@ export const sameHead = (a: string, b: string): boolean => {
   return x.slice(0, n) === y.slice(0, n);
 };
 
-/** A composer taken as the new one, with the own text it was listed with. */
-const taken = (c: NativeComposer): NewComposer => ({ handle: c.composer, text: c.text ?? null });
+/** A composer taken as the new one, with the own text and the title it was listed with. */
+const taken = (c: NativeComposer): NewComposer => ({
+  handle: c.composer,
+  text: c.text ?? null,
+  subject: c.subject,
+});
 
 /**
  * Wait for a composer that was not there before, and return its handle.
@@ -224,7 +230,9 @@ const taken = (c: NativeComposer): NewComposer => ({ handle: c.composer, text: c
  * is the one this call opened, whatever it is titled.
  *
  * A person can open a window by hand during the poll, and an empty composer
- * gives nothing to tell theirs from ours. So the candidates are every fresh
+ * gives nothing to tell theirs from ours. Without a subject that holds for any
+ * new composer they open: theirs, listed before ours, is taken, and our body
+ * goes above its signature. Nothing of theirs is replaced, since it is new. So the candidates are every fresh
  * handle, narrowed to those titled `subject` when it is given (the subject
  * `OPEN_COMPOSER` returned). Exactly one candidate is returned as `{ handle }`;
  * more than one is `{ ambiguous }` and nothing is picked, because filling the
@@ -276,17 +284,28 @@ export const awaitNewComposer = async (
 ): Promise<NewComposer | null> => {
   const known = new Set(before.map((c) => (typeof c === "string" ? c : c.composer)));
   const counted = before.every((c) => typeof c !== "string");
-  const sameSubject = before.filter(
-    (c): c is Seen => typeof c !== "string" && c.subject === subject,
-  );
-  const had = sameSubject.length;
-  const held = sameSubject.map((c) => c.text);
-  // One of them could not be compared with, so none of them can be told apart.
-  const unread = held.some((t) => typeof t !== "string");
-  const isOld = (text: string | null | undefined): boolean =>
-    typeof text !== "string" ||
-    unread ||
-    held.some((t) => typeof t === "string" && sameHead(t, text));
+  /*
+   * What `before` held under one title: how many, and whether a text reads as
+   * one of theirs. Judged under `subject` when it is given; without one, under
+   * the lone candidate's own listed title, which for a tab is what Mail titles
+   * it (a localised "New Message" for a subjectless one). A person's own
+   * subjectless draft, re-minted when ours opened and left the only fresh handle
+   * once ours closed, is then judged as an older composer under that title
+   * rather than taken unjudged.
+   */
+  const under = (title: string | undefined) => {
+    const same = before.filter((c): c is Seen => typeof c !== "string" && c.subject === title);
+    const held = same.map((c) => c.text);
+    // One of them could not be compared with, so none of them can be told apart.
+    const unread = held.some((t) => typeof t !== "string");
+    const isOld = (text: string | null | undefined): boolean =>
+      typeof text !== "string" ||
+      unread ||
+      held.some((t) => typeof t === "string" && sameHead(t, text));
+    return { had: same.length, unread, isOld };
+  };
+  const bySubject = under(subject);
+  const { had, unread, isOld } = bySubject;
   const deadline = Date.now() + timeoutMs;
   // The candidates rule B was waiting on: past the deadline they are still
   // several windows, refused as such rather than as none.
@@ -297,13 +316,17 @@ export const awaitNewComposer = async (
       const fresh = listed.filter((c) => !known.has(c.composer));
       const candidates = subject === undefined ? fresh : fresh.filter((c) => c.subject === subject);
       const only = candidates.length === 1 ? (candidates[0] as NativeComposer) : undefined;
-      // With no composer under the subject before, nothing can be confused.
-      if (only && had === 0) return taken(only);
+      // Without a subject, and without the titles `before` was listed with,
+      // nothing can tell a re-minted old draft from the new one.
+      if (only && subject === undefined && !counted) return { ambiguous: [only.composer] };
+      const lone = only && subject === undefined ? under(only.subject) : bySubject;
+      // With no composer under the title before, nothing can be confused.
+      if (only && lone.had === 0) return taken(only);
       // With one, the lone candidate may be it, re-minted once the new tab
       // closed: judged as rule B judges, and polled on while it reads no text.
-      if (only && !isOld(only.text)) return taken(only);
+      if (only && !lone.isOld(only.text)) return taken(only);
       if (only) {
-        const loading = !unread && typeof only.text !== "string";
+        const loading = !lone.unread && typeof only.text !== "string";
         if (!loading || Date.now() >= deadline) return { ambiguous: [only.composer] };
         waitedOn = [only.composer];
       }
@@ -480,7 +503,16 @@ export const composeNatively = async (
     // may have gone out was the right one.
     knownBody: { verified: boolean; chars: number } | null = null,
   ): Promise<ComposeResult> => {
-    const verdict = await sentVerdict(runner, params.accountUuid, subject, startedAt);
+    // Sent cannot be searched for a message with no subject: every subjectless
+    // mail sent since would match. Nor does this path send one.
+    const verdict = keyed
+      ? await sentVerdict(runner, params.accountUuid, subject, startedAt)
+      : {
+          sent: null,
+          sentence:
+            "Nothing here sends a message with no subject, so it was closed or sent by hand, " +
+            "and Sent cannot tell which from here: look in Drafts and in Sent before retrying.",
+        };
     return {
       ok: false,
       subject,
@@ -496,13 +528,24 @@ export const composeNatively = async (
     };
   };
 
-  // Has the composer gone? By its title when it has one, as everywhere below;
-  // by its handle when it has none. A listing that fails is not a yes.
+  /*
+   * Has the composer gone? By its title when it has one, as everywhere below.
+   * Without one, by its handle, and also by the title it was listed with: a tab
+   * whose title another tab comes to share is re-minted under a new handle, so
+   * a person opening a new message of their own makes ours look gone by handle
+   * alone. Any composer still under that title keeps it "still open", the safe
+   * error. A listing that fails is not a yes.
+   */
+  const listedTitle = found && "handle" in found ? found.subject : undefined;
   const gone = (): Promise<boolean> =>
     keyed
       ? lane.composerGone(subject, 0)
       : lane.composers().then(
-          (listed) => !listed.some((c) => c.composer === handle),
+          (listed) =>
+            !listed.some(
+              (c) =>
+                c.composer === handle || (listedTitle !== undefined && c.subject === listedTitle),
+            ),
           () => false,
         );
 

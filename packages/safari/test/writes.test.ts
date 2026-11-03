@@ -328,11 +328,14 @@ describe("apple_safari_open_url", () => {
 describe("apple_safari_open_url, brought forward by Cupertino", () => {
   it("activates through the lent driver, not the script, and ends the session leaving it", async () => {
     const rec = recorder();
-    const { calls, channel } = lentChannel();
+    const { calls, channel } = lentChannel({
+      apple_desktop_lent_release: () => ({ released: "com.apple.Safari" }),
+    });
     const r = await call(await connect({}, rec, channel), "apple_safari_open_url", {
       url: "https://example.com/",
       activate: true,
     });
+    expect(r.json()).not.toHaveProperty("activationNote");
     expect(rec.sent[0]?.params).toMatchObject({ activate: false });
     expect(calls).toEqual([
       { tool: "apple_desktop_activate", args: { bundleId: "com.apple.Safari" } },
@@ -360,7 +363,7 @@ describe("apple_safari_open_url, brought forward by Cupertino", () => {
     expect(calls.map((c) => c.tool)).toEqual(["apple_desktop_activate"]);
   });
 
-  it("still calls it activated when the release is refused", async () => {
+  it("still calls it activated when the release is refused, and says the front may go back", async () => {
     const { channel } = lentChannel({
       apple_desktop_lent_release: () => {
         throw new Error("unknown tool");
@@ -370,7 +373,23 @@ describe("apple_safari_open_url, brought forward by Cupertino", () => {
       url: "https://example.com/",
       activate: true,
     });
-    expect(r.json()).toMatchObject({ activated: true });
+    expect(r.json()).toMatchObject({
+      activated: true,
+      activationNote: expect.stringContaining("may bring back"),
+    });
+  });
+
+  /* A session that also drove another application is left to whoever else is driving. */
+  it("says the front may go back when the session was not Safari's alone", async () => {
+    const { channel } = lentChannel({ apple_desktop_lent_release: () => ({ released: null }) });
+    const r = await call(await connect({}, recorder(), channel), "apple_safari_open_url", {
+      url: "https://example.com/",
+      activate: true,
+    });
+    expect(r.json()).toMatchObject({
+      activated: true,
+      activationNote: expect.stringContaining("not ended"),
+    });
   });
 
   it("touches the driver not at all when activation was not asked for", async () => {

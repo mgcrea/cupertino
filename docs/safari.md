@@ -608,8 +608,8 @@ asks the lent driver: `apple_desktop_activate` for Safari, then `apple_desktop_l
 `handBack: false`. The release is there because a session left to its idle release hands the front
 back to the previous app 45 s later, which would undo exactly what was asked; it ends only a session
 that drove Safari alone (`DrivingSession.release(drivenOnly:)`). The result carries `activated`, and
-`activationNote` when the person said no or Accessibility is not granted; the page is open either
-way. Without Cupertino, the script's `activate` stays. Not yet run live.
+`activationNote` when the person said no or Accessibility is not granted, or when the session
+was not ended here because it also drove another application; the page is open either way. Without Cupertino, the script's `activate` stays. Not yet run live.
 
 ### The Reading List lags its own file, and the tool says so rather than guessing
 
