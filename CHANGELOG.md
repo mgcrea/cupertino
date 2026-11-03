@@ -6,13 +6,17 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.36.1`,
-`notes-v1.36.1`, `reminders-v1.36.1`, `core-v1.36.1` for the npm packages, and `app-v1.36.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.36.2`,
+`notes-v1.36.2`, `reminders-v1.36.2`, `core-v1.36.2` for the npm packages, and `app-v1.36.2` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.36.2] - 2026-11-03
+
+**A draft with no subject is pasted, and Safari is announced.** A Mail draft with no subject is
+filled through Cupertino's driver like every other, and Safari brought to the front is announced
+like any other driving.
 
 ### Fixed
 
@@ -3292,7 +3296,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.36.1...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.36.2...HEAD
+[1.36.2]: https://github.com/mgcrea/cupertino/compare/app-v1.36.1...app-v1.36.2
 [1.36.1]: https://github.com/mgcrea/cupertino/compare/app-v1.36.0...app-v1.36.1
 [1.36.0]: https://github.com/mgcrea/cupertino/compare/app-v1.35.0...app-v1.36.0
 [1.35.0]: https://github.com/mgcrea/cupertino/compare/app-v1.34.0...app-v1.35.0
