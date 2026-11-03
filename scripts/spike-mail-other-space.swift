@@ -216,7 +216,7 @@ for w in publicWindows {
 // The window server's view, every Space: layer-0 windows Mail owns.
 let cg =
   (CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
-  as? [[String: Any]]) ?? []
+    as? [[String: Any]]) ?? []
 let cgMail = cg.filter {
   ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0
 }
@@ -227,7 +227,8 @@ for w in cgMail {
     "  cg",
     "\(w[kCGWindowNumber as String] ?? "?") onscreen=\(w[kCGWindowIsOnscreen as String] ?? false)"
       + " \(b["Width"] ?? "?")x\(b["Height"] ?? "?") alpha=\(w[kCGWindowAlpha as String] ?? "?")"
-      + " store=\(w[kCGWindowStoreType as String] ?? "?") sharing=\(w[kCGWindowSharingState as String] ?? "?")")
+      + " store=\(w[kCGWindowStoreType as String] ?? "?") sharing=\(w[kCGWindowSharingState as String] ?? "?")"
+  )
 }
 
 // MARK: - Q1: find by remote token
@@ -250,7 +251,9 @@ for elementId in UInt64(0)..<idBound {
     foundIds.append(elementId)
   }
 }
-row("remote-token windows", "\(found.count) in \(Int(Date().timeIntervalSince(t0) * 1000)) ms (ids 0..<\(idBound))")
+row(
+  "remote-token windows",
+  "\(found.count) in \(Int(Date().timeIntervalSince(t0) * 1000)) ms (ids 0..<\(idBound))")
 for (w, elementId) in zip(found, foundIds) {
   let field = find(w, depth: 3) { string($0, kAXIdentifierAttribute) == "Mail.subjectField" }
   row(
@@ -301,7 +304,8 @@ let writeish = { (names: [String]) in
   names.filter { n in ["Replace", "Insert", "Text", "Value"].contains { n.contains($0) } }
     .filter { !$0.contains("TextMarker") }.sorted()
 }
-row("param attributes (write-ish)", writeish((paramNames as? [String]) ?? []).joined(separator: " "))
+row(
+  "param attributes (write-ish)", writeish((paramNames as? [String]) ?? []).joined(separator: " "))
 row("actions", ((actionNames as? [String]) ?? []).sorted().joined(separator: " "))
 let settable = ((attrNames as? [String]) ?? []).filter { name in
   var ok: DarwinBoolean = false
@@ -428,11 +432,15 @@ case "operation":
     "AXTextOperationReplacementString": writeText,
   ]
   let (err, result) = param(web, "AXTextOperation", operation as CFDictionary)
-  row("AXTextOperation", err == .success ? "ok -> \(result.map { "\($0)" } ?? "nil")" : "AXError \(err.rawValue)")
+  row(
+    "AXTextOperation",
+    err == .success ? "ok -> \(result.map { "\($0)" } ?? "nil")" : "AXError \(err.rawValue)")
 case "replace":
   let (err, result) = param(
     web, "AXReplaceRangeWithText", [NSValue(range: span), writeText] as CFArray)
-  row("AXReplaceRangeWithText", err == .success ? "ok -> \(result.map { "\($0)" } ?? "nil")" : "AXError \(err.rawValue)")
+  row(
+    "AXReplaceRangeWithText",
+    err == .success ? "ok -> \(result.map { "\($0)" } ?? "nil")" : "AXError \(err.rawValue)")
 default:
   print("--verb is operation or replace")
   exit(1)
@@ -457,6 +465,7 @@ while Date().timeIntervalSince(t1) < 3 {
   Thread.sleep(forTimeInterval: 0.05)
 }
 row("own text now", nowText.debugDescription)
-row("write landed", landed ? "yes, \(Int(Date().timeIntervalSince(t1) * 1000)) ms" : "NO within 3 s")
+row(
+  "write landed", landed ? "yes, \(Int(Date().timeIntervalSince(t1) * 1000)) ms" : "NO within 3 s")
 row("Mail active after", mail.isActive)
 row("frontmost after", NSWorkspace.shared.frontmostApplication?.localizedName)

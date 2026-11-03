@@ -2787,27 +2787,28 @@ struct MailComposerCheck {
 
     // MEASURED 2026-11-02, Mail with its viewer full screen and two composers:
     // the window server's layer-0 list for its pid, every Space.
-    let server: [[String: Any]] = [
-      (5912, 864, 1084), (5561, 864, 1084), (5421, 1728, 88), (4965, 3008, 30),
-      (977, 53, 48), (124, 1728, 33), (915, 1728, 1084), (96, 420, 632), (95, 64, 64),
-    ].map { number, width, height in
+    let server: [[String: Any]] =
       [
-        kCGWindowNumber as String: number, kCGWindowOwnerPID as String: 1316,
-        kCGWindowLayer as String: 0,
-        kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": width, "Height": height],
+        (5912, 864, 1084), (5561, 864, 1084), (5421, 1728, 88), (4965, 3008, 30),
+        (977, 53, 48), (124, 1728, 33), (915, 1728, 1084), (96, 420, 632), (95, 64, 64),
+      ].map { number, width, height in
+        [
+          kCGWindowNumber as String: number, kCGWindowOwnerPID as String: 1316,
+          kCGWindowLayer as String: 0,
+          kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": width, "Height": height],
+        ]
+      } + [
+        [
+          kCGWindowNumber as String: 7, kCGWindowOwnerPID as String: 1316,
+          kCGWindowLayer as String: 25,
+          kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 800, "Height": 800],
+        ],
+        [
+          kCGWindowNumber as String: 8, kCGWindowOwnerPID as String: 99,
+          kCGWindowLayer as String: 0,
+          kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 800, "Height": 800],
+        ],
       ]
-    } + [
-      [
-        kCGWindowNumber as String: 7, kCGWindowOwnerPID as String: 1316,
-        kCGWindowLayer as String: 25,
-        kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 800, "Height": 800],
-      ],
-      [
-        kCGWindowNumber as String: 8, kCGWindowOwnerPID as String: 99,
-        kCGWindowLayer as String: 0,
-        kCGWindowBounds as String: ["X": 0, "Y": 0, "Width": 800, "Height": 800],
-      ],
-    ]
     check(
       "the window server's real windows are the app's layer-0 ones of 100 points or more",
       AccessibilityDriver.windowCandidates(server, pid: 1316) == [5912, 5561, 915, 96])
@@ -2847,13 +2848,16 @@ struct MailComposerCheck {
         isError && text.contains("unknown tool"))
     }
     let (off, offError) = call(forward, args: ["windowId": 5561], writes: false, scope: mail)
-    check("bring forward with writes off is refused before AX", offError && off.contains("switched off"))
+    check(
+      "bring forward with writes off is refused before AX", offError && off.contains("switched off")
+    )
     for (label, args) in [
       ("no windowId", [:] as [String: Any]), ("a windowId that is a string", ["windowId": "5561"]),
       ("a windowId of 0", ["windowId": 0]),
     ] {
       let (text, isError) = call(forward, args: args, writes: true, scope: mail)
-      check("bring forward with \(label) is an argument error", isError && text.contains("'windowId'"))
+      check(
+        "bring forward with \(label) is an argument error", isError && text.contains("'windowId'"))
     }
   }
 
@@ -2884,7 +2888,8 @@ struct MailComposerCheck {
       check(
         "edit is refused as unknown outside the Mail scope (\(scope))",
         editError && editText.contains("unknown tool"))
-      let (releaseText, releaseError) = call("apple_desktop_mail_release", writes: true, scope: scope)
+      let (releaseText, releaseError) = call(
+        "apple_desktop_mail_release", writes: true, scope: scope)
       check(
         "release is refused as unknown outside the Mail scope (\(scope))",
         releaseError && releaseText.contains("unknown tool"))

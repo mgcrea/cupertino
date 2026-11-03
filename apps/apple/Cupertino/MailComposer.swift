@@ -523,7 +523,9 @@ nonisolated enum MailComposer {
       request.expectHead = head
     }
     if let handBack = args["handBack"] {
-      guard let handBack = handBack as? Bool else { throw ArgumentError("'handBack' is a boolean.") }
+      guard let handBack = handBack as? Bool else {
+        throw ArgumentError("'handBack' is a boolean.")
+      }
       request.handBack = handBack
     }
     return request

@@ -829,7 +829,8 @@ nonisolated enum AccessibilityDriver {
     guard !wanted.isEmpty else { return found }
 
     let scan = scanElements(for: wanted, budget: budget) { number in
-      guard let candidate = element(number), let role = string(candidate, kAXRoleAttribute as String)
+      guard let candidate = element(number),
+        let role = string(candidate, kAXRoleAttribute as String)
       else { return .none }
       guard role == (kAXWindowRole as String), let window = windowNumber(of: candidate) else {
         return .element
@@ -857,7 +858,7 @@ nonisolated enum AccessibilityDriver {
     let owner = pid(of: try app(forBundleId: bundleId))
     let info =
       (CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
-      as? [[String: Any]]) ?? []
+        as? [[String: Any]]) ?? []
     let missing = windowCandidates(info, pid: owner).subtracting(
       listed.compactMap(windowNumber(of:)))
     return try offSpaceWindows(bundleId: bundleId, scope: scope, numbers: missing)
