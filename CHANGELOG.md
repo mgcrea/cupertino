@@ -12,6 +12,21 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **A Mail draft with no subject is pasted, not assigned, when Cupertino hosts the server.** It
+  went through Apple Events, which wraps the body in a quotation the recipient sees, and taking that
+  off needed Automation for System Events. It is now filled and saved through Cupertino's own
+  Accessibility driver, like every other draft. Sending a message with no subject at once still
+  takes the old path, because Mail asks about the missing subject before sending it.
+- **Safari brought to the front by `apple_safari_open_url` is announced like any other driving.**
+  With `activate: true` Safari came forward through an Apple Event, with no notice and no say for
+  the person at the keyboard. It now goes through Cupertino's driver, and the result says whether
+  it happened (`activated`). Safari stays in front afterwards rather than being handed back when the
+  session idles out.
+
 ## [1.36.1] - 2026-11-02
 
 **Mail drafts work on any desktop, and stay in front.** A draft works with Mail full screen or on

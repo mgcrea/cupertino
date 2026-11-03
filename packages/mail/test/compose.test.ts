@@ -189,8 +189,9 @@ describe("awaitNewComposer", () => {
             : [composer("mc-1", "Re: lunch"), composer("mc-4", "Re: lunch")],
       }),
     });
-    await expect(awaitNewComposer(lane, ["mc-1"], 2000)).resolves.toEqual({
+    await expect(awaitNewComposer(lane, ["mc-1"], 2000, "Re: lunch")).resolves.toEqual({
       handle: "mc-4",
+      subject: "Re: lunch",
       text: "",
     });
     lane.close();
@@ -207,12 +208,25 @@ describe("awaitNewComposer", () => {
     });
     await expect(awaitNewComposer(lane, [], 30)).resolves.toEqual({
       handle: "mc-4",
+      subject: "Re: lunch",
       text: "-- \nOlivier",
     });
-    await expect(awaitNewComposer(lane, ["mc-4"], 30)).resolves.toEqual({
+    await expect(awaitNewComposer(lane, ["mc-4"], 30, "Re: lunch")).resolves.toEqual({
       handle: "mc-5",
+      subject: "Re: lunch",
       text: null,
     });
+    lane.close();
+  });
+
+  /* With neither a subject nor the titles `before` was listed with, a re-minted old draft looks new. */
+  it("refuses a lone candidate when given no subject and only bare handles", async () => {
+    const { lane } = await laneOver({
+      mail_composers: (_a: unknown, n: number) => ({
+        composers: n < 2 ? [composer("mc-1", "New Message")] : [composer("mc-4", "New Message")],
+      }),
+    });
+    await expect(awaitNewComposer(lane, ["mc-1"], 30)).resolves.toEqual({ ambiguous: ["mc-4"] });
     lane.close();
   });
 
@@ -234,6 +248,7 @@ describe("awaitNewComposer", () => {
     });
     await expect(awaitNewComposer(lane, [], 30, "Re: lunch")).resolves.toEqual({
       handle: "mc-8",
+      subject: "Re: lunch",
       text: "",
     });
     lane.close();
@@ -262,6 +277,7 @@ describe("awaitNewComposer", () => {
       });
       await expect(awaitNewComposer(lane, before, 30, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        subject: "Re: lunch",
         text: "",
       });
       lane.close();
@@ -302,6 +318,7 @@ describe("awaitNewComposer", () => {
       ];
       await expect(awaitNewComposer(lane, older, 30, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        subject: "Re: lunch",
         text: "-- \nOlivier",
       });
       lane.close();
@@ -316,6 +333,7 @@ describe("awaitNewComposer", () => {
       const older = [tab("mc-1", "Re: lunch", "selected", "")];
       await expect(awaitNewComposer(lane, older, 30, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        subject: "Re: lunch",
         text: "",
       });
       lane.close();
@@ -490,6 +508,7 @@ describe("awaitNewComposer", () => {
       const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
       await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        subject: "Re: lunch",
         text: "-- \nOlivier",
       });
       lane.close();
@@ -525,6 +544,7 @@ describe("awaitNewComposer", () => {
       const older = [tab("mc-1", "Re: lunch", "selected", "an older reply")];
       await expect(awaitNewComposer(lane, older, 1000, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        subject: "Re: lunch",
         text: "-- \nOlivier",
       });
       lane.close();
@@ -561,6 +581,7 @@ describe("awaitNewComposer", () => {
       const unrelated = [tab("mc-1", "Re: dinner", "selected", "an older reply")];
       await expect(awaitNewComposer(lane, unrelated, 1000, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        subject: "Re: lunch",
         text: "an older reply",
       });
       lane.close();
@@ -631,6 +652,7 @@ describe("awaitNewComposer", () => {
       ];
       await expect(awaitNewComposer(lane, older, 30, "Re: lunch")).resolves.toEqual({
         handle: "mc-3",
+        subject: "Re: lunch",
         text: "-- \nOlivier",
       });
       lane.close();
@@ -1538,5 +1560,241 @@ describe("composeNatively, a new message", () => {
     expect(result).toMatchObject({ ok: true, sent: false });
     expect(calls).toHaveLength(1);
     expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-3" });
+  });
+});
+
+/*
+ * A new message with no subject. Its tab is titled in the locale, so nothing
+ * may be aimed by title: the composer is the handle that appeared, the verb
+ * fills and saves it, and whatever would need a key is refused before Mail is
+ * asked to open anything.
+ */
+describe("composeNatively, a new message with no subject", () => {
+  const BARE = {
+    mode: "new" as const,
+    accountUuid: null,
+    subject: "",
+    senderAddress: null,
+    body: "PASTED",
+    to: ["dave@example.com"],
+    cc: [],
+    bcc: [],
+    sendNow: false,
+  };
+  /** A tab Mail titles in the Mac's language, which is not the subject. */
+  const bareHost = (over: Record<string, unknown> = {}) =>
+    healthyHost(
+      {
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [composer("mc-1", "Re: lunch")]
+              : [
+                  composer("mc-1", "Re: lunch"),
+                  composer("mc-2", "Nouveau message", { tab: "selected" }),
+                ],
+        }),
+        ...over,
+      },
+      "Nouveau message",
+    );
+
+  it("fills and saves the composer that appeared, under whatever title, with no key", async () => {
+    const { lane, seen } = await laneOver(bareHost());
+    const result = await composeNatively(lane, runnerReturning(""), BARE, TIMEOUTS);
+    lane.close();
+    expect(result).toMatchObject({ ok: true, bodyVerified: true, sent: false });
+    expect(edits(seen)).toHaveLength(1);
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-2", body: "PASTED", save: true });
+    expect(seen.filter((c) => c.tool === "key")).toEqual([]);
+  });
+
+  it("refuses a send before opening anything", async () => {
+    const { lane, seen } = await laneOver(bareHost());
+    const { calls, runner } = recording();
+    const result = await composeNatively(lane, runner, { ...BARE, sendNow: true }, TIMEOUTS);
+    lane.close();
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(result.note).toMatch(/no subject cannot be sent/);
+    expect(calls).toEqual([]);
+    expect(seen).toEqual([]);
+  });
+
+  it("refuses an empty draft before opening anything", async () => {
+    const { lane, seen } = await laneOver(bareHost());
+    const { calls, runner } = recording();
+    const result = await composeNatively(lane, runner, { ...BARE, body: "" }, TIMEOUTS);
+    lane.close();
+    expect(result.ok).toBe(false);
+    expect(calls).toEqual([]);
+    expect(seen).toEqual([]);
+  });
+
+  it("fills nothing when two composers appeared", async () => {
+    const { lane, seen } = await laneOver(
+      bareHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? []
+              : [composer("mc-2", "Nouveau message"), composer("mc-3", "Nouveau message")],
+        }),
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning(""), BARE, TIMEOUTS);
+    lane.close();
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(result.note).toContain("2 new composers appeared");
+    expect(result.note).toContain("with no subject");
+    expect(edits(seen)).toEqual([]);
+  });
+
+  it("calls it gone by its handle when the verb cannot reach it", async () => {
+    const { lane } = await laneOver(
+      bareHost({
+        // Listed once more after the open, then gone.
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: n === 1 ? [] : n === 2 ? [composer("mc-2", "Nouveau message")] : [],
+        }),
+        mail_composer_edit: { replaced: false, reason: "No such composer." },
+      }),
+    );
+    const result = await composeNatively(
+      lane,
+      runnerWithSent("", { checked: true, mailbox: "Sent", found: false, scanned: 25 }),
+      BARE,
+      TIMEOUTS,
+    );
+    lane.close();
+    expect(result.note).toContain("window with no subject is GONE");
+  });
+
+  /*
+   * The person's own subjectless draft is a tab under the same localised
+   * title. Ours opening re-mints both; ours closing leaves theirs the one fresh
+   * handle. Taken unjudged, our body went above their text and was saved.
+   */
+  it("does not fill the person's own subjectless draft, re-minted as the one fresh handle", async () => {
+    const theirs = composer("mc-1", "Nouveau message", { tab: "background", text: null });
+    const { lane, seen } = await laneOver(
+      bareHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [theirs]
+              : [
+                  composer("mc-5", "Nouveau message", {
+                    tab: "selected",
+                    text: "Dear Bob, my own half-written note",
+                  }),
+                ],
+        }),
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning(""), BARE, TIMEOUTS);
+    lane.close();
+    expect(result).toMatchObject({ ok: false, sent: false });
+    expect(edits(seen)).toEqual([]);
+  });
+
+  it("does not fill it when its text was read before, and reads the same now", async () => {
+    const theirs = composer("mc-1", "Nouveau message", { tab: "selected", text: "Dear Bob" });
+    const { lane, seen } = await laneOver(
+      bareHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [theirs]
+              : [
+                  composer("mc-5", "Nouveau message", {
+                    tab: "selected",
+                    text: "Dear Bob, and on",
+                  }),
+                ],
+        }),
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning(""), BARE, TIMEOUTS);
+    lane.close();
+    expect(result.ok).toBe(false);
+    expect(edits(seen)).toEqual([]);
+  });
+
+  it("still takes the new one when the old draft under its title reads differently", async () => {
+    const theirs = composer("mc-1", "Nouveau message", { tab: "selected", text: "Dear Bob" });
+    const { lane, seen } = await laneOver(
+      bareHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? [theirs]
+              : [theirs, composer("mc-5", "Nouveau message", { tab: "selected", text: "" })],
+        }),
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning(""), BARE, TIMEOUTS);
+    lane.close();
+    expect(result).toMatchObject({ ok: true });
+    expect(edits(seen)[0]?.args).toMatchObject({ composer: "mc-5" });
+  });
+
+  /* A second tab under its title re-mints its handle: that is not the window going. */
+  it("does not call it gone when its handle was re-minted under the same title", async () => {
+    const { lane } = await laneOver(
+      bareHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers:
+            n === 1
+              ? []
+              : n === 2
+                ? [composer("mc-2", "Nouveau message")]
+                : [composer("mc-7", "Nouveau message"), composer("mc-8", "Nouveau message")],
+        }),
+        mail_composer_edit: { replaced: false, reason: "No such composer." },
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning(""), BARE, TIMEOUTS);
+    lane.close();
+    expect(result.note).not.toContain("GONE");
+    expect(result.note).toContain("is still open");
+  });
+
+  it("does not search Sent by an empty subject when it went", async () => {
+    const asked: string[] = [];
+    const runner = {
+      run: async (script: string) => {
+        asked.push(script);
+        return script === SENT_SINCE
+          ? { checked: true, found: true, mailbox: "Sent" }
+          : { subject: "" };
+      },
+    } as never;
+    const { lane } = await laneOver(
+      bareHost({
+        mail_composers: (_a: unknown, n: number) => ({
+          composers: n === 1 ? [] : n === 2 ? [composer("mc-2", "Nouveau message")] : [],
+        }),
+        mail_composer_edit: { replaced: false, reason: "No such composer." },
+      }),
+    );
+    const result = await composeNatively(lane, runner, BARE, TIMEOUTS);
+    lane.close();
+    expect(asked).not.toContain(SENT_SINCE);
+    expect(result).toMatchObject({ ok: false, sent: null });
+    expect(result.note).not.toContain("WAS SENT");
+  });
+
+  it("does not call it gone while its handle is still listed", async () => {
+    const { lane } = await laneOver(
+      bareHost({
+        mail_composer_edit: { replaced: false, reason: "Refused.", hint: "Look at it." },
+      }),
+    );
+    const result = await composeNatively(lane, runnerReturning(""), BARE, TIMEOUTS);
+    lane.close();
+    expect(result).toMatchObject({ ok: false, degraded: true });
+    expect(result.note).toContain(
+      "Refused. Look at it. The new window with no subject is still open",
+    );
   });
 });

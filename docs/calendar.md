@@ -344,6 +344,47 @@ Related, and measured: **`isSubscribed` is not a complete writability signal.** 
 `writable() === false` without one. The JXA lane asks Calendar directly and refuses correctly; its
 bare error code is now re-inflated so the caller still gets the explanation.
 
+## Deleting an occurrence through Accessibility, probed
+
+Probed **2026-11-03, macOS 27.2**, against a throwaway weekly series of three (07:00 on 10, 17 and
+24 November) on a personal iCloud calendar, through the installed app's Desktop surface. The
+question was whether the two deletes Apple Events cannot do (above) can be done through the
+Accessibility lane instead, the way Maps writes with no `.sdef`.
+
+What holds:
+
+- **Every occurrence is its own element.** In month view each is a pressable `AXStaticText` named
+  `"<title>. Starts on 17 November 2026 at 07:00 and ends at 07:30."`: the person's language and
+  date format, and no identifier. 146 nodes walked in 0.25–0.5 s.
+- **Pressing one opens its detail popover, and the popover says which occurrence it is.**
+  `date-time-button` reads `"17 Nov 2026  07:00 – 07:30"`, `calendar-button` reads the calendar,
+  `title-field` the title, and there is a `Delete` button. That is a read-back to bind a delete to
+  the occurrence meant, before anything is pressed.
+- **The context menu carries Delete**, and "Go to Next / Previous Occurrence", which marks a
+  repeating event.
+- **Edit › Delete is disabled with Calendar in the background**, and enabled once it is in front.
+  It was not pressed: the event element has no readable `AXSelected`, so what Edit › Delete would
+  have acted on could not be confirmed, and "Merge Calendar" being enabled left a calendar as a
+  possible target.
+
+What does not, yet:
+
+- **AXPress on the popover's `Delete`, and on the context menu's `Delete`, did nothing.** No sheet
+  appeared and the store still held all three occurrences. Whether the popover has to be the key
+  window first, or the press needs to be a real click, is not known.
+- **Escape sent to Calendar left the popover in the tree**, so the tree and the screen may disagree
+  after a popover; not checked by screenshot.
+- **The recurrence sheet was never reached**, so its buttons and wording are unmeasured.
+
+Cleaning up confirmed the Apple Events side again: `C.delete(ev)` on the series returned and left
+it there, assigning `recurrence = ""` was ignored, and `recurrence = null` threw "Can't convert
+types." So a repeating event cannot be removed over Apple Events at all, even by first making it
+not repeat; the probe series has to be deleted in Calendar by hand.
+
+Next, before any code: the Delete key (`apple_desktop_key`) with the occurrence selected and its
+popover closed, then read the sheet. Until that answers, `delete_events` keeps refusing an
+occurrence ref.
+
 ## Still open
 
 - **The all-day `end` convention.** Apple Events reads a one-day event's end back as

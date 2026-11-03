@@ -361,10 +361,19 @@ it, and `COMMIT_REPLACEMENT` now confirms the new draft by its `Date`, `In-Reply
 exactly one candidate, before it deletes the original (see
 [Route B](#route-b-a-closed-draft-is-rebuilt-as-a-reply)).
 
-**When it does not — or for a new message with no subject, whose window has no stable title — the
-old assigning path remains, and a failed undo is loud.** `SEND_MESSAGE` returns `quoted: true`,
+**When it does not — or for a new message with no subject that is sent at once, or has nothing to
+fill, whose window has no stable title to aim a key by — the old assigning path remains, and a
+failed undo is loud.** `SEND_MESSAGE` returns `quoted: true`,
 `degraded: true` and a note saying recipients will see a quotation, and with `sendNow` it does NOT
 send. `UPDATE_DRAFT` discards the replacement unsaved and keeps the original.
+
+A **draft** with no subject goes natively since 2026-11-03. Its tab is titled in the Mac's
+language, so nothing in it is aimed by title: the composer is the one handle that appeared in
+`mail_composers` (two refuse, as for a subject), the verb fills and saves it, and whether it has
+gone is decided by that handle. Sending one, or saving one with nothing to fill, would need a key
+aimed by the window's title, and sending meets Mail's missing-subject alert, whose buttons are
+localised: `client/mail.ts` keeps those on `SEND_MESSAGE`, and `composeNatively` refuses them
+before opening anything when called directly. Not yet run live.
 
 `node scripts/verify-mail-ax.mjs --compose` now composes a new message too, and fails if the saved
 draft's source holds a `blockquote` at all.

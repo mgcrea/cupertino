@@ -599,6 +599,18 @@ the Automation prompt". A write that ignored it would break the promise silently
 whose owner asked for it — and invisibly, because the tool list does not vary with runtime state. So
 both writes refuse when it is off, naming the variable.
 
+### `activate` is driving, so it goes through Cupertino's driver
+
+`open_url` with `activate: true` used to end with `Safari.activate()`, an Apple Event that takes the
+front with no driving notice, no consent and no record in the driving session. Since 2026-11-03,
+when Cupertino hosts this server, the script opens the page without activating and the client then
+asks the lent driver: `apple_desktop_activate` for Safari, then `apple_desktop_lent_release` with
+`handBack: false`. The release is there because a session left to its idle release hands the front
+back to the previous app 45 s later, which would undo exactly what was asked; it ends only a session
+that drove Safari alone (`DrivingSession.release(drivenOnly:)`). The result carries `activated`, and
+`activationNote` when the person said no or Accessibility is not granted, or when the session
+was not ended here because it also drove another application; the page is open either way. Without Cupertino, the script's `activate` stays. Not yet run live.
+
 ### The Reading List lags its own file, and the tool says so rather than guessing
 
 Safari owns `Bookmarks.plist` and writes it on its own schedule, so an item that was genuinely added

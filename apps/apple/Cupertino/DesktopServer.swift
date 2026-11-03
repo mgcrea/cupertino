@@ -845,6 +845,10 @@ nonisolated enum DesktopServer {
     if name.hasPrefix("apple_desktop_mail_") && scope != AXComposerWindow.scope {
       return failure(id, "unknown tool '\(name)'")
     }
+    // Nor does the lent release anywhere but a channel lent to one application.
+    if name == "apple_desktop_lent_release" && lentBundle(scope) == nil {
+      return failure(id, "unknown tool '\(name)'")
+    }
 
     // Every driving tool goes through here. Unreachable through a compliant
     // client, since none of them is listed with writes off — but a server must
@@ -857,7 +861,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_release",
       "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
       "apple_desktop_select", "apple_desktop_mail_composer_edit", "apple_desktop_mail_release",
-      "apple_desktop_mail_bring_forward",
+      "apple_desktop_mail_bring_forward", "apple_desktop_lent_release",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -1362,13 +1366,19 @@ nonisolated enum DesktopServer {
       // on idle release 45 seconds later, which handed the front back while the
       // person was reading the draft. `handBack` is the Mail setting; a session
       // that also drove anything else is left to whoever else is driving.
-      case "apple_desktop_mail_release" where scope == AXComposerWindow.scope:
+      //
+      // `lent_release` is the same end for any lane lent to one application:
+      // Safari's, once it brought Safari forward because it was asked to,
+      // ends with `handBack` false so the idle release does not take the front
+      // away again. Mail's verb is kept under its own name for the Mail server.
+      case "apple_desktop_mail_release" where scope == AXComposerWindow.scope,
+        "apple_desktop_lent_release":
+        guard let only = lentBundle(scope) else { return failure(id, "unknown tool '\(name)'") }
         if let handBack = args["handBack"], !(handBack is Bool) {
           return failure(id, "'handBack' is a boolean.")
         }
         let released = DrivingSession.release(
-          .agent, handBack: args["handBack"] as? Bool ?? true,
-          drivenOnly: AXComposerWindow.bundleId)
+          .agent, handBack: args["handBack"] as? Bool ?? true, drivenOnly: only)
         return ok(id, DrivingSession.answer(released))
 
       // A composer on another desktop (a Space, or Mail full screen) is brought
@@ -1410,6 +1420,13 @@ nonisolated enum DesktopServer {
   {
     if case .only = scope { return false }
     return writesAllowed
+  }
+
+  /// The one application a lent channel reaches; nil for every other scope.
+  /// Only a lend passes `.only` here (`ServerHost.serveInProcess`).
+  private static func lentBundle(_ scope: AccessibilityDriver.Scope) -> String? {
+    guard case .only(let ids) = scope, ids.count == 1 else { return nil }
+    return ids.first
   }
 
   // ─── run: several steps in one call ────────────────────────────────────────

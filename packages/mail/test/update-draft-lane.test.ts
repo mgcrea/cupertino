@@ -376,10 +376,25 @@ describe("which lane a new message takes", () => {
     expect(shownNow()).toBe("Hi Dave");
   });
 
-  /* The subject is the native half's only handle on the window. */
-  it("keeps a message with no subject on the assigning route", async () => {
+  /* With no subject, the verb fills and saves it, aimed by the composer's handle. */
+  it("fills a draft with no subject natively", async () => {
+    const { client, scripts, shownNow } = world(0);
+    const result = await client.sendMessage({ ...message, subject: "  " });
+    expect(result).toMatchObject({ ok: true, bodyVerified: true });
+    expect(scripts).toEqual(["OPEN_COMPOSER"]);
+    expect(shownNow()).toBe("Hi Dave");
+  });
+
+  /* Sending one needs a key aimed by its title, and it has none. */
+  it("keeps a send with no subject on the assigning route", async () => {
     const { client, scripts } = world(0);
-    await client.sendMessage({ ...message, subject: "  " });
+    await client.sendMessage({ ...message, subject: "  ", sendNow: true });
+    expect(scripts).toEqual(["SEND_MESSAGE"]);
+  });
+
+  it("keeps an empty draft with no subject on the assigning route", async () => {
+    const { client, scripts } = world(0);
+    await client.sendMessage({ ...message, subject: "", body: "" });
     expect(scripts).toEqual(["SEND_MESSAGE"]);
   });
 

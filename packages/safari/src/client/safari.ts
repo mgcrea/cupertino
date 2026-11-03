@@ -1,5 +1,7 @@
 import {
   createOsascriptRunner,
+  openAxChannel,
+  type AxChannel,
   type Logger,
   type OsascriptRunner,
   type ReadOnlyMode,
@@ -14,6 +16,7 @@ import {
   BookmarksUnavailableError,
   PageCommandTimeoutError,
   PreconditionError,
+  SAFARI_BUNDLE_ID,
   SAFARI_SURFACE,
   SafariHistoryUnavailableError,
 } from "./errors.js";
@@ -203,6 +206,14 @@ export type OpenUrlResult = {
    */
   ref?: string | null;
   refNote?: string | null;
+  /**
+   * Whether Safari was brought to the front, when that was asked for and
+   * Cupertino hosts this server. Absent otherwise: Apple Events' `activate`
+   * answers nothing either way.
+   */
+  activated?: boolean;
+  /** Why it was not, when `activated` is false. */
+  activationNote?: string;
 };
 
 export type CloseTabsResult = {
@@ -277,6 +288,8 @@ export type CreateClientOptions = {
   osascript?: OsascriptRunner;
   /** Injected by tests so discovery never reaches the developer's real home. */
   home?: string;
+  /** Injected by tests; null pins the Apple Events activation. See `openUrl`. */
+  ax?: AxChannel | null;
 };
 
 export class AppleSafariClient {
@@ -284,6 +297,7 @@ export class AppleSafariClient {
   readonly #logger: Logger | undefined;
   readonly #osascript: OsascriptRunner;
   readonly #home: string | undefined;
+  readonly #ax: AxChannel | null;
 
   #located: LocateResult | null = null;
   #store: SafariStore | null = null;
@@ -293,6 +307,7 @@ export class AppleSafariClient {
     this.#config = opts.config;
     this.#logger = opts.logger;
     this.#home = opts.home;
+    this.#ax = opts.ax !== undefined ? opts.ax : openAxChannel(SAFARI_SURFACE);
     this.#osascript =
       opts.osascript ??
       createOsascriptRunner({
@@ -559,11 +574,16 @@ export class AppleSafariClient {
   }): Promise<OpenUrlResult> {
     this.#assertAppleEventsAllowed("Opening a URL");
     assertNavigableUrl(input.url);
-    const result = await this.#osascript.run<OpenUrlResult>(OPEN_URL, {
+    // Brought forward natively when Cupertino hosts this server, so the person
+    // sees it as driving like any other, rather than by an Apple Event that
+    // takes the front with no notice. See `#bringForward`.
+    const native = input.activate && this.#ax !== null;
+    const opened = await this.#osascript.run<OpenUrlResult>(OPEN_URL, {
       url: input.url,
       target: input.target,
-      activate: input.activate,
+      activate: input.activate && !native,
     });
+    const result = native ? { ...opened, ...(await this.#bringForward()) } : opened;
     if (input.target === "current-tab" || result.route === "current-tab") {
       return { ...result, ref: null, refNote: null };
     }
@@ -584,6 +604,48 @@ export class AppleSafariClient {
           `it. (${String(cause)})`,
       };
     }
+  }
+
+  /**
+   * Bring Safari to the front through Cupertino's driver, then end the driving
+   * session that opened at once, leaving Safari in front.
+   *
+   * Ended rather than left to the idle release, because that release hands
+   * the front back to whatever app was in it before, 45 seconds later, and
+   * Safari in front is what was asked for. Only this server's own session
+   * ends: the app leaves one that also drove another application alone.
+   *
+   * A refusal is reported, not thrown: the page is open either way, and the
+   * person may have said no to being driven.
+   */
+  async #bringForward(): Promise<Pick<OpenUrlResult, "activated" | "activationNote">> {
+    const ax = this.#ax as AxChannel;
+    try {
+      await ax.call({ tool: "apple_desktop_activate", args: { bundleId: SAFARI_BUNDLE_ID } });
+    } catch (cause) {
+      return {
+        activated: false,
+        activationNote:
+          `The page is open, but Safari was not brought to the front: ` +
+          `${cause instanceof Error ? cause.message : String(cause)}`,
+      };
+    }
+    // Null when the session also drove another application, which leaves it to
+    // whoever else is driving: its own end may then hand the front back.
+    const released = await ax
+      .call({ tool: "apple_desktop_lent_release", args: { handBack: false } })
+      .then(
+        (answer) => (answer as { released?: unknown } | null)?.released ?? null,
+        () => null,
+      );
+    if (released !== null) return { activated: true };
+    return {
+      activated: true,
+      activationNote:
+        "Safari is in front, but the driving session it was brought forward in was not ended " +
+        "here, so when that session ends it may bring back the application that was in front " +
+        "before.",
+    };
   }
 
   /** Where the record of tabs `openUrl` opened lives; see `opened.ts`. */

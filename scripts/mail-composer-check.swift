@@ -2917,6 +2917,42 @@ struct MailComposerCheck {
     check(
       "release with a handBack that is not a boolean is an argument error",
       badReleaseError && badRelease.contains("'handBack'"))
+
+    // The lent release: any channel lent to ONE application has it, and nothing else does.
+    let safari = AccessibilityDriver.Scope.only(["com.apple.Safari"])
+    for scope in [
+      AccessibilityDriver.Scope.brokered, .any, .only(["com.apple.Safari", "com.apple.mail"]),
+    ] {
+      for writes in [false, true] {
+        let (text, isError) = call("apple_desktop_lent_release", writes: writes, scope: scope)
+        check(
+          "lent release is unknown outside a lend (\(scope), writes \(writes))",
+          isError && text.contains("unknown tool") && !text.contains("switched off"))
+      }
+    }
+    for (label, scope) in [("safari", safari), ("mail", mail)] {
+      let (text, isError) = call(
+        "apple_desktop_lent_release", args: ["handBack": false], writes: true, scope: scope)
+      let body = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+      check(
+        "lent release with nothing driven answers that nothing was (\(label))",
+        !isError && body?["released"] is NSNull)
+    }
+    let (lentOff, lentOffError) = call("apple_desktop_lent_release", writes: false, scope: safari)
+    check(
+      "lent release with writes off is refused as switched off",
+      lentOffError && lentOff.contains("switched off"))
+    let (badLent, badLentError) = call(
+      "apple_desktop_lent_release", args: ["handBack": "no"], writes: true, scope: safari)
+    check(
+      "lent release with a handBack that is not a boolean is an argument error",
+      badLentError && badLent.contains("'handBack'"))
+    let reply = ask("tools/list", writes: true, scope: safari)
+    let listed = ((reply?["result"] as? [String: Any])?["tools"] as? [[String: Any]]) ?? []
+    check(
+      "tools/list does not name the lent release",
+      !listed.isEmpty
+        && !listed.contains { ($0["name"] as? String) == "apple_desktop_lent_release" })
     let (off, offError) = call("apple_desktop_mail_composer_edit", writes: false, scope: mail)
     check("edit with writes off is refused before AX", offError && off.contains("switched off"))
     let (missing, missingError) = call(
