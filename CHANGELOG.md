@@ -6,13 +6,16 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.36.2`,
-`notes-v1.36.2`, `reminders-v1.36.2`, `core-v1.36.2` for the npm packages, and `app-v1.36.2` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.37.0`,
+`notes-v1.37.0`, `reminders-v1.37.0`, `core-v1.37.0` for the npm packages, and `app-v1.37.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.37.0] - 2026-11-06
+
+**Mail fetches the attachments it never downloaded.** Saving an attachment that is not on disk yet,
+as with most older mail on a Gmail account, now has Mail download it first instead of failing.
 
 ### Added
 
@@ -3307,7 +3310,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.36.2...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.37.0...HEAD
+[1.37.0]: https://github.com/mgcrea/cupertino/compare/app-v1.36.2...app-v1.37.0
 [1.36.2]: https://github.com/mgcrea/cupertino/compare/app-v1.36.1...app-v1.36.2
 [1.36.1]: https://github.com/mgcrea/cupertino/compare/app-v1.36.0...app-v1.36.1
 [1.36.0]: https://github.com/mgcrea/cupertino/compare/app-v1.35.0...app-v1.36.0
