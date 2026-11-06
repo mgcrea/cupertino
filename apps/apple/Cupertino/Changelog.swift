@@ -382,6 +382,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "The Simulator surface names DeviceHub when nothing is showing the simulator.",
+            body: [
+              "On Xcode 27, with DeviceHub closed, every call answered \"com.apple.iphonesimulator is not running\", which sent an agent looking for a Simulator.app that Xcode 27 does not ship. It now names the app this Mac has, says how to open it (`open -b com.apple.dt.Devices`, then select the device in its sidebar), and warns that quitting DeviceHub shuts every booted simulator down.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

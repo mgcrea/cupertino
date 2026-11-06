@@ -12,6 +12,16 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Fixed
+
+- **The Simulator surface names DeviceHub when nothing is showing the simulator.** On Xcode 27, with
+  DeviceHub closed, every call answered "com.apple.iphonesimulator is not running", which sent an
+  agent looking for a Simulator.app that Xcode 27 does not ship. It now names the app this Mac has,
+  says how to open it (`open -b com.apple.dt.Devices`, then select the device in its sidebar), and
+  warns that quitting DeviceHub shuts every booted simulator down.
+
 ## [1.37.0] - 2026-11-06
 
 **Mail fetches the attachments it never downloaded.** Saving an attachment that is not on disk yet,
