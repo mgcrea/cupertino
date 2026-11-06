@@ -105,6 +105,31 @@ struct SimulatorCheck {
       "Simulator.app is a brokered application for Desktop, by design",
       AccessibilityDriver.inScope("com.apple.iphonesimulator", scope: .brokered))
 
+    // ─── which app hosts the simulator ──────────────────────────────────────
+    let sim = "com.apple.iphonesimulator"
+    let hub = SimulatorServer.deviceHub
+    func pick(running: Set<String>, installed: Set<String>) -> String {
+      SimulatorServer.pickHost(simulator: sim, running: running, installed: installed.contains)
+    }
+    check("a running Simulator.app hosts", pick(running: [sim, hub], installed: []) == sim)
+    check("a running DeviceHub hosts", pick(running: [hub], installed: [sim]) == hub)
+    // 2026-11-06: Xcode 27, nothing open, and the error named Simulator.app's
+    // id, so an agent went looking for an app Xcode 27 does not ship.
+    check(
+      "with neither running on Xcode 27, the host is DeviceHub",
+      pick(running: [], installed: [hub]) == hub)
+    check(
+      "with neither running, an installed Simulator.app comes first",
+      pick(running: [], installed: [sim, hub]) == sim)
+    check("with neither installed, the Simulator's id", pick(running: [], installed: []) == sim)
+    check(
+      "DeviceHub not running says how to open it, and not to quit it",
+      SimulatorServer.notRunning(hub).contains("open -b com.apple.dt.Devices")
+        && SimulatorServer.notRunning(hub).contains("Quit and Keep Simulators Running"))
+    check(
+      "Simulator.app not running says how to open it",
+      SimulatorServer.notRunning(sim).contains("open -a Simulator"))
+
     // ─── handshake ──────────────────────────────────────────────────────────
     let initialize = ask("initialize")
     let info = (initialize?["result"] as? [String: Any])?["serverInfo"] as? [String: Any]

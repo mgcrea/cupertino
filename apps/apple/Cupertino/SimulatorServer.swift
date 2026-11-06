@@ -45,14 +45,46 @@ nonisolated enum SimulatorServer {
 
   /// The application showing the simulator right now: Simulator.app where it
   /// runs, which is every Xcode before 27; DeviceHub where it does not.
-  /// Falls back to the Simulator's own id, so a Mac with neither says so in the
-  /// words it would have used before.
   static func host(_ surface: Surface) -> String {
-    let simulator = bundleId(surface)
     let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+    return pickHost(
+      simulator: bundleId(surface), running: running,
+      installed: { NSWorkspace.shared.urlForApplication(withBundleIdentifier: $0) != nil })
+  }
+
+  /// Split out so simulator-check can pin it without either app running.
+  ///
+  /// With neither running, the one this Mac has installed, Simulator.app first.
+  /// Falling back to the Simulator's id unconditionally made Xcode 27 answer
+  /// "com.apple.iphonesimulator is not running", and an agent read that as
+  /// "open Simulator.app", which Xcode 27 does not ship (2026-11-06). The
+  /// Simulator's id stays the answer on a Mac with neither installed.
+  static func pickHost(simulator: String, running: Set<String>, installed: (String) -> Bool)
+    -> String
+  {
     if running.contains(simulator) { return simulator }
     if running.contains(deviceHub) { return deviceHub }
+    if installed(simulator) { return simulator }
+    if installed(deviceHub) { return deviceHub }
     return simulator
+  }
+
+  /// What a call says when the host is not running. The bare driver error named
+  /// a bundle id and nothing to do about it; this names the app, how to open
+  /// it, and DeviceHub's trap. Not `apple_desktop_launch`: DeviceHub is not a
+  /// brokered application, so Desktop's default reach refuses it.
+  static func notRunning(_ host: String) -> String {
+    if host == deviceHub {
+      return
+        "DeviceHub, Xcode 27's device window, is not running, so no simulator screen is "
+        + "reachable. Xcode 27 ships no Simulator.app. Open DeviceHub with "
+        + "`open -b com.apple.dt.Devices` (or ios_simulator_power with open_window), then "
+        + "select the device in its sidebar. Quitting DeviceHub shuts every booted simulator "
+        + "down; its \"Quit and Keep Simulators Running\" does not."
+    }
+    return
+      "Simulator.app is not running, so no simulator screen is reachable. Open it with "
+      + "`open -a Simulator` (or ios_simulator_power with open_window)."
   }
 
   static func hostName(_ host: String) -> String {
@@ -842,6 +874,10 @@ nonisolated enum SimulatorServer {
       default:
         return failure(id, "unknown tool '\(name)'")
       }
+    } catch AccessibilityDriver.Failure.appNotRunning(let app)
+      where app == bundleId(surface) || app == deviceHub
+    {
+      return failure(id, notRunning(app))
     } catch {
       return failed(id, error)
     }
