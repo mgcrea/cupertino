@@ -12,6 +12,17 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Mail's `save_attachment` has Mail download an attachment it has not fetched yet.** On a Gmail
+  account that caches messages without their attachments, most older attachments were never on
+  disk, and saving one failed with "not stored locally". Cupertino now asks Mail to save it, which
+  makes Mail fetch it from the server (the result says `from: "mail"`); Mail keeps the copy, so the
+  attachment reads as retrievable afterwards. Mail has to be running and online. It writes into a
+  staging folder that is removed after the copy, never into the destination itself.
+
 ## [1.36.2] - 2026-11-03
 
 **A draft with no subject is pasted, and Safari is announced.** A Mail draft with no subject is
