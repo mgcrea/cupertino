@@ -90,13 +90,14 @@ export const registerMessageTools = (
           // Keying it on `inline` was the same mistake one level down: Mail
           // strips nearly every attachment to a sidecar that save_attachment
           // reads fine, so the note told agents to give up on files it could
-          // fetch. Only an attachment whose sidecar is missing earns it.
+          // fetch. Only an attachment whose sidecar is missing earns it, and
+          // even that one save_attachment now has Mail download.
           ...(missing.length > 0
             ? {
                 note:
                   `Not downloaded by Mail yet: ${missing.join(", ")}. Its bytes are not on ` +
-                  "disk, so apple_mail_save_attachment cannot retrieve it. Open the message " +
-                  "in Mail to download it first.",
+                  "disk; apple_mail_save_attachment asks Mail to download it, which takes a " +
+                  "few seconds per file and needs Mail running and online.",
               }
             : {}),
         };
@@ -209,8 +210,10 @@ export const registerMessageTools = (
     {
       description:
         "Save one attachment to disk. It can only write into APPLE_MAIL_ATTACHMENT_DIR (default " +
-        "~/Downloads) and will not overwrite an existing file unless you ask it to. Write-gated " +
-        "because it puts a file on the user's disk, even though it changes nothing in Mail.",
+        "~/Downloads) and will not overwrite an existing file unless you ask it to. An attachment " +
+        "Mail has not downloaded (retrievable: false) is fetched by Mail from the server first, " +
+        'which needs Mail running and online and can take a few seconds; `from` says "mail" ' +
+        "then. Write-gated because it puts a file on the user's disk.",
       inputSchema: z.object({
         ref: messageRefArg,
         filename: z.string().min(1).describe("Exact filename from apple_mail_list_attachments."),

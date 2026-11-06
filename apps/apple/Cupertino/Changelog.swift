@@ -411,6 +411,25 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Mail's `save_attachment` has Mail download an attachment it has not fetched yet.",
+            body: [
+              "On a Gmail account that caches messages without their attachments, most older attachments were never on disk, and saving one failed with \"not stored locally\". Cupertino now asks Mail to save it, which makes Mail fetch it from the server (the result says `from: \"mail\"`); Mail keeps the copy, so the attachment reads as retrievable afterwards. Mail has to be running and online. It writes into a staging folder that is removed after the copy, never into the destination itself.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

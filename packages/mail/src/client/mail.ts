@@ -1,5 +1,17 @@
-import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
-import { isAbsolute, resolve as resolvePath } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+} from "node:fs";
+import { basename, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
 import { writeConfinedFile } from "@mgcrea/mcp-apple-core";
 
@@ -23,7 +35,15 @@ import {
   type MessageRow,
   type SearchFilters,
 } from "./envelope.js";
-import { MAIL_SURFACE, MessageNotFoundError, PreconditionError } from "./errors.js";
+import {
+  AttachmentNotStoredError,
+  MAIL_SURFACE,
+  MailNotRunningError,
+  MessageNotFoundError,
+  OsascriptTimeoutError,
+  PreconditionError,
+  ProtocolError,
+} from "./errors.js";
 import { COUNT_MAILBOX, GET_MESSAGES, LIST_MAILBOXES, LIST_RECENT } from "./jxa/read.js";
 import {
   COMPOSER_ACCESS,
@@ -31,6 +51,7 @@ import {
   CREATE_MAILBOX,
   DELETE_MESSAGES,
   DRAFT_FACTS,
+  FETCH_ATTACHMENT,
   MOVE_MESSAGES,
   REPLY_OR_FORWARD,
   SEND_MESSAGE,
@@ -48,6 +69,31 @@ import {
 import { pickOriginal, rebuildDraft, type OriginalLookup } from "./rebuild.js";
 import { decodeRef, encodeRef, groupRefsByMailbox, type MessageRef } from "./ref.js";
 import { reviseDraftInPlace, type DraftFacts } from "./revise.js";
+
+/**
+ * How long the process may take to have Mail download one attachment. A large
+ * Gmail PDF can outlast the ordinary 30 s budget. Mail's own reply deadline is
+ * the default Apple Event timeout, 120 s from when `save` is sent; the margin
+ * lets the script's catch around `save` answer first, with Mail's reason,
+ * rather than the process being killed with none.
+ */
+const FETCH_TIMEOUT_MS = 135_000;
+
+/** What FETCH_ATTACHMENT answers. */
+type FetchAnswer =
+  | { saved: true; downloaded: boolean | null; fileSize: number | null }
+  | { saved: false; reason: "none"; names: string[] }
+  | { saved: false; reason: "ambiguous"; count: number }
+  | { saved: false; reason: "save-failed"; downloaded: boolean | null; error: string };
+
+const isFetchAnswer = (value: unknown): value is FetchAnswer => {
+  if (typeof value !== "object" || value === null || !("saved" in value)) return false;
+  const a = value as Record<string, unknown>;
+  if (a.saved === true) return true;
+  if (a.reason === "none") return Array.isArray(a.names);
+  if (a.reason === "ambiguous") return typeof a.count === "number";
+  return a.reason === "save-failed" && typeof a.error === "string";
+};
 
 /**
  * The facade every tool talks to. It owns three things the tools should not
@@ -1246,12 +1292,16 @@ export class AppleMailClient {
    * The destination is resolved and then checked to be inside
    * `APPLE_MAIL_ATTACHMENT_DIR`, so a filename of `../../.ssh/authorized_keys`
    * lands nowhere. Existing files are never overwritten.
+   *
+   * When the bytes are not on disk, which on a Gmail account caching messages
+   * without their attachments is most older mail, Mail is asked to download
+   * the attachment (see `#fetchFromMail`).
    */
   async saveAttachment(
     ref: string,
     filename: string,
     opts: { overwrite?: boolean } = {},
-  ): Promise<{ path: string; bytes: number; from: "inline" | "sidecar" }> {
+  ): Promise<{ path: string; bytes: number; from: "inline" | "sidecar" | "mail" }> {
     const decoded = decodeRef(ref);
     const located = await this.#lookupMessageFile(decoded);
     if (!located.found) {
@@ -1270,18 +1320,161 @@ export class AppleMailClient {
     // file and may walk the sidecar tree, and doing that first meant a refusal
     // was paid for with all of that work.
     let from: "inline" | "sidecar" = "inline";
+    try {
+      const written = writeConfinedFile({
+        root: this.config.attachmentDir,
+        name: filename,
+        bytes: () => {
+          const extracted = extractAttachment(located.path, filename, decoded.id);
+          from = extracted.from;
+          return extracted.bytes;
+        },
+        overwrite: opts.overwrite ?? false,
+        settingName: "APPLE_MAIL_ATTACHMENT_DIR",
+      });
+      return { ...written, from };
+    } catch (error) {
+      if (!(error instanceof AttachmentNotStoredError)) throw error;
+    }
+
+    // A download can take seconds, so an existing destination is refused
+    // before paying for one. This check is only the early answer: the `wx`
+    // create in `writeConfinedFile` is still what enforces it.
+    const dest = resolvePath(this.config.attachmentDir, basename(filename));
+    if (!opts.overwrite && existsSync(dest)) {
+      throw new PreconditionError(`${dest} already exists; refusing to overwrite it.`);
+    }
+
+    const bytes = await this.#fetchFromMail(decoded, filename);
     const written = writeConfinedFile({
       root: this.config.attachmentDir,
       name: filename,
-      bytes: () => {
-        const extracted = extractAttachment(located.path, filename, decoded.id);
-        from = extracted.from;
-        return extracted.bytes;
-      },
+      bytes,
       overwrite: opts.overwrite ?? false,
       settingName: "APPLE_MAIL_ATTACHMENT_DIR",
     });
-    return { ...written, from };
+    return { ...written, from: "mail" };
+  }
+
+  /**
+   * Have Mail download an attachment it has not fetched, and return its bytes.
+   *
+   * Mail's `save` fetches the attachment from the server, and keeps it in its
+   * own store as well, so the next save finds the sidecar on disk.
+   *
+   * Mail writes into a staging folder of ours inside the attachment directory,
+   * never the destination itself: its `save` overwrites and follows symlinks,
+   * which is exactly what `writeConfinedFile` refuses. The staging file gets a
+   * fixed name, keeping only a sanitised extension, so no part of a caller's
+   * filename becomes a path Mail writes to. The folder goes whatever happens.
+   *
+   * Not retried on a busy answer: -1712 is also what a timed-out Apple Event
+   * returns, and retrying a slow download would only double the wait.
+   */
+  async #fetchFromMail(ref: MessageRef, filename: string): Promise<Buffer> {
+    mkdirSync(this.config.attachmentDir, { recursive: true });
+    const staging = mkdtempSync(join(this.config.attachmentDir, ".cupertino-download-"));
+    try {
+      const ext = extname(basename(filename)).replace(/[^A-Za-z0-9.]/g, "");
+      const target = join(staging, `attachment${ext}`);
+      // Every failure keeps what the caller has to know first: the bytes are
+      // not on disk. Mail's part is the reason it could not repair that.
+      const notStored = `The attachment "${filename}" is not stored locally, and`;
+      let answer: unknown;
+      try {
+        answer = await this.runner.run<unknown>(
+          FETCH_ATTACHMENT,
+          {
+            accountUuid: ref.accountUuid,
+            mailbox: ref.mailbox,
+            id: ref.id,
+            filename,
+            dest: target,
+          },
+          { timeoutMs: Math.max(FETCH_TIMEOUT_MS, this.config.osascriptTimeoutMs) },
+        );
+      } catch (error) {
+        if (error instanceof MailNotRunningError) {
+          throw new PreconditionError(
+            `${notStored} Mail is not running to download it. Open Mail and try again.`,
+          );
+        }
+        // The generic advice, raising the osascript budget, cannot outlast
+        // Mail's own reply deadline. Mail usually goes on downloading, and keeps
+        // what it fetched, so a later save finds it on disk.
+        if (error instanceof OsascriptTimeoutError) {
+          throw new PreconditionError(
+            `${notStored} Mail did not finish downloading it in time. It may still be ` +
+              "downloading: try again in a minute, or open the message in Mail.",
+          );
+        }
+        if (error instanceof ProtocolError) {
+          throw new ProtocolError(`${notStored} Mail could not download it: ${error.message}`, {
+            ...error.details,
+          });
+        }
+        throw error;
+      }
+
+      if (!isFetchAnswer(answer)) {
+        throw new ProtocolError(
+          `${notStored} Mail's answer to the download was not one save_attachment can read: ` +
+            `${String(JSON.stringify(answer ?? null)).slice(0, 200)}.`,
+        );
+      }
+      if (!answer.saved) {
+        if (answer.reason === "ambiguous") {
+          throw new PreconditionError(
+            `${notStored} this message has ${answer.count} attachments named "${filename}", so ` +
+              "there is no telling which one to have Mail download. Save it from Mail.",
+          );
+        }
+        if (answer.reason === "none") {
+          const listed = answer.names.length > 0 ? answer.names.join(", ") : "none";
+          throw new PreconditionError(
+            `${notStored} Mail lists no attachment by that name on this message, so it cannot ` +
+              `download it. Mail lists: ${listed}.`,
+          );
+        }
+        throw new PreconditionError(
+          `${notStored} Mail could not download "${filename}": ${answer.error}. Check that Mail ` +
+            "is online and the account is enabled.",
+        );
+      }
+
+      // Mail is told the exact path. Should it pick its own name, it is still
+      // the only entry in a folder nobody else knows about. Only a regular
+      // file counts: a folder (a bundle saved as one) is not bytes to copy.
+      const entries = readdirSync(staging);
+      const candidate = existsSync(target)
+        ? target
+        : entries.length === 1
+          ? join(staging, entries[0]!)
+          : null;
+      const written = candidate && lstatSync(candidate).isFile() ? candidate : null;
+      if (!written) {
+        throw new PreconditionError(
+          `${notStored} Mail reported saving "${filename}" but wrote no file. Opening the ` +
+            "message in Mail downloads it.",
+        );
+      }
+      const bytes = readFileSync(written);
+      if (bytes.length === 0) {
+        throw new PreconditionError(
+          `${notStored} Mail saved "${filename}" as an empty file, so it did not download it. ` +
+            "Check that Mail is online and the account is enabled.",
+        );
+      }
+      return bytes;
+    } finally {
+      // Never let the cleanup replace the answer. After a timeout Mail may
+      // still be writing here, which can fail the removal.
+      try {
+        rmSync(staging, { recursive: true, force: true });
+      } catch {
+        this.#logger?.warn?.(`could not remove the download staging folder ${staging}`);
+      }
+    }
   }
 
   // ── write lane ─────────────────────────────────────────────────────────────

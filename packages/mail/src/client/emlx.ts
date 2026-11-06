@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
-import { PreconditionError } from "./errors.js";
+import { AttachmentNotStoredError, PreconditionError } from "./errors.js";
 import {
   bestBody,
   hasContent,
@@ -43,7 +43,10 @@ export type ParsedMessage = {
   headers: Record<string, string | null>;
   body: string;
   bodyFrom: "text/plain" | "text/html" | "none";
-  /** `retrievable` says whether save_attachment can actually fetch the bytes. */
+  /**
+   * `retrievable` says whether the bytes are on disk. When they are not,
+   * save_attachment has Mail download them, which needs Mail running and online.
+   */
   attachments: (Attachment & { retrievable: boolean })[];
   truncated: boolean;
   sizeBytes: number;
@@ -362,7 +365,8 @@ export const readEmlx = (
    * BASE64-ENCODED length, so a 164156-byte PDF advertises 224634.
    *
    * Statting the sidecar gives the exact size and, more importantly, tells the
-   * caller whether apple_mail_save_attachment will actually succeed.
+   * caller whether the bytes are on disk, or apple_mail_save_attachment will
+   * have to ask Mail to download them.
    */
   const attachments = listAttachments(root).map((a) => {
     if (a.inline || !a.filename) return { ...a, retrievable: a.inline };
@@ -488,10 +492,10 @@ export const extractAttachment = (
   const hit = locateSidecar(emlxPath, rowid, filename);
   if (hit) return { bytes: readFileSync(hit), from: "sidecar" };
 
-  throw new PreconditionError(
+  throw new AttachmentNotStoredError(
     `The attachment "${filename}" is not stored locally. Either it was never downloaded, or ` +
       `this account caches headers only — apple_mail_diagnostics reports the caching policy ` +
-      `per account. Opening the message in Mail fetches it.`,
+      `per account.`,
     { emlxPath, rowid },
   );
 };

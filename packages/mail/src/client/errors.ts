@@ -7,7 +7,11 @@
  * against, and the one error that is genuinely about messages.
  */
 
-import { AppleAutomationError, type SurfaceContext } from "@mgcrea/mcp-apple-core";
+import {
+  AppleAutomationError,
+  PreconditionError,
+  type SurfaceContext,
+} from "@mgcrea/mcp-apple-core";
 
 /** Named in every user-facing error and in the env vars they mention. */
 export const MAIL_SURFACE: SurfaceContext = { appName: "Mail", envPrefix: "APPLE_MAIL" };
@@ -36,4 +40,14 @@ export class MessageNotFoundError extends AppleAutomationError {
         `Re-run the search to get a current ref.`,
     );
   }
+}
+
+/**
+ * An attachment whose bytes are in neither the message file nor the sidecar
+ * tree: Mail has not downloaded it. Its own class so that save_attachment can
+ * tell this case, which Mail can repair by fetching it, from the refusals
+ * (no such name, a path outside the confinement) that it must pass on.
+ */
+export class AttachmentNotStoredError extends PreconditionError {
+  override readonly name = "AttachmentNotStoredError";
 }

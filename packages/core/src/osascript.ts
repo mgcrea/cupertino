@@ -57,8 +57,14 @@ export type JxaEnvelope<T> =
   | { ok: false; error: { code: string; message: string; [key: string]: unknown } };
 
 export type OsascriptRunner = {
-  /** Run a static script with one JSON-serialisable parameter object. */
-  run: <T>(script: string, params?: unknown) => Promise<T>;
+  /**
+   * Run a static script with one JSON-serialisable parameter object.
+   *
+   * `call.timeoutMs` replaces the runner's budget for this one call, for the
+   * few scripts that wait on the network (Mail fetching an attachment from the
+   * server). The queue still serialises it, so other calls wait behind it.
+   */
+  run: <T>(script: string, params?: unknown, call?: { timeoutMs?: number }) => Promise<T>;
 };
 
 /**
@@ -177,10 +183,15 @@ export const createOsascriptRunner = (opts: OsascriptOptions): OsascriptRunner =
   const enqueue = createQueue();
   const exec = opts.exec ?? defaultExec(opts.surface);
 
-  const run = async <T>(script: string, params?: unknown): Promise<T> => {
+  const run = async <T>(
+    script: string,
+    params?: unknown,
+    call?: { timeoutMs?: number },
+  ): Promise<T> => {
     assertStaticScript(script);
     const args = ["-l", "JavaScript", "-", JSON.stringify(params ?? {})];
-    const stdout = await enqueue(() => exec(opts.osascriptPath, args, script, opts.timeoutMs));
+    const timeoutMs = call?.timeoutMs ?? opts.timeoutMs;
+    const stdout = await enqueue(() => exec(opts.osascriptPath, args, script, timeoutMs));
 
     let envelope: JxaEnvelope<T>;
     try {
