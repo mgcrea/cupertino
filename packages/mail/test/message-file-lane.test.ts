@@ -1,11 +1,26 @@
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  MAIL_SURFACE,
+  MailNotRunningError,
+  OsascriptTimeoutError,
+  ProtocolError,
+} from "../src/client/errors.js";
 import { AppleMailClient } from "../src/client/mail.js";
 import type { OsascriptRunner } from "../src/client/osascript.js";
 import { encodeRef } from "../src/client/ref.js";
@@ -77,8 +92,21 @@ let accountDir: string;
 let dbPath: string;
 let downloads: string;
 
-const runner = (): OsascriptRunner => ({
-  run: vi.fn(async (script: string) => {
+/** What Mail does when asked to fetch and save an attachment. */
+type Fetch = (params: {
+  accountUuid: string;
+  mailbox: string;
+  id: number;
+  filename: string;
+  dest: string;
+}) => unknown;
+
+const runner = (fetch?: Fetch): OsascriptRunner => ({
+  run: vi.fn(async (script: string, params?: unknown) => {
+    if (script.includes("M.save(")) {
+      if (!fetch) throw new Error("Mail was asked to fetch an attachment");
+      return fetch(params as Parameters<Fetch>[0]);
+    }
     if (script.includes("a.emailAddresses()")) {
       return [
         {
@@ -155,6 +183,13 @@ const layDownMessage = (container?: string, mime = MESSAGE) => {
   return join(messages, `${ROWID}.emlx`);
 };
 
+const layDownSidecar = (messagePath: string) => {
+  // Mail's layout: Data/<shard>/Attachments/<rowid>/<part>/<filename>
+  const part = join(messagePath, "..", "..", "Attachments", String(ROWID), "2");
+  mkdirSync(part, { recursive: true });
+  writeFileSync(join(part, "failures.sql"), "SELECT 1;\n");
+};
+
 const seedIndex = () => {
   const db = new DatabaseSync(dbPath);
   db.exec(DDL);
@@ -180,7 +215,8 @@ const config = () =>
     APPLE_MAIL_ALLOW_WRITES: "1",
   });
 
-const client = () => new AppleMailClient({ config: config(), osascript: runner() });
+const client = (osascript: OsascriptRunner = runner()) =>
+  new AppleMailClient({ config: config(), osascript });
 
 /** Call a tool through the real server, for what the handler adds on top. */
 const callTool = async (name: string, args: Record<string, unknown>) => {
@@ -248,13 +284,6 @@ describe("a mailbox nested under [Gmail]", () => {
  * would have worked.
  */
 describe("an attachment stripped out to the sidecar tree", () => {
-  const layDownSidecar = (messagePath: string) => {
-    // Mail's layout: Data/<shard>/Attachments/<rowid>/<part>/<filename>
-    const part = join(messagePath, "..", "..", "Attachments", String(ROWID), "2");
-    mkdirSync(part, { recursive: true });
-    writeFileSync(join(part, "failures.sql"), "SELECT 1;\n");
-  };
-
   it("does not tell the caller to open Mail when the sidecar is on disk", async () => {
     layDownSidecar(layDownMessage(undefined, STRIPPED));
     const payload = await callTool("apple_mail_get_message", { ref });
@@ -271,7 +300,238 @@ describe("an attachment stripped out to the sidecar tree", () => {
 
     expect(payload.attachments[0]).toMatchObject({ retrievable: false, sizeBytes: null });
     expect(payload.note).toMatch(/failures\.sql/);
-    expect(payload.note).toMatch(/Open the message in Mail/);
+    // save_attachment now has Mail download it, so the note points there
+    // rather than sending the caller to open Mail by hand.
+    expect(payload.note).toMatch(/apple_mail_save_attachment asks Mail to download/);
+    expect(payload.note).not.toMatch(/cannot retrieve/);
+  });
+});
+
+/**
+ * An attachment Mail never downloaded: a Gmail account caching messages without
+ * their attachments leaves a `.partial.emlx` and no sidecar. Mail's own `save`
+ * fetches it from the server, and that also leaves the sidecar behind, so
+ * save_attachment asks Mail rather than sending the caller to open the message.
+ */
+const SQL = "SELECT 1;\n";
+
+/** Mail fetching the file and writing it where it was told. */
+const mailSaves =
+  (bytes: string = SQL, name?: string): Fetch =>
+  (p) => {
+    writeFileSync(name ? join(dirname(p.dest), name) : p.dest, bytes);
+    return { saved: true, downloaded: false, fileSize: bytes.length };
+  };
+
+describe("an attachment Mail has not downloaded", () => {
+  const leftInDownloads = () => (existsSync(downloads) ? readdirSync(downloads) : []);
+
+  it("asks Mail to download it and saves what Mail fetched", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(mailSaves());
+    const saved = await client(runner(fetch)).saveAttachment(ref, "failures.sql");
+
+    expect(saved).toEqual({ path: join(downloads, "failures.sql"), bytes: 10, from: "mail" });
+    expect(readFileSync(saved.path, "utf8")).toBe(SQL);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountUuid: GMAIL,
+        mailbox: "All Mail",
+        id: ROWID,
+        filename: "failures.sql",
+      }),
+    );
+  });
+
+  it("lets Mail write into a staging folder it then removes, never the destination", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(mailSaves());
+    await client(runner(fetch)).saveAttachment(ref, "failures.sql");
+
+    const dest = fetch.mock.calls[0]![0].dest;
+    expect(dest).not.toBe(join(downloads, "failures.sql"));
+    expect(dest.startsWith(downloads + "/")).toBe(true);
+    expect(leftInDownloads()).toEqual(["failures.sql"]);
+  });
+
+  it("takes the file Mail wrote even when Mail named it differently", async () => {
+    layDownMessage(undefined, STRIPPED);
+    await client(runner(mailSaves(SQL, "failures 2.sql"))).saveAttachment(ref, "failures.sql");
+
+    expect(readFileSync(join(downloads, "failures.sql"), "utf8")).toBe(SQL);
+    expect(leftInDownloads()).toEqual(["failures.sql"]);
+  });
+
+  it("gives the download a longer budget than an ordinary Apple Event", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const osascript = runner(mailSaves());
+    await client(osascript).saveAttachment(ref, "failures.sql");
+
+    const fetchCall = vi
+      .mocked(osascript.run)
+      .mock.calls.find(([script]) => (script as string).includes("M.save("));
+    // A margin over Mail's own 120 s reply deadline, so the script's catch
+    // around `save` answers before the process is killed.
+    expect(fetchCall?.[2]).toEqual({ timeoutMs: 135_000 });
+  });
+
+  it("never asks Mail when the sidecar is already on disk", async () => {
+    layDownSidecar(layDownMessage(undefined, STRIPPED));
+    const fetch = vi.fn(mailSaves());
+    const saved = await client(runner(fetch)).saveAttachment(ref, "failures.sql");
+
+    expect(saved.from).toBe("sidecar");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("refuses before downloading when the destination already exists", async () => {
+    layDownMessage(undefined, STRIPPED);
+    mkdirSync(downloads, { recursive: true });
+    writeFileSync(join(downloads, "failures.sql"), "mine");
+    const fetch = vi.fn(mailSaves());
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /already exists/,
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    expect(readFileSync(join(downloads, "failures.sql"), "utf8")).toBe("mine");
+  });
+
+  it("names what Mail lists when no attachment matches", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => ({
+      saved: false,
+      reason: "none",
+      names: ["queries.sql", "logo.png"],
+    }));
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /queries\.sql, logo\.png/,
+    );
+    expect(leftInDownloads()).toEqual([]);
+  });
+
+  it("refuses to guess between two attachments of the same name", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => ({ saved: false, reason: "ambiguous", count: 2 }));
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /2 attachments named "failures\.sql"/,
+    );
+    expect(leftInDownloads()).toEqual([]);
+  });
+
+  it("passes on Mail's reason when the download fails", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => ({
+      saved: false,
+      reason: "save-failed",
+      error: "The operation couldn't be completed.",
+    }));
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /could not download "failures\.sql".*couldn't be completed/,
+    );
+    expect(leftInDownloads()).toEqual([]);
+  });
+
+  it("does not report success when Mail wrote nothing", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => ({ saved: true, downloaded: false, fileSize: 10 }));
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /wrote no file/,
+    );
+    expect(leftInDownloads()).toEqual([]);
+  });
+
+  it("says Mail has to be running to download it", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => {
+      throw new MailNotRunningError(MAIL_SURFACE);
+    });
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /not stored locally.*Mail is not running/,
+    );
+    expect(leftInDownloads()).toEqual([]);
+  });
+
+  it("does not mistake an answer it cannot read for Mail's reason", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => []);
+
+    const failure = client(runner(fetch)).saveAttachment(ref, "failures.sql");
+    await expect(failure).rejects.toThrow(/not stored locally.*answer/);
+    await expect(failure).rejects.not.toThrow(/undefined/);
+  });
+
+  it("takes only a file from Mail, not a folder it left there", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn((p: Parameters<Fetch>[0]) => {
+      mkdirSync(p.dest);
+      return { saved: true, downloaded: false, fileSize: 10 };
+    });
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /wrote no file/,
+    );
+    expect(leftInDownloads()).toEqual([]);
+  });
+
+  it("says Mail may still be downloading when the call runs out of time", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => {
+      throw new OsascriptTimeoutError(135_000, MAIL_SURFACE);
+    });
+
+    const failure = client(runner(fetch)).saveAttachment(ref, "failures.sql");
+    await expect(failure).rejects.toThrow(/not stored locally.*still be downloading/);
+    // Raising the osascript budget cannot outlast Mail's own reply deadline,
+    // so the generic advice to do that must not reach the caller.
+    await expect(failure).rejects.not.toThrow(/OSASCRIPT_TIMEOUT_MS/);
+    expect(leftInDownloads()).toEqual([]);
+  });
+
+  it("keeps the context when Mail's script fails", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => {
+      throw new ProtocolError("No message 189233 in All Mail", { code: "MESSAGE_NOT_FOUND" });
+    });
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /not stored locally.*No message 189233 in All Mail/,
+    );
+  });
+
+  it("reads an empty answer as unreadable rather than crashing on it", async () => {
+    layDownMessage(undefined, STRIPPED);
+    const fetch = vi.fn(() => undefined);
+
+    await expect(client(runner(fetch)).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /not stored locally.*answer/,
+    );
+  });
+
+  it("replaces an existing file through the download when asked to", async () => {
+    layDownMessage(undefined, STRIPPED);
+    mkdirSync(downloads, { recursive: true });
+    writeFileSync(join(downloads, "failures.sql"), "old");
+
+    const saved = await client(runner(mailSaves())).saveAttachment(ref, "failures.sql", {
+      overwrite: true,
+    });
+    expect(saved.from).toBe("mail");
+    expect(readFileSync(join(downloads, "failures.sql"), "utf8")).toBe(SQL);
+  });
+
+  it("does not report success when Mail wrote an empty file", async () => {
+    layDownMessage(undefined, STRIPPED);
+
+    await expect(client(runner(mailSaves(""))).saveAttachment(ref, "failures.sql")).rejects.toThrow(
+      /empty/,
+    );
+    expect(leftInDownloads()).toEqual([]);
   });
 });
 

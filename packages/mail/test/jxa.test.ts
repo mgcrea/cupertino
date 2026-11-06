@@ -64,10 +64,17 @@ describe("JXA scripts", () => {
    * somebody else's hands. The script may not choose one: its only `Path(` is
    * the one in `attachFiles`, and its argument is an element of the list the
    * client already resolved and gated (test/actions.test.ts pins both bounds).
+   *
+   * The one other `Path(` is FETCH_ATTACHMENT's, the opposite direction: Mail
+   * writes a downloaded attachment to `p.dest`, a file in a staging folder the
+   * client made inside APPLE_MAIL_ATTACHMENT_DIR (test/message-file-lane.test.ts
+   * pins that it is never the user's destination).
    */
-  it.each(SCRIPTS)("%s names a file only as one the client resolved", (_name, source) => {
+  it.each(SCRIPTS)("%s names a file only as one the client resolved", (name, source) => {
     const code = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, "");
     const uses = code.match(/\bPath\([^)]*\)/g) ?? [];
-    for (const use of uses) expect(use).toBe("Path(list[i])");
+    // Every script carries the prelude, so `attachFiles`' use is in all of them.
+    const allowed = ["Path(list[i])", ...(name === "FETCH_ATTACHMENT" ? ["Path(p.dest)"] : [])];
+    for (const use of uses) expect(allowed).toContain(use);
   });
 });

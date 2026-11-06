@@ -165,7 +165,15 @@ wrong:
   164,156-byte PDF advertises 224,634.
 
 `list_attachments` therefore reports `sizeBytes` from the file on disk and a `retrievable` flag
-saying whether `save_attachment` will actually succeed, rather than guessing from the message.
+saying whether the bytes are on disk, rather than guessing from the message.
+
+An attachment with `retrievable: false` has not been downloaded by Mail, which on a Gmail account
+caching messages without their attachments is most older mail. `save_attachment` then asks Mail to
+save it, and Mail's `save` fetches it from the server first; the result says `from: "mail"`. Mail
+also keeps what it fetched, so the attachment reads `retrievable: true` afterwards. Mail has to be
+running and online, a large file can take a while (Mail allows itself two minutes), and Mail writes into a
+staging folder inside `APPLE_MAIL_ATTACHMENT_DIR` that is removed after the copy, never into the
+destination itself.
 
 ## Security
 
@@ -182,8 +190,10 @@ Once implemented, sending will default to leaving a **draft** open for review; a
 requires both `ALLOW_WRITES` and an explicit `confirm: true`.
 
 **No secrets.** The server holds no credential of any kind — its access is the macOS permission you
-granted the host app. There is nothing here to leak, and nothing is sent anywhere: no network calls
-are made at all.
+granted the host app. There is nothing here to leak, and nothing is sent anywhere: the server makes
+no network calls at all. What reaches a network is Mail itself, doing what it was asked: sending,
+checking for new mail, and also `save_attachment` asking it to download an attachment from your own
+mail server.
 
 **Attachments.** `save_attachment` can only write inside `APPLE_MAIL_ATTACHMENT_DIR`, and the
 filename is reduced to its basename first — a sender who names their attachment

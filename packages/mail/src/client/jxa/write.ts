@@ -1373,3 +1373,77 @@ export const OPEN_COMPOSER = script(
 `,
   { allowLaunch: true },
 );
+
+/**
+ * Have Mail download one attachment and save it to `p.dest`.
+ *
+ * Mail's `save` on a `mail attachment` that is not downloaded fetches it from
+ * the server first, and the fetch also lands in Mail's own store: measured
+ * 2026-11-06 on a Gmail account caching messages without attachments, a message
+ * whose attachments were not on disk listed them `retrievable: true`, with real
+ * sizes, after Mail had saved them this way. There is no separate download verb
+ * in Mail's dictionary; `downloaded` is read-only.
+ *
+ * `p.dest` is a path in a fresh staging folder the caller made and owns. Mail's
+ * `save` overwrites and follows symlinks, so it must never be pointed at the
+ * user's destination; the caller moves the bytes there through the confinement.
+ *
+ * A name that matches nothing, or matches twice, comes back as data rather than
+ * an error so the caller can say what Mail listed.
+ */
+export const FETCH_ATTACHMENT = script(`
+  var acct = findAccount(M, p.accountUuid);
+  if (!acct) return err("ACCOUNT_NOT_FOUND", "No account with id " + p.accountUuid);
+  var mb = resolveMailbox(acct, p.mailbox);
+  if (!mb) return err("MAILBOX_NOT_FOUND", "No mailbox " + p.mailbox + " in that account");
+
+  var m;
+  try {
+    m = mb.messages.byId(p.id);
+    m.id();
+  } catch (e) {
+    return err("MESSAGE_NOT_FOUND", "No message " + p.id + " in " + p.mailbox);
+  }
+
+  var wanted = String(p.filename).normalize("NFC");
+  // Not prop(): a failed read here is not a message without attachments, and
+  // answering "none" would tell the caller the name does not exist.
+  var atts;
+  try {
+    atts = m.mailAttachments();
+  } catch (e) {
+    return ok({
+      saved: false,
+      reason: "save-failed",
+      downloaded: null,
+      error: "Mail could not list the message's attachments: " +
+        String(e && e.message ? e.message : e)
+    });
+  }
+  var names = [];
+  var hits = [];
+  for (var i = 0; i < atts.length; i++) {
+    var a = atts[i];
+    var name = prop(function () { return a.name(); }, null);
+    if (name === null) continue;
+    names.push(String(name));
+    if (String(name).normalize("NFC") === wanted) hits.push(a);
+  }
+  if (hits.length === 0) return ok({ saved: false, reason: "none", names: names });
+  if (hits.length > 1) return ok({ saved: false, reason: "ambiguous", count: hits.length });
+
+  var hit = hits[0];
+  var downloaded = prop(function () { return hit.downloaded(); }, null);
+  var fileSize = prop(function () { return hit.fileSize(); }, null);
+  try {
+    M.save(hit, { in: Path(p.dest) });
+  } catch (e) {
+    return ok({
+      saved: false,
+      reason: "save-failed",
+      downloaded: downloaded,
+      error: String(e && e.message ? e.message : e)
+    });
+  }
+  return ok({ saved: true, downloaded: downloaded, fileSize: fileSize });
+`);

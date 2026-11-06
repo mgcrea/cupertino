@@ -168,6 +168,26 @@ describe("runner", () => {
     await expect(runner.run(LIST_ACCOUNTS)).rejects.toThrow("boom");
     await expect(runner.run(LIST_ACCOUNTS)).resolves.toBe("second");
   });
+
+  it("gives one call a longer budget without changing the others", async () => {
+    const budgets: number[] = [];
+    const exec = vi.fn(
+      async (_path: string, _args: string[], _script: string, timeoutMs: number) => {
+        budgets.push(timeoutMs);
+        return JSON.stringify({ ok: true, data: null });
+      },
+    );
+    const runner = createOsascriptRunner({
+      osascriptPath: "/usr/bin/osascript",
+      timeoutMs: 1000,
+      surface: SURFACE,
+      exec,
+    });
+
+    await runner.run(LIST_ACCOUNTS, {}, { timeoutMs: 120_000 });
+    await runner.run(LIST_ACCOUNTS);
+    expect(budgets).toEqual([120_000, 1000]);
+  });
 });
 
 describe("withBusyRetry", () => {
