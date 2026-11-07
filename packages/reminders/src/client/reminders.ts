@@ -324,12 +324,7 @@ export class AppleRemindersClient {
    */
   async lists(): Promise<ReminderList[]> {
     const counts = this.index()?.listCounts() ?? null;
-    const all = await withBusyRetry(() =>
-      this.runner.run<ReminderList[]>(LIST_LISTS, { withCounts: counts === null }),
-    );
-    const allowed = all.filter(
-      (l) => this.#allowedAccount(l.accountName) && this.#allowedList(l.name),
-    );
+    const allowed = await this.#allowedLists(counts === null);
     if (!counts) return allowed;
     return allowed.map((l) => {
       const c = l.id ? counts.get(l.id.toUpperCase()) : undefined;
@@ -734,9 +729,20 @@ export class AppleRemindersClient {
 
   // ─── writes ───────────────────────────────────────────────────────────────
 
-  /** Resolve a list by name or id, erroring with what is available. */
+  /** The lists the allowlists admit, counted by Reminders only when `withCounts`. */
+  async #allowedLists(withCounts: boolean): Promise<ReminderList[]> {
+    const all = await withBusyRetry(() =>
+      this.runner.run<ReminderList[]>(LIST_LISTS, { withCounts }),
+    );
+    return all.filter((l) => this.#allowedAccount(l.accountName) && this.#allowedList(l.name));
+  }
+
+  /**
+   * Resolve a list by name or id, erroring with what is available. Only names
+   * and ids are read, so Reminders is never asked for counts here.
+   */
   async resolveList(nameOrId: string): Promise<string> {
-    const lists = await this.lists();
+    const lists = await this.#allowedLists(false);
     const want = nameOrId.toLowerCase();
     const hit =
       lists.find((l) => l.id === nameOrId) ?? lists.find((l) => l.name?.toLowerCase() === want);

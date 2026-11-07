@@ -136,6 +136,19 @@ describe("list counts", () => {
     expect(calls.map((x) => x.params)).toEqual([{ withCounts: true }]);
     expect(lists[0]).toMatchObject({ reminderCount: 99, incompleteCount: 99 });
   });
+
+  /*
+   * A write resolves its list by name or id and reads nothing else of it, so it
+   * never asks for the counts: with the store off they are the chained 2.2 s
+   * event, paid on every create and move for numbers thrown away.
+   */
+  it("resolves a list for a write without asking Reminders to count", async () => {
+    const { c, calls } = client({ APPLE_REMINDERS_INDEX_MODE: "off" });
+    const id = await c.resolveList(LISTS[1]?.name ?? "");
+
+    expect(id).toBe(LISTS[1]?.id);
+    expect(calls.map((x) => x.params)).toEqual([{ withCounts: false }]);
+  });
 });
 
 describe("get_reminder", () => {
