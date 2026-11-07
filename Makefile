@@ -683,6 +683,7 @@ wiring-check: ## Assert the config merge leaves other people's files alone
 	@swiftc -O -o apps/apple/.build/wiring-check \
 		apps/apple/Cupertino/ClientWiringMerge.swift \
 		apps/apple/Cupertino/ClientWiringTOML.swift \
+		apps/apple/Cupertino/ClientAllowlist.swift \
 		scripts/wiring-check.swift
 	@apps/apple/.build/wiring-check
 
