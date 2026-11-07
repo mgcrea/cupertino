@@ -1020,6 +1020,18 @@ export class AppleMailClient {
     return { parsed, source: "emlx" };
   }
 
+  /**
+   * The mailbox the index says a ref's row lives in, when it is in the ref's
+   * account, or null: no index, no such row, or a mailbox the account list
+   * cannot name.
+   */
+  async #rowMailbox(ref: MessageRef): Promise<string | null> {
+    const row = (await this.index())?.byRowid(ref.id);
+    if (!row?.mailboxUrl) return null;
+    const where = await this.mailboxes.resolveIndexUrl(row.mailboxUrl);
+    return where && where.account.id === ref.accountUuid ? where.mailbox : null;
+  }
+
   /** A ref's envelope fields from the index, keeping the ref the caller passed. */
   async #indexSummary(ref: MessageRef): Promise<MessageSummary | null> {
     const row = (await this.index())?.byRowid(ref.id);
@@ -1090,6 +1102,22 @@ export class AppleMailClient {
       return { found: false, explain: err instanceof Error ? err.message : String(err) };
     }
     if (lookup.found) return { found: true, path: lookup.path, partial: lookup.partial };
+    // A ref may name the mailbox a message was listed in rather than the one
+    // its file is in: a Gmail INBOX holds its messages by label, and their
+    // files live under All Mail. The index says where the row itself lives.
+    const home = await this.#rowMailbox(ref);
+    if (home !== null && home !== ref.mailbox) {
+      try {
+        const there = lookupEmlx({
+          accountDirectory: account.directory,
+          mailbox: home,
+          rowid: ref.id,
+        });
+        if (there.found) return { found: true, path: there.path, partial: there.partial };
+      } catch {
+        // As above: the first lookup's answer stands.
+      }
+    }
     return {
       found: false,
       lookup,
