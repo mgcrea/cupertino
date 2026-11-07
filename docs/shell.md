@@ -245,12 +245,16 @@ window does not; a window of the three trusted processes does not, with or witho
 the list gives no pid for, a window of anyone else's it gives no bounds for, or no list at all,
 counts as covering everything, so Run stays off rather than on; and the trust test failing for every
 pid leaves every overlapping window covering. `make shell-window-check` ("CoverWatch") pins that the
-watched buttons start off, get the click-time test, and what the notice says. Limits:
+watched buttons start off, get the click-time test, and what the notice says.
+
+The two sheets that lower the bar, "Turn On Shell" and "Don't Ask", are watched the same way, their
+notice naming their own button. The switches that open them take an Accessibility press like any
+control, so a program, not the person, may have opened one, and a click-through window over its
+confirming button would otherwise borrow the person's click. Limits:
 
 - **A window that appears after the click has been taken is not seen.**
 - **The card can still be covered.** Its Stop can only stop a run, so a cover there costs a stop
   the person meant, not a run they did not; the run goes on and is still on the record.
-- **The confirming sheets are not watched.** The person opened them from a switch themselves.
 - **Unmeasured: what the three trusted processes can draw.** The `screencaptureui` and Dock
   windows cover the whole screen, and what else they can draw there was not measured:
   `screencapture -u`, for one, shows the image it took after a capture, and the Dock has badges and
