@@ -1072,8 +1072,17 @@ export class AppleSafariClient {
     }
     // A case-insensitive pattern on the text as it is, as the page's `find`
     // does: an index into a lower-cased copy can point elsewhere in the
-    // original once lower-casing has changed its length.
-    const match = new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").exec(content);
+    // original once lower-casing has changed its length. Trimmed, and any run
+    // of whitespace matching any run, line breaks included, also as `find`
+    // does: laid-out text puts a heading's words on separate lines, and a miss
+    // here would report `gone: true` met while the words are on the page.
+    const match = new RegExp(
+      text
+        .trim()
+        .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+        .replace(/\s+/g, "\\s+"),
+      "i",
+    ).exec(content);
     if (!match) return { present: false };
     return {
       present: true,
