@@ -419,6 +419,18 @@ describe("refusing rather than losing the draft", () => {
     expect(state.deleted).toEqual([]);
   });
 
+  /*
+   * This script runs only on the lane with no Accessibility (mail.ts returns
+   * before it when there is one), so nothing looked for the draft's window: the
+   * hint must not say the window is closed, or that an open one would have
+   * been edited, while it may be open in front of the person.
+   */
+  it("does not claim the reply's window is closed, which nothing checked", () => {
+    const { envelope } = runScript({}, { headers: REPLY_HEADERS });
+    expect(envelope.data.hint).not.toMatch(/NOT open|would have been edited/);
+    expect(envelope.data.hint).toMatch(/Cupertino\.app/);
+  });
+
   it("refuses a draft carrying attachments", () => {
     const { envelope, state } = runScript({}, { attachments: 2 });
     expect(envelope.data.replaced).toBe(false);
