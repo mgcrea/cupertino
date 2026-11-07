@@ -105,8 +105,10 @@ export class MailArrivalSource implements ArrivalSource<MailArrival> {
    * While set, `since` stops before the first row whose mailbox is not among
    * `knownMailboxes`, so the cursor stays below a row the lookup cannot judge
    * yet. The watch service sets it around a tick, refreshes when `takeHeld()`
-   * says it stopped, and ticks again; a read never sees it set. The events
-   * service keeps it set, and refreshes before the next poll or tick.
+   * says it stopped, and ticks again; it sets it around a read too, and drops
+   * what the read held, so the cursor a client gets never passes such a row.
+   * The events service keeps it set, and refreshes before the next poll or
+   * tick.
    */
   holdNewMailboxes = false;
 

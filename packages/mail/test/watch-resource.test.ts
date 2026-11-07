@@ -342,6 +342,78 @@ describe("MailWatchService: what a trigger costs", () => {
   });
 });
 
+describe("MailWatchService: a read before the trigger", () => {
+  /*
+   * A client may read its watch at any time, the tool description says so, and
+   * a row can be in the index before the trigger that refreshes the lookup has
+   * run. Judged with the old lookup, a row in a mailbox created since is
+   * excluded, and the cursor the read returns would pass it for good: the
+   * trigger then notifies for that row, and the client resuming from its
+   * cursor never sees it.
+   */
+  it("stops below a row in a mailbox it has never seen, so the resumed read finds it", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    const { watch } = await w.service.add(sam, undefined);
+    const before = w.runner.listAccounts;
+
+    w.clock.advance(500);
+    fx.db.exec(`INSERT INTO mailboxes (ROWID, url, total_count, unread_count)
+                VALUES (2, 'imap://${UUID}/Receipts', 0, 0)`);
+    addMessage(fx.db, 20, 2);
+    const early = w.registry.read(watch.id);
+    expect(early?.messages).toEqual([]);
+    expect(early?.cursor).toBeLessThan(20);
+
+    await w.trigger();
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+    expect(w.runner.listAccounts).toBe(before + 1);
+    expect(w.registry.read(watch.id, early?.cursor)?.messages.map((m) => m.mailbox)).toEqual([
+      "Receipts",
+    ]);
+  });
+
+  it("passes that row once a trigger has asked about it, even when Mail could not answer", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    const { watch } = await w.service.add(sam, undefined);
+    w.runner.open = false;
+
+    w.clock.advance(500);
+    fx.db.exec(`INSERT INTO mailboxes (ROWID, url, total_count, unread_count)
+                VALUES (2, 'imap://${UUID}/Projects', 0, 0)`);
+    addMessage(fx.db, 20, 2);
+    addMessage(fx.db, 21, 1);
+    await w.trigger();
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+
+    // "Projects" is in no account list Mail gave, so the tick excluded row 20
+    // when the refresh failed. A read must not stop below it for as long as
+    // Mail cannot answer, or row 21, which the update was for, never reads.
+    const read = w.registry.read(watch.id);
+    expect(read?.messages.map((m) => m.mailbox)).toEqual(["INBOX"]);
+    expect(read?.cursor).toBe(21);
+  });
+
+  it("passes a row whose mailbox the index does not list, once a trigger has asked about it", async () => {
+    const fx = copyIndex();
+    const w = serviceOn(fx.path);
+    const { watch } = await w.service.add(sam, undefined);
+
+    // No `mailboxes` row for 9: no rebuild makes it known, so only the record
+    // that the trigger already asked keeps a read from holding below it.
+    w.clock.advance(500);
+    addMessage(fx.db, 20, 9);
+    addMessage(fx.db, 21, 1);
+    await w.trigger();
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+
+    const read = w.registry.read(watch.id);
+    expect(read?.messages.map((m) => m.mailbox)).toEqual(["INBOX"]);
+    expect(read?.cursor).toBe(21);
+  });
+});
+
 describe("MailWatchService freshness", () => {
   it("never scans before the first mailbox lookup has succeeded", async () => {
     const fx = copyIndex();
