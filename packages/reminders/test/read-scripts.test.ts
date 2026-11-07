@@ -208,6 +208,38 @@ describe("GET_REMINDERS", () => {
 
     expect(rows).toEqual([{ id: "x-apple-reminder://GONE", found: false }]);
   });
+
+  /*
+   * The message is the OS's, in the Mac's language; the number is not. A Mac
+   * set to French says "Impossible d'obtenir l'objet.", and matching on the
+   * English text alone turned a deleted reminder into a raw script error there.
+   */
+  it("reports it as not found by its error number, whatever the Mac's language", () => {
+    const fake: Fake = { events: [] };
+    const app = buildApp(fake, [], []) as { reminders: { byId: (id: string) => unknown } };
+    app.reminders.byId = () => ({
+      properties: () => {
+        throw Object.assign(new Error("Impossible d’obtenir l’objet."), { errorNumber: -1728 });
+      },
+    });
+    const rows = run(GET_REMINDERS, app, { ids: ["x-apple-reminder://GONE"] });
+
+    expect(rows).toEqual([{ id: "x-apple-reminder://GONE", found: false }]);
+  });
+
+  it("still raises an error that is not a missing reminder", () => {
+    const fake: Fake = { events: [] };
+    const app = buildApp(fake, [], []) as { reminders: { byId: (id: string) => unknown } };
+    app.reminders.byId = () => ({
+      properties: () => {
+        throw Object.assign(new Error("AppleEvent timed out."), { errorNumber: -1712 });
+      },
+    });
+
+    expect(() => run(GET_REMINDERS, app, { ids: ["x-apple-reminder://SLOW"] })).toThrow(
+      /timed out/,
+    );
+  });
 });
 
 describe("LIST_LISTS", () => {

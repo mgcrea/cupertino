@@ -192,7 +192,12 @@ export const GET_REMINDERS = script(`
     try {
       all = R.reminders.byId(id).properties();
     } catch (e) {
-      if (String(e && e.message ? e.message : e).indexOf("Can't get") !== -1) {
+      // -1728 is "no such object", whatever language the Mac reads it out
+      // in; the English text is kept for an error that carries no number.
+      if (
+        (e && e.errorNumber === -1728) ||
+        String(e && e.message ? e.message : e).indexOf("Can't get") !== -1
+      ) {
         out.push({ id: id, found: false });
         continue;
       }
