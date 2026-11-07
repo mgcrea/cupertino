@@ -507,7 +507,7 @@ export class AppleMailClient {
       | { source: "applescript"; fallbackReason: string }
     )
   > {
-    const name = this.mailboxes.resolveMailboxName(account, mailbox);
+    const name = await this.mailboxes.resolveMailbox(account, mailbox);
     const scope = await this.#indexScope(account, name);
     if ("reason" in scope) {
       const recent = await this.listRecent(account, name, limit);
@@ -540,7 +540,7 @@ export class AppleMailClient {
         fallbackReason: string;
       }
   > {
-    const name = this.mailboxes.resolveMailboxName(account, mailbox);
+    const name = await this.mailboxes.resolveMailbox(account, mailbox);
     const scope = await this.#indexScope(account, name);
     if ("reason" in scope) {
       const counts = await this.countMailbox(account, name);
@@ -703,7 +703,7 @@ export class AppleMailClient {
     const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
     const wanted = opts.mailbox
       ? account
-        ? this.mailboxes.resolveMailboxName(account, opts.mailbox)
+        ? await this.mailboxes.resolveMailbox(account, opts.mailbox)
         : opts.mailbox
       : null;
 
