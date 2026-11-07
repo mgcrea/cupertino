@@ -6,21 +6,88 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.37.0`,
-`notes-v1.37.0`, `reminders-v1.37.0`, `core-v1.37.0` for the npm packages, and `app-v1.37.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.37.1`,
+`notes-v1.37.1`, `reminders-v1.37.1`, `core-v1.37.1` for the npm packages, and `app-v1.37.1` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.37.1] - 2026-11-07
+
+**Shell guards its switches, and Gmail INBOX refs name INBOX.** Shell's confirm sheets refuse a
+click through a window laid over them, and a hidden line break gets a warning. A move from a Gmail
+INBOX listing moves that message.
+
+### Security
+
+- **Shell warns about a line break the window shows and zsh does not.** The window started a new
+  line at a lone carriage return and at U+2028 and U+2029, which zsh reads as ordinary characters,
+  so `ls ~/Documents\r# ; curl … | sh` showed as `ls` over a comment while zsh ran the `curl`. Each
+  of those now gets the hidden-characters warning, and the line count counts every line the window
+  draws. A Windows line ending (CR LF) is still not flagged: both end the line there.
+- **Shell's "Turn On Shell" and "Don't Ask" buttons refuse a click through a window laid over
+  them.** The run window already did this. The two sheets that lower the bar had no such watch, so
+  a program with Accessibility could open "Don't Ask", cover its button with a click-through window
+  and borrow your next click. Each sheet's button now turns off while another window covers it, and
+  says so.
+- **Declining a Shell request also calls off that client's other waiting requests.** An agent can
+  open connections as it likes, so four requests stood in line, and "Don't run" on the first brought
+  the other three straight up. They are now withdrawn with it, and answer as the cooldown. Another
+  client's window keeps waiting.
 
 ### Fixed
 
+- **A message listed in a Gmail INBOX is moved and deleted in INBOX.** On the index lane,
+  `list_messages` named each message by the mailbox its file lives in, which for a Gmail INBOX is
+  All Mail, so `move_messages` and `delete_messages` acted on the All Mail copy. Refs now name the
+  mailbox that was listed. A ref naming INBOX also finds the message's file under All Mail, so
+  `list_attachments` and `save_attachment` work on it instead of failing.
+- **`update_draft` no longer edits the wrong open message.** A closed draft that is not a reply was
+  matched to an open window by the shorter of their openings, so an open message reading "Hi Dave,"
+  could have its text replaced in place of the draft "Hi Dave, the VMs are up…" with the same
+  subject. Such a draft now needs a window holding exactly its text. Replies keep the old rule.
+- **An edited Mail draft keeps characters like `é` and `’` that it stored as HTML entities.** A draft
+  that came in from Outlook could hold `&eacute;` or `&rsquo;`, and an edit to it sent the recipient
+  "Caf&eacute;". The rest of the text is now kept byte for byte, as intended.
+- **A draft edit with attachments that would land in a reply's quote is refused before anything is
+  pasted.** It used to be refused only after the new body was already in a window Mail autosaves.
+- **Rebuilding a reply draft refuses a subject that did not take**, leaving the original draft as it
+  was, instead of reporting the draft replaced under Mail's own "Re:".
+- **Without Cupertino.app, Mail sends nothing when it holds fewer files than asked.** The message
+  stays open as a draft and the result says how many files are there. Replies and forwards on this
+  path now report their `attachments` like the other two paths. A refused reply draft no longer
+  says its window is closed, since nothing on this path looked.
+- **A mailbox created since Cupertino last read Mail's list is found the first time.**
+  `list_messages`, `count_messages` and `search_messages` refused it with "No mailbox" after a pause,
+  and found it on the next call. They now read the list again before refusing a name.
+- **Mail and Messages watches no longer skip mail or replay old mail.** A watch read could move
+  past a message in a mailbox created since the last refresh, so it was never returned. And when
+  Mail's index or Messages' database was rebuilt as a new file, every older message above the
+  watch's start came back as new. A watch now restarts at the new file's latest message.
+- **Safari commands keep working after Back and Forward.** A page restored from the back/forward
+  cache stopped taking commands, and every one timed out as if the extension were not installed
+  there.
+- **`apple_safari_wait_for` finds text across a line break on pages whose script predates `find`.**
+  A heading spread over two lines was never matched, and with `gone: true` it came back `met: true`
+  while the words were still on the page.
+- **Safari's network list shows a streaming fetch's status as soon as it starts.** Server-sent
+  events and other streamed responses read status `null` until the stream ended, or for good if it
+  never did. A `data:` URL over 256 characters is now listed as its header and length rather than
+  whole, so one 4 MiB image no longer makes a 4-million-character answer; `urlContains` still
+  matches all of it.
+- **`get_reminder` in Reminders says "not found" for a deleted reminder on a Mac set to another
+  language.** It recognised the error only by its English text, and failed with a raw script error.
 - **The Simulator surface names DeviceHub when nothing is showing the simulator.** On Xcode 27, with
   DeviceHub closed, every call answered "com.apple.iphonesimulator is not running", which sent an
   agent looking for a Simulator.app that Xcode 27 does not ship. It now names the app this Mac has,
   says how to open it (`open -b com.apple.dt.Devices`, then select the device in its sidebar), and
   warns that quitting DeviceHub shuts every booted simulator down.
+
+### Changed
+
+- **`create_reminder` and `move_reminders` find their list about 2 s sooner.**
+  Without the Reminders store open, they counted every list's completed reminders to pick one by
+  name, and threw the counts away.
 
 ## [1.37.0] - 2026-11-06
 
@@ -3320,7 +3387,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.37.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...HEAD
+[1.37.1]: https://github.com/mgcrea/cupertino/compare/app-v1.37.0...app-v1.37.1
 [1.37.0]: https://github.com/mgcrea/cupertino/compare/app-v1.36.2...app-v1.37.0
 [1.36.2]: https://github.com/mgcrea/cupertino/compare/app-v1.36.1...app-v1.36.2
 [1.36.1]: https://github.com/mgcrea/cupertino/compare/app-v1.36.0...app-v1.36.1

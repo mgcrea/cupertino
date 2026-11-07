@@ -220,7 +220,131 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_37_0, v1_36_2, v1_36_1, v1_36_0, v1_35_0]
+  static let releases: [Release] = [v1_37_1, v1_37_0, v1_36_2, v1_36_1, v1_36_0]
+
+  // swift-format-ignore
+  private static let v1_37_1: Release = Release(
+    version: "1.37.1",
+    date: "2026-11-07",
+    sections: [
+      Section(
+        name: "Security",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Shell warns about a line break the window shows and zsh does not.",
+            body: [
+              "The window started a new line at a lone carriage return and at U+2028 and U+2029, which zsh reads as ordinary characters, so `ls ~/Documents\\r# ; curl … | sh` showed as `ls` over a comment while zsh ran the `curl`. Each of those now gets the hidden-characters warning, and the line count counts every line the window draws. A Windows line ending (CR LF) is still not flagged: both end the line there.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Shell's \"Turn On Shell\" and \"Don't Ask\" buttons refuse a click through a window laid over them.",
+            body: [
+              "The run window already did this. The two sheets that lower the bar had no such watch, so a program with Accessibility could open \"Don't Ask\", cover its button with a click-through window and borrow your next click. Each sheet's button now turns off while another window covers it, and says so.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Declining a Shell request also calls off that client's other waiting requests.",
+            body: [
+              "An agent can open connections as it likes, so four requests stood in line, and \"Don't run\" on the first brought the other three straight up. They are now withdrawn with it, and answer as the cooldown. Another client's window keeps waiting.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "A message listed in a Gmail INBOX is moved and deleted in INBOX.",
+            body: [
+              "On the index lane, `list_messages` named each message by the mailbox its file lives in, which for a Gmail INBOX is All Mail, so `move_messages` and `delete_messages` acted on the All Mail copy. Refs now name the mailbox that was listed. A ref naming INBOX also finds the message's file under All Mail, so `list_attachments` and `save_attachment` work on it instead of failing.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "`update_draft` no longer edits the wrong open message.",
+            body: [
+              "A closed draft that is not a reply was matched to an open window by the shorter of their openings, so an open message reading \"Hi Dave,\" could have its text replaced in place of the draft \"Hi Dave, the VMs are up…\" with the same subject. Such a draft now needs a window holding exactly its text. Replies keep the old rule.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "An edited Mail draft keeps characters like `é` and `’` that it stored as HTML entities.",
+            body: [
+              "A draft that came in from Outlook could hold `&eacute;` or `&rsquo;`, and an edit to it sent the recipient \"Caf&eacute;\". The rest of the text is now kept byte for byte, as intended.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "A draft edit with attachments that would land in a reply's quote is refused before anything is pasted.",
+            body: [
+              "It used to be refused only after the new body was already in a window Mail autosaves.",
+            ]),
+          Entry(
+            ordinal: 7,
+            headline: "Rebuilding a reply draft refuses a subject that did not take",
+            body: [
+              ", leaving the original draft as it was, instead of reporting the draft replaced under Mail's own \"Re:\".",
+            ]),
+          Entry(
+            ordinal: 8,
+            headline: "Without Cupertino.app, Mail sends nothing when it holds fewer files than asked.",
+            body: [
+              "The message stays open as a draft and the result says how many files are there. Replies and forwards on this path now report their `attachments` like the other two paths. A refused reply draft no longer says its window is closed, since nothing on this path looked.",
+            ]),
+          Entry(
+            ordinal: 9,
+            headline: "A mailbox created since Cupertino last read Mail's list is found the first time.",
+            body: [
+              "`list_messages`, `count_messages` and `search_messages` refused it with \"No mailbox\" after a pause, and found it on the next call. They now read the list again before refusing a name.",
+            ]),
+          Entry(
+            ordinal: 10,
+            headline: "Mail and Messages watches no longer skip mail or replay old mail.",
+            body: [
+              "A watch read could move past a message in a mailbox created since the last refresh, so it was never returned. And when Mail's index or Messages' database was rebuilt as a new file, every older message above the watch's start came back as new. A watch now restarts at the new file's latest message.",
+            ]),
+          Entry(
+            ordinal: 11,
+            headline: "Safari commands keep working after Back and Forward.",
+            body: [
+              "A page restored from the back/forward cache stopped taking commands, and every one timed out as if the extension were not installed there.",
+            ]),
+          Entry(
+            ordinal: 12,
+            headline: "`apple_safari_wait_for` finds text across a line break on pages whose script predates `find`.",
+            body: [
+              "A heading spread over two lines was never matched, and with `gone: true` it came back `met: true` while the words were still on the page.",
+            ]),
+          Entry(
+            ordinal: 13,
+            headline: "Safari's network list shows a streaming fetch's status as soon as it starts.",
+            body: [
+              "Server-sent events and other streamed responses read status `null` until the stream ended, or for good if it never did. A `data:` URL over 256 characters is now listed as its header and length rather than whole, so one 4 MiB image no longer makes a 4-million-character answer; `urlContains` still matches all of it.",
+            ]),
+          Entry(
+            ordinal: 14,
+            headline: "`get_reminder` in Reminders says \"not found\" for a deleted reminder on a Mac set to another language.",
+            body: [
+              "It recognised the error only by its English text, and failed with a raw script error.",
+            ]),
+          Entry(
+            ordinal: 15,
+            headline: "The Simulator surface names DeviceHub when nothing is showing the simulator.",
+            body: [
+              "On Xcode 27, with DeviceHub closed, every call answered \"com.apple.iphonesimulator is not running\", which sent an agent looking for a Simulator.app that Xcode 27 does not ship. It now names the app this Mac has, says how to open it (`open -b com.apple.dt.Devices`, then select the device in its sidebar), and warns that quitting DeviceHub shuts every booted simulator down.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 16,
+            headline: "`create_reminder` and `move_reminders` find their list about 2 s sooner.",
+            body: [
+              "Without the Reminders store open, they counted every list's completed reminders to pick one by name, and threw the counts away.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_37_0: Release = Release(
@@ -353,54 +477,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_35_0: Release = Release(
-    version: "1.35.0",
-    date: "2026-10-30",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Safari reads a site's cookies, for the sites you list.",
-            body: [
-              "`apple_safari_cookies` lists the cookies Safari would send to an open page, HttpOnly ones included, with each one's name, domain, path, flags and expiry, and never its value. To hand a session to a local tool, it writes the cookies you name to a private file (mode 0600) as one Cookie header value. Turn it on in Safari's settings in Cupertino with **Read cookies**, and list the sites it may read in the **Sites** field under it, like `yahoo.com`: an empty list refuses every site. Saving the file also needs writes. Outside the app, the same is `APPLE_SAFARI_ALLOW_COOKIES` and `APPLE_SAFARI_COOKIE_HOSTS`.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "The Safari extension asks for the cookies permission",
-            body: [
-              ", which the tool above reads through. It adds no all-sites access: cookies are read only on sites you have already allowed the extension on.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "The Simulator surface names DeviceHub when nothing is showing the simulator.",
-            body: [
-              "On Xcode 27, with DeviceHub closed, every call answered \"com.apple.iphonesimulator is not running\", which sent an agent looking for a Simulator.app that Xcode 27 does not ship. It now names the app this Mac has, says how to open it (`open -b com.apple.dt.Devices`, then select the device in its sidebar), and warns that quitting DeviceHub shuts every booted simulator down.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
