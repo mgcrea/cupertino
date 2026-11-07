@@ -846,6 +846,25 @@ describe("list filters", () => {
     expect(listed(seeded(), { filter: { urlContains: "/api/" } }).entries).toHaveLength(3);
   });
 
+  /*
+   * fetch("data:…;base64,…") is the usual way to turn base64 into a Blob, and
+   * its URL is the whole payload: one 4 MiB URL made a 4.19M-character list.
+   * A long one is listed as its header and its length; the filter still reads
+   * the whole of it, and network_get still returns the body.
+   */
+  it("summarises a long data: URL, and still filters on the whole of it", () => {
+    const t = tab();
+    t.start();
+    t.request({ url: `data:image/png;base64,${"A".repeat(5000)}MARK` });
+    t.request({ url: "data:,hi" });
+    const entries = listed(t).entries;
+    expect(entries[0]!.url).toBe("data:image/png;base64,… (5026 chars)");
+    expect(entries[1]!.url).toBe("data:,hi");
+    const found = listed(t, { filter: { urlContains: "MARK" } }).entries;
+    expect(found).toHaveLength(1);
+    expect(found[0]!.url).toBe("data:image/png;base64,… (5026 chars)");
+  });
+
   it("kind", () => {
     const t = seeded();
     expect(listed(t, { filter: { kind: "console" } }).entries.map((e) => e.message)).toEqual([

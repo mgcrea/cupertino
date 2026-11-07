@@ -217,7 +217,13 @@ export const registerNetworkTools = (
       inputSchema: z.object({
         url: urlArg,
         kind: z.enum(["fetch", "xhr", "console", "resource"]).optional(),
-        urlContains: z.string().optional().describe("Keep entries whose URL contains this text."),
+        urlContains: z
+          .string()
+          .optional()
+          .describe(
+            "Keep entries whose URL contains this text. A long `data:` URL is listed as its " +
+              "header and length, but matched here as a whole.",
+          ),
         method: z.string().optional().describe('An HTTP method, like "POST". Any case.'),
         status: statusArg.optional(),
         failed: z

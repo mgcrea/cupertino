@@ -612,6 +612,23 @@
       : null;
   }
 
+  /**
+   * A `data:` URL is its whole payload: fetch("data:…;base64,…") is the usual
+   * way to turn base64 into a Blob, and one 4 MiB URL made a 4.19M-character
+   * list. Past this length one is shown as its header and its length. The
+   * record keeps it whole, the filter reads it whole, and network_get still
+   * returns the body.
+   */
+  const DATA_URL_SHOWN = 256;
+
+  function shownUrl(url) {
+    if (typeof url !== "string" || url.length <= DATA_URL_SHOWN) return url;
+    if (url.slice(0, 5).toLowerCase() !== "data:") return url;
+    const comma = url.indexOf(",");
+    const header = comma === -1 || comma > 200 ? url.slice(0, 200) : url.slice(0, comma + 1);
+    return header + "… (" + url.length + " chars)";
+  }
+
   /** The list's view of an entry. Metadata only, never a body. */
   function view(e) {
     const r = e.rec;
@@ -632,7 +649,7 @@
         seq: e.seq,
         kind: "resource",
         method: null,
-        url: r.url,
+        url: shownUrl(r.url),
         status: r.status,
         statusText: null,
         ok: r.status == null ? null : r.status >= 200 && r.status < 300,
@@ -652,7 +669,7 @@
       seq: e.seq,
       kind: e.kind,
       method: r.method,
-      url: r.url,
+      url: shownUrl(r.url),
       status: r.status,
       statusText: r.statusText,
       // `Response.ok`'s meaning. Null while in flight: not yet either.
@@ -682,12 +699,14 @@
   /**
    * Every filter narrows. A filter on something an entry does not have — a
    * status on a console line, a method on a resource-timing entry — leaves
-   * that entry out rather than letting it through by default.
+   * that entry out rather than letting it through by default. `urlContains`
+   * reads the URL as recorded, whole, not as `view` shows it.
    */
-  function matches(v, f) {
+  function matches(v, f, e) {
     if (typeof f.kind === "string" && f.kind && v.kind !== f.kind) return false;
     if (typeof f.urlContains === "string" && f.urlContains) {
-      if (typeof v.url !== "string" || v.url.indexOf(f.urlContains) === -1) return false;
+      const url = e && e.kind !== "console" ? e.rec.url : v.url;
+      if (typeof url !== "string" || url.indexOf(f.urlContains) === -1) return false;
     }
     if (typeof f.method === "string" && f.method) {
       if (v.method !== f.method.toUpperCase()) return false;
@@ -1097,7 +1116,7 @@
     for (const e of entries) {
       if (e.seq <= after) continue;
       const v = view(e);
-      if (!matches(v, filter)) continue;
+      if (!matches(v, filter, e)) continue;
       if (out.length === limit) {
         next = out[out.length - 1].id;
         break;
