@@ -356,6 +356,23 @@ export const SEND_MESSAGE = script(
   }
 
   if (p.sendNow) {
+    // Read back right before the send, after everything that touched the
+    // window: a file Mail took without throwing and never attached would
+    // otherwise go out missing. A count Mail will not give is not a shortfall.
+    var wanted = (p.attachments || []).length;
+    var held = wanted ? prop(function () { return msg.content.attachments.length; }, null) : 0;
+    if (held !== null && held < wanted) {
+      return ok({
+        sent: false, draft: true, degraded: true, capability: "attachments",
+        subjectLength: String(p.subject || "").length,
+        recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length,
+        attachments: held, attachmentsRequested: wanted,
+        note:
+          "Mail holds " + held + " of the " + wanted + " files asked for, so the message was " +
+          "NOT sent. It is open in Mail as a draft: attach the missing files there and send " +
+          "it, or close it without saving and try again."
+      });
+    }
     msg.send();
     return ok({ sent: true, unquoted: unquoted, subjectLength: String(p.subject || "").length,
                 recipientCount: (p.to || []).length + (p.cc || []).length + (p.bcc || []).length,

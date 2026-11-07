@@ -26,6 +26,8 @@ type Behaviour = {
   geometryUnreadable?: boolean;
   /** Mail refuses the file, as it would one it cannot read. */
   attachFails?: boolean;
+  /** Mail takes this path without throwing, and never attaches it. */
+  dropsAttachment?: string;
 };
 
 const START_SIZE = [820, 600];
@@ -41,6 +43,7 @@ const runScript = (params: Record<string, unknown> = {}, behaviour: Behaviour = 
     menuThrows = false,
     geometryUnreadable = false,
     attachFails = false,
+    dropsAttachment,
   } = behaviour;
 
   const state = {
@@ -161,6 +164,8 @@ const runScript = (params: Record<string, unknown> = {}, behaviour: Behaviour = 
       attachments: {
         push: (a: { fileName: { path: string } }) => {
           if (attachFails) throw new Error("-10000 AppleEvent handler failed");
+          // Taken without a word and never attached, which nothing has measured Mail not doing.
+          if (a.fileName.path === dropsAttachment) return;
           state.attached.push({ path: a.fileName.path, sendsBefore: state.sends });
         },
         get length() {
@@ -303,5 +308,30 @@ describe("attachments on a new message", () => {
     expect(envelope.error.code).toBe("ATTACHMENT_FAILED");
     expect(state.sends).toBe(0);
     expect(state.closes).toBe(1);
+  });
+
+  /*
+   * The send relied on Mail throwing for a file it would not take, which was
+   * only ever measured for files it took. So the count is read back before the
+   * send, and a message holding fewer files than it was asked to carry is not
+   * sent: it stays open as a draft, and the result says how many are missing.
+   */
+  it("does not send when Mail holds fewer files than were asked for", () => {
+    const { envelope, state } = runScript(
+      { attachments: ["/tmp/a.pdf", "/tmp/b.png"], sendNow: true },
+      { dropsAttachment: "/tmp/b.png" },
+    );
+    expect(envelope.ok).toBe(true);
+    expect(state.sends).toBe(0);
+    expect(envelope.data).toMatchObject({
+      sent: false,
+      draft: true,
+      degraded: true,
+      capability: "attachments",
+      attachments: 1,
+      attachmentsRequested: 2,
+    });
+    expect(envelope.data.note).toMatch(/1 of the 2 files/);
+    expect(envelope.data.note).toMatch(/NOT sent/);
   });
 });
