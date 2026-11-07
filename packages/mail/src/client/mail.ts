@@ -514,9 +514,18 @@ export class AppleMailClient {
       return { ...recent, source: "applescript", fallbackReason: scope.reason };
     }
     const lookup = await this.mailboxLookup();
+    // Each ref names the mailbox listed, as the Apple Events lane's did, not
+    // the one the row lives in: a Gmail INBOX holds its messages by label, and
+    // a move or delete by an All Mail ref would act on All Mail. The message's
+    // file is still found where the row lives (`#lookupMessageFile`).
     const messages = scope.index
       .search({ mailboxRowids: scope.rowids, limit, offset: 0 })
-      .map((r) => this.#rowToSummary(r, lookup))
+      .map((r) => {
+        const summary = this.#rowToSummary(r, lookup);
+        return summary
+          ? { ...summary, ref: encodeRef({ accountUuid: account.id, mailbox: name, id: r.rowid }) }
+          : null;
+      })
       .filter((m): m is MessageSummary => m !== null);
     const { total } = scope.index.count({ mailboxRowids: scope.rowids });
     return { mailbox: name, total, messages, source: "index" };

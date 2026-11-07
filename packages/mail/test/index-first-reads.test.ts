@@ -7,7 +7,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OsascriptRunner } from "../src/client/osascript.js";
-import { encodeRef } from "../src/client/ref.js";
+import { decodeRef, encodeRef } from "../src/client/ref.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
@@ -359,6 +359,24 @@ describe("list_messages", () => {
       "Deploy failed",
       "Standup notes",
     ]);
+  });
+
+  /*
+   * Each ref names the mailbox listed, as the Apple Events lane's did, not the
+   * one the row lives in (All Mail): a move or delete by that ref then acts on
+   * the message in INBOX, which is what the caller saw. Its file is still found
+   * under All Mail.
+   */
+  it("names the Gmail mailbox it listed in each ref, and still reads the file", async () => {
+    layDownGmailMessage(106);
+    const { call } = await connect();
+    const payload = await call("apple_mail_list_messages", { account: "Google", mailbox: "INBOX" });
+    const refs = payload.messages.map((m: { ref: string }) => decodeRef(m.ref));
+
+    expect(refs.map((r: { mailbox: string }) => r.mailbox)).toEqual(["INBOX", "INBOX"]);
+    expect(refs.map((r: { id: number }) => r.id)).toEqual([106, 105]);
+    const attachments = await call("apple_mail_list_attachments", { ref: payload.messages[0].ref });
+    expect(attachments).toMatchObject({ source: "emlx" });
   });
 
   it("is not held to the Apple Events cap", async () => {
