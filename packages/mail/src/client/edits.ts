@@ -163,8 +163,11 @@ const BLOCKS = new Set([
 type Token =
   /** Markup with no text of its own: a tag, a comment, a script or style block. */
   | { kind: "markup"; raw: string; block: boolean }
-  /** A run of text between tags, with its entities decoded. */
-  | { kind: "text"; raw: string; text: string };
+  /**
+   * A run of text between tags, with its entities decoded. `at[i]` is where in `raw` the
+   * source of `text[i]` starts, and `at[text.length]` is `raw.length`.
+   */
+  | { kind: "text"; raw: string; text: string; at: number[] };
 
 const NAMED: Record<string, string> = {
   amp: "&",
@@ -175,19 +178,51 @@ const NAMED: Record<string, string> = {
   nbsp: " ",
 };
 
-const decodeEntities = (raw: string): string =>
-  raw.replaceAll(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, name: string) => {
-    if (name[0] === "#") {
-      const code =
-        name[1] === "x" || name[1] === "X"
-          ? Number.parseInt(name.slice(2), 16)
-          : Number.parseInt(name.slice(1), 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
-        ? String.fromCodePoint(code)
-        : whole;
+const decodeEntity = (whole: string, name: string): string => {
+  if (name[0] === "#") {
+    const code =
+      name[1] === "x" || name[1] === "X"
+        ? Number.parseInt(name.slice(2), 16)
+        : Number.parseInt(name.slice(1), 10);
+    return Number.isFinite(code) && code > 0 && code <= 0x10ffff
+      ? String.fromCodePoint(code)
+      : whole;
+  }
+  return NAMED[name.toLowerCase()] ?? whole;
+};
+
+/**
+ * A run's text with its entities decoded, and where each of its UTF-16 units came from in the
+ * run, so an edit can be spliced into the source and the rest of the run kept as it was.
+ */
+const decodeEntities = (raw: string): { text: string; at: number[] } => {
+  let text = "";
+  const at: number[] = [];
+  let cursor = 0;
+  const copy = (end: number) => {
+    for (; cursor < end; cursor += 1) {
+      text += raw[cursor];
+      at.push(cursor);
     }
-    return NAMED[name.toLowerCase()] ?? whole;
-  });
+  };
+  for (const entity of raw.matchAll(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi)) {
+    const whole = entity[0];
+    const decoded = decodeEntity(whole, entity[1] as string);
+    copy(entity.index);
+    if (decoded === whole) {
+      copy(entity.index + whole.length);
+      continue;
+    }
+    // Every unit of a decoded entity maps to its `&`; a match never ends inside one, since
+    // matches are whole graphemes.
+    for (let unit = 0; unit < decoded.length; unit += 1) at.push(entity.index);
+    text += decoded;
+    cursor = entity.index + whole.length;
+  }
+  copy(raw.length);
+  at.push(raw.length);
+  return { text, at };
+};
 
 const encodeText = (text: string): string =>
   text
@@ -215,7 +250,7 @@ const tokenize = (html: string): Token[] => {
   const tokens: Token[] = [];
   let text = "";
   const flush = () => {
-    if (text) tokens.push({ kind: "text", raw: text, text: decodeEntities(text) });
+    if (text) tokens.push({ kind: "text", raw: text, ...decodeEntities(text) });
     text = "";
   };
   let at = 0;
@@ -307,18 +342,21 @@ export const applyHtmlEdits = (edits: Edit[], html: string): HtmlMatched => {
     });
   }
 
-  // Each edited run re-encoded from its own text, left to right, with the
-  // replacements between; matches never overlap (`applyEdits` refuses that).
+  // Each edited run is its own source with the encoded replacements spliced in, left to
+  // right; matches never overlap (`applyEdits` refuses that). What lies between them is copied
+  // from the source, never re-encoded from the decoded text: an entity this file does not
+  // decode (`&eacute;`, `&mdash;`) reads as literal text, and re-encoding it would send the
+  // recipient `&amp;eacute;`.
   const edited = new Map<number, string>();
-  for (const at of new Set(placed.map((p) => p.token))) {
-    const text = (tokens[at] as Extract<Token, { kind: "text" }>).text;
-    let encoded = "";
+  for (const index of new Set(placed.map((p) => p.token))) {
+    const { raw, at } = tokens[index] as Extract<Token, { kind: "text" }>;
+    let spliced = "";
     let cursor = 0;
-    for (const p of placed.filter((q) => q.token === at).toSorted((a, b) => a.start - b.start)) {
-      encoded += encodeText(text.slice(cursor, p.start)) + encodeReplacement(p.replace);
+    for (const p of placed.filter((q) => q.token === index).toSorted((a, b) => a.start - b.start)) {
+      spliced += raw.slice(at[cursor], at[p.start]) + encodeReplacement(p.replace);
       cursor = p.end;
     }
-    edited.set(at, encoded + encodeText(text.slice(cursor)));
+    edited.set(index, spliced + raw.slice(at[cursor]));
   }
   const out = tokens.map((token, at) => edited.get(at) ?? token.raw).join("");
   return { kind: "ok", html: out, text: htmlText(out) };

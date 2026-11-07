@@ -166,4 +166,18 @@ describe("applyHtmlEdits", () => {
     );
     expect(edited).toMatchObject({ kind: "ok", html: "<div>A<br>A beta G</div>" });
   });
+
+  it("keeps the rest of an edited run byte for byte, entities it does not decode included", () => {
+    // A draft from Outlook and the like: `&eacute;` and `&mdash;` are not among the entities
+    // decoded, so they read as literal text, and re-encoding that text would turn them into
+    // `&amp;eacute;`, which the recipient sees as "Caf&eacute;".
+    const edited = applyHtmlEdits(
+      [{ find: "at 5", replace: "at 6" }],
+      "<div>Caf&eacute; at 5 &mdash; see you&#8217;re &nbsp;here</div>",
+    );
+    expect(edited).toMatchObject({
+      kind: "ok",
+      html: "<div>Caf&eacute; at 6 &mdash; see you&#8217;re &nbsp;here</div>",
+    });
+  });
 });

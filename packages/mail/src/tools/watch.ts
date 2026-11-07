@@ -193,12 +193,32 @@ export class MailWatchService {
     return this.#accounts !== undefined;
   }
 
+  /** True while `onTrigger` ticks, so `source.since` can tell a tick from a read. */
+  #ticking = false;
+
   /** What `createWatches` is given. Delegates to the source `ensure()` builds. */
   readonly source: ArrivalSource<MailArrival> = {
     head: () => this.#ready().head(),
     // Nothing is scanned before the first real lookup: no rows, so the cursor
     // stays where it was and a read or tick later sees these rows properly.
-    since: (after, limit) => (this.#loaded ? this.#ready().since(after, limit) : []),
+    since: (after, limit) => {
+      if (!this.#loaded) return [];
+      const inner = this.#ready();
+      if (this.#ticking || this.#events) return inner.since(after, limit);
+      // A read, which a client may make before the trigger that refreshes the
+      // lookup has run. It holds back at a row in a mailbox created since, as a
+      // tick's first pass does, so the cursor it returns stays below that row:
+      // judged with this lookup the row would be excluded, and a client
+      // resuming from the cursor would never see it. The hold is the read's
+      // own and is dropped, so `onTrigger` does not take it for its tick's.
+      inner.holdNewMailboxes = true;
+      try {
+        return inner.since(after, limit);
+      } finally {
+        inner.holdNewMailboxes = false;
+        inner.takeHeld();
+      }
+    },
   };
 
   constructor(opts: MailWatchServiceOptions) {
@@ -440,16 +460,32 @@ export class MailWatchService {
 
     const inner = this.#ready();
     inner.holdNewMailboxes = true;
+    this.#ticking = true;
     try {
       tick();
     } finally {
       inner.holdNewMailboxes = false;
+      this.#ticking = false;
     }
-    if (inner.takeHeld() === null) return;
+    const held = inner.takeHeld();
+    if (held === null) return;
+    // Held once: whatever the refresh says, the row has been asked about, so a
+    // read judges it from now on, as the second tick below does, rather than
+    // holding below it for as long as Mail cannot answer. A later row of the
+    // mailbox can still be held.
+    this.#heldThrough.set(
+      held.mailbox,
+      Math.max(held.rowid, this.#heldThrough.get(held.mailbox) ?? 0),
+    );
     // Refreshed or not, tick again with nothing held: a mailbox still unknown
     // after asking is excluded, as it would have been before.
-    await this.#refreshSoftly();
-    tick();
+    if (!(await this.#refreshSoftly())) this.#rebuild();
+    this.#ticking = true;
+    try {
+      tick();
+    } finally {
+      this.#ticking = false;
+    }
   }
 
   /**

@@ -157,4 +157,40 @@ describe("the account cache", () => {
     mail.answer([account("iCloud")]);
     await expect(resolved).rejects.toThrow(/No account "Nope"/);
   });
+
+  /*
+   * The same cost for a mailbox: one created in Mail, or synced from another
+   * device, since the list was cached. Without a fresh read, the first
+   * list_messages or count_messages after a pause refuses it.
+   */
+  it("reads the list again before refusing a mailbox it does not know", async () => {
+    const { map, mail, prime } = setup();
+    await prime([account("iCloud")]);
+    const [cached] = await map.accounts();
+
+    const resolved = map.resolveMailbox(cached as MailAccount, "Receipts");
+    await vi.waitFor(() => expect(mail.calls()).toBe(2));
+    mail.answer([account("iCloud", ["INBOX", "Receipts"])]);
+    expect(await resolved).toBe("Receipts");
+  });
+
+  it("answers a mailbox the cached list has without asking Mail", async () => {
+    const { map, mail, prime } = setup();
+    await prime([account("iCloud", ["INBOX", "Receipts"])]);
+    const [cached] = await map.accounts();
+
+    expect(await map.resolveMailbox(cached as MailAccount, "receipts")).toBe("Receipts");
+    expect(mail.calls()).toBe(1);
+  });
+
+  it("still refuses a mailbox the fresh list does not have either", async () => {
+    const { map, mail, prime } = setup();
+    await prime([account("iCloud")]);
+    const [cached] = await map.accounts();
+
+    const resolved = map.resolveMailbox(cached as MailAccount, "Nope");
+    await vi.waitFor(() => expect(mail.calls()).toBe(2));
+    mail.answer([account("iCloud")]);
+    await expect(resolved).rejects.toThrow(/No mailbox "Nope" in account "iCloud"/);
+  });
 });

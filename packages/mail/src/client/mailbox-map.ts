@@ -137,6 +137,24 @@ export class MailboxMap {
   }
 
   /**
+   * `resolveMailboxName` for a name a caller asked for, with `resolveAccount`'s
+   * second chance: the account came out of a list that can be stale by design,
+   * so a name it lacks earns one fresh read before it is refused. A mailbox
+   * created in Mail, or synced from another device, since that list was taken
+   * is then found on the first call rather than the one after.
+   */
+  async resolveMailbox(account: MailAccount, wanted: string): Promise<string> {
+    try {
+      return this.resolveMailboxName(account, wanted);
+    } catch (error) {
+      if (!(error instanceof PreconditionError)) throw error;
+      const fresh = (await this.accounts(true)).find((a) => a.id === account.id);
+      if (!fresh) throw error;
+      return this.resolveMailboxName(fresh, wanted);
+    }
+  }
+
+  /**
    * Map an Envelope Index `mailboxes.url` onto a scriptable account + mailbox.
    * The URL host is the account UUID (verified against live Mail), so this join
    * is exact rather than a heuristic on display names.

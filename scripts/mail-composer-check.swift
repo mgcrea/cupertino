@@ -79,6 +79,9 @@ final class EditFake: ComposerWindow {
   var caretInQuote: Bool? = false
   /// Answers for the guard one call at a time, before `caretInQuote` takes over.
   var caretScript: [Bool?] = []
+  /// A caret at the very end of the own text resolves inside the quote: the own-end marker
+  /// sitting in a reply's first quoted block, which a whole-own selection does not reach.
+  var endInQuote = false
   /// Pastes after this many are refused as the window not taking the keyboard.
   var refusesPasteAfter: Int?
   /// A text paste lands at the start of the first quoted block instead of over
@@ -215,6 +218,9 @@ final class EditFake: ComposerWindow {
   func selectionReachesQuote() throws -> Bool? {
     if shown !== self { return try shown.selectionReachesQuote() }
     quoteChecks += 1
+    if endInQuote, let at = selection, at.isEmpty, at.lowerBound == own.utf16.count, !own.isEmpty {
+      return true
+    }
     return caretScript.isEmpty ? caretInQuote : caretScript.removeFirst()
   }
 
@@ -1845,11 +1851,11 @@ struct MailComposerCheck {
       // The guard passes for the body, before and at its paste, then trips at
       // the caret the files go to.
       let fake = EditFake(own: "Old")
-      fake.caretScript = [false, false, true]
+      fake.caretScript = [false, false, false, true]
       let (result, board, front) = run(fake, Request(body: "New", files: [tempFile("q2.pdf")]))
       check(
         "the quote guard tripping only at the files, after the body, refuses as selection",
-        capability(result) == "selection" && fake.quoteChecks == 3 && fake.saves == 0)
+        capability(result) == "selection" && fake.quoteChecks == 4 && fake.saves == 0)
       check(
         "saying the body was verified and the files were not pasted",
         reason(result).contains("inside the quoted original")
@@ -1859,6 +1865,29 @@ struct MailComposerCheck {
       check(
         "with only the body pasted, board and front handed back",
         fake.pasted == [.text("New")] && handedBack(fake, board, front))
+    }
+
+    // The caret the files go to is checked before anything is pasted, with a body or edits as
+    // without them: refused there, nothing is in the window yet. Checked only at step 11, the
+    // body was already pasted, and autosaved, when the files' caret turned out to be in the
+    // quote.
+    do {
+      let fake = EditFake(own: "Old")
+      fake.endInQuote = true
+      let (result, board, front) = run(fake, Request(body: "New", files: [tempFile("q3.pdf")]))
+      check(
+        "a body with files whose end caret is in the quote is refused before any paste",
+        capability(result) == "selection" && untouched(fake, board, front) && fake.own == "Old")
+      let edits = EditFake(own: "Old text")
+      edits.endInQuote = true
+      let (edited, editBoard, editFront) = run(
+        edits,
+        Request(
+          edits: [MailComposerText.Edit(find: "Old", replace: "New")], files: [tempFile("q4.pdf")]))
+      check(
+        "and so are edits with files",
+        capability(edited) == "selection" && untouched(edits, editBoard, editFront)
+          && edits.own == "Old text")
     }
 
     // The walk the live guard takes from a caret's element up to the body.

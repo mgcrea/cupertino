@@ -584,10 +584,11 @@ const DRAFT_PREFLIGHT = `
         "those are written by Mail's own reply command, which needs the original message. " +
         "Recreating it would produce a draft that looks right and starts a NEW thread.",
       hint:
-        "This draft's composer window is NOT open in Mail — if it were, the body would have been " +
-        "edited in place and this refusal would not have happened. Either reopen the draft in " +
-        "Mail and edit it there, or delete it and start again with apple_mail_reply_to_message, " +
-        "which threads correctly and leaves the composer open for further revisions."
+        "Editing a reply in its open composer window takes the Mail server run from " +
+        "Cupertino.app, and this one is not, so no window was looked for. Run it from " +
+        "Cupertino.app, or edit the draft in Mail directly, or delete it and start again with " +
+        "apple_mail_reply_to_message, which threads correctly and leaves the composer open for " +
+        "further revisions."
     });
   }
   if (attachments > 0) {

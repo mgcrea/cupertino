@@ -719,21 +719,34 @@ struct PromptWindow {
   }
 
   /// "Script, 3 lines, 120 bytes": a long script says so before anyone scrolls.
+  ///
+  /// Lines are counted as the script's view draws them, at every line break a `Character`
+  /// reports, so a CR, CRLF, U+2028 or U+2029 counts the line it starts.
   static func caption(_ name: String, _ text: String) -> String {
     let lines =
-      text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
+      text.isEmpty
+      ? 0 : text.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline).count
     return "\(name), \(lines) \(lines == 1 ? "line" : "lines"), \(text.utf8.count) bytes"
   }
 
   /// Format and control characters other than tab and newline: bidirectional overrides,
   /// zero-width spaces and the like, which change how a script reads without changing how it
   /// runs.
+  ///
+  /// Also a line break the view draws and zsh and bash do not read as one: a CR not followed
+  /// by a newline, U+2028 and U+2029. Without the warning, `ls\r# ; curl … | sh` draws as `ls`
+  /// over a comment, while zsh, for which `#` inside a word starts nothing, runs the `curl`.
+  /// CRLF is ordinary and not warned about: the view and the shell both end the line at its LF.
   static func hidesCharacters(_ text: String) -> Bool {
-    text.unicodeScalars.contains { scalar in
+    let scalars = Array(text.unicodeScalars)
+    return scalars.indices.contains { index in
+      let scalar = scalars[index]
       switch scalar.properties.generalCategory {
-      case .format: true
-      case .control: scalar != "\n" && scalar != "\t" && scalar != "\r"
-      default: false
+      case .format, .lineSeparator, .paragraphSeparator: return true
+      case .control:
+        if scalar == "\r" { return index + 1 == scalars.count || scalars[index + 1] != "\n" }
+        return scalar != "\n" && scalar != "\t"
+      default: return false
       }
     }
   }
