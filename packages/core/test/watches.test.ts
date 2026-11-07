@@ -183,6 +183,29 @@ describe("WatchRegistry.tick", () => {
     expect(onUpdate).toHaveBeenCalledTimes(1);
   });
 
+  /*
+   * A rebuilt store whose cursors reach past the mark looks, to `tick`, like
+   * one where everything above the mark just arrived. Only the source can tell
+   * the file changed, so it says so with `restart`: every watch starts over at
+   * the new head, and nothing the new file already held is reported.
+   */
+  it("restarts every watch at the head of a store replaced past the mark", () => {
+    const { registry, push, rows, onUpdate } = setup();
+    for (let i = 0; i < 10; i++) push("noise@x.com");
+    const watch = registry.add(jo);
+    rows.length = 0;
+    for (let i = 0; i < 25; i++) push("jo@acme.com");
+    registry.restart();
+    expect(registry.mark).toBe(25);
+    registry.tick();
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(registry.read(watch.id)).toMatchObject({ cursor: 25, messages: [] });
+    push("jo@acme.com");
+    registry.tick();
+    expect(onUpdate).toHaveBeenCalledTimes(1);
+    expect(registry.read(watch.id)?.messages.map((m) => m.cursor)).toEqual([26]);
+  });
+
   it("fires once for a match in the second scan batch", () => {
     const { registry, push, onUpdate } = setup();
     registry.add(jo);

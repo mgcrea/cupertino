@@ -378,6 +378,40 @@ describe("a store replaced underneath a watch", () => {
     registry.close();
     service.close();
   });
+
+  it("restarts at the new file's head when it reaches past the old mark", async () => {
+    const fx = makeStore();
+    for (let rowid = 1; rowid <= 50; rowid++) addMessage(fx.db, { rowid, handle: 2 });
+    const config = loadConfig({ APPLE_MESSAGES_STORE: fx.path });
+    const client = new AppleMessagesClient({ config, home: "/nonexistent-home", contacts: null });
+    const service = new MessagesWatchService({ client });
+    const onUpdate = vi.fn();
+    const registry = new WatchRegistry({ surface: "messages", source: service.source, onUpdate });
+    service.bind(registry);
+    const { watch: made } = await service.add({ from: ["+33612345678"] });
+
+    // Rebuilt with more rows than the old file had: renumbered, not new.
+    const next = `${fx.path}.rebuilt`;
+    const rebuilt = seedStore(next);
+    for (let rowid = 1; rowid <= 80; rowid++) addMessage(rebuilt, { rowid, handle: 1 });
+    rebuilt.close();
+    renameSync(next, fx.path);
+
+    service.onTrigger(() => registry.tick());
+    expect(onUpdate).not.toHaveBeenCalled();
+    expect(registry.read(made.id)).toMatchObject({ cursor: 80, messages: [] });
+
+    const live = new DatabaseSync(fx.path);
+    cleanups.push(() => live.close());
+    addMessage(live, { rowid: 81, handle: 1 });
+    service.onTrigger(() => registry.tick());
+    expect(onUpdate).toHaveBeenCalledExactlyOnceWith(made.uri);
+    expect(registry.read(made.id)?.messages.map((m) => m.id)).toEqual([
+      encodeMessageRef("guid-81"),
+    ]);
+    registry.close();
+    service.close();
+  });
 });
 
 describe("apple_messages_unwatch", () => {

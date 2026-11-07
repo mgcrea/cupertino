@@ -509,4 +509,36 @@ describe("MailWatchService: an index replaced underneath a watch", () => {
     // Search keeps the handle it had: only the watch reopened.
     expect(await w.client.index()).toBe(searchIndex);
   });
+
+  it("restarts at the new file's head when it reaches past the old mark", async () => {
+    const fx = copyIndex();
+    for (let rowid = 1; rowid <= 50; rowid++) addMessage(fx.db, rowid, 1);
+    const w = serviceOn(fx.path);
+    const { watch } = await w.service.add(sam, undefined);
+
+    // Rebuilt with more rows than the old file had: renumbered, not new.
+    const next = `${fx.path}.rebuilt`;
+    const rebuilt = new DatabaseSync(next);
+    rebuilt.exec(DDL);
+    rebuilt.exec(`
+      INSERT INTO mailboxes (ROWID, url, total_count, unread_count) VALUES
+        (1, 'imap://${UUID}/INBOX', 0, 0);
+      INSERT INTO subjects (ROWID, subject) VALUES (1, 'Hello');
+      INSERT INTO addresses (ROWID, address, comment) VALUES (1, 'sam@example.com', 'Sam');
+    `);
+    for (let rowid = 1; rowid <= 80; rowid++) addMessage(rebuilt, rowid, 1);
+    rebuilt.close();
+    renameSync(next, fx.path);
+
+    await w.trigger();
+    expect(w.onUpdate).not.toHaveBeenCalled();
+    expect(w.registry.read(watch.id)).toMatchObject({ cursor: 80, messages: [] });
+
+    const live = new DatabaseSync(fx.path);
+    cleanups.push(() => live.close());
+    addMessage(live, 81, 1);
+    await w.trigger();
+    expect(w.onUpdate).toHaveBeenCalledExactlyOnceWith(watch.uri);
+    expect(w.registry.read(watch.id)?.messages.map((m) => decodeRef(m.ref).id)).toEqual([81]);
+  });
 });
