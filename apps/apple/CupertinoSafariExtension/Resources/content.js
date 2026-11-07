@@ -212,11 +212,38 @@
 
   const VISIBLE_MS = 1000;
   const HIDDEN_MS = 10000;
+  // How long one message to the background may take before it counts as lost.
+  // Safari can drop a content script's message when the worker is terminated
+  // or still starting, and the promise then never settles: measured
+  // 2026-11-07, a tab stopped polling for 1 h 43 min, visible the whole time,
+  // until Safari happened to restart the worker. A native round trip takes
+  // about a millisecond, so this only has to outlast a cold start, and it is
+  // longer than the background's own limit on the native call, so the worker
+  // gives its answer before the page gives up on it.
+  const WAIT_MS = 10000;
   let stopped = false;
   // Whether a poll is in flight or scheduled. A stopped pump's last timer can
   // still fire after the page comes back from the back/forward cache, so a
   // restart checks this rather than start a second loop beside it.
   let alive = false;
+
+  /**
+   * `browser.runtime.sendMessage`, given up on after `WAIT_MS`.
+   *
+   * Rejects when the wait runs out, so the caller treats it like any failed
+   * send. A reply that turns up later is dropped with the race: the commands of
+   * a poll the pump has already given up on are never run, because a click
+   * running long after its caller timed out is worse than one that never ran.
+   */
+  function send(message) {
+    let timer;
+    return Promise.race([
+      browser.runtime.sendMessage(message),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("no answer from the background")), WAIT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+  }
 
   async function pump() {
     if (stopped) {
@@ -228,7 +255,7 @@
     // sequence (click, then read), so the next one is probably already queued.
     let gotWork = false;
     try {
-      const response = await browser.runtime.sendMessage({
+      const response = await send({
         kind: "poll",
         url: location.href,
         // The handler stamps a heartbeat per origin from this, which is how the
@@ -252,12 +279,17 @@
         const result = window.cupertinoRunCommand
           ? window.cupertinoRunCommand(command)
           : { ok: false, error: "The action runner did not load on this page." };
-        await browser.runtime.sendMessage({
-          kind: "result",
-          id: command.id,
-          extensionVersion: manifestVersion(),
-          ...result,
-        });
+        try {
+          await send({
+            kind: "result",
+            id: command.id,
+            extensionVersion: manifestVersion(),
+            ...result,
+          });
+        } catch {
+          // A result that could not be filed times out on the server, which
+          // says nothing answered. The next command still runs.
+        }
       }
     } catch {
       // The background worker may be asleep, restarting, or gone. A failed poll

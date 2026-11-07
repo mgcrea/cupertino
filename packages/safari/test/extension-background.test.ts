@@ -41,7 +41,22 @@ function load(
   const messageListeners: ((message: unknown) => Promise<unknown>)[] = [];
   const errors: unknown[][] = [];
   const hook = (name: string) => ({ addListener: () => void lifecycle.push(name) });
+  // Timers the test fires by hand, so a wait that never ends can be run out.
+  const timers: Array<{ fn: () => void; live: boolean }> = [];
+  const expire = () => {
+    for (const timer of timers) {
+      if (!timer.live) continue;
+      timer.live = false;
+      timer.fn();
+    }
+  };
+  const liveTimers = () => timers.filter((t) => t.live).length;
   const context = createContext({
+    setTimeout: (fn: () => void) => timers.push({ fn, live: true }),
+    clearTimeout: (id: number) => {
+      const timer = timers[id - 1];
+      if (timer) timer.live = false;
+    },
     browser: {
       runtime: {
         onMessage: {
@@ -60,7 +75,16 @@ function load(
   });
   runInContext(SOURCE, context);
   const send = (message: unknown) => messageListeners[0]!(message);
-  return { sendNativeMessage, registerContentScripts, lifecycle, messageListeners, errors, send };
+  return {
+    sendNativeMessage,
+    registerContentScripts,
+    lifecycle,
+    messageListeners,
+    errors,
+    send,
+    expire,
+    liveTimers,
+  };
 }
 
 describe("background relay", () => {
@@ -102,6 +126,26 @@ describe("background relay", () => {
     });
     await expect(send({ kind: "poll" })).resolves.toBeUndefined();
     expect(errors).toHaveLength(1);
+  });
+
+  /**
+   * A native call that never comes back would hold the page's message open
+   * with it. The worker gives up first and answers undefined, which the page
+   * reads as a failed poll and retries.
+   */
+  it("answers undefined when native never replies", async () => {
+    const { send, errors, expire } = load(() => new Promise(() => {}));
+    const answer = send({ kind: "poll" });
+    await Promise.resolve();
+    expire();
+    await expect(answer).resolves.toBeUndefined();
+    expect(errors).toHaveLength(1);
+  });
+
+  it("leaves no timer behind once native has replied", async () => {
+    const { send, liveTimers } = load();
+    await send({ kind: "poll" });
+    expect(liveTimers()).toBe(0);
   });
 });
 
