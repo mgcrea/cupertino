@@ -22,8 +22,12 @@ const SOURCE = readFileSync(
   "utf8",
 );
 
+// Enough microtask turns for a poll, its bounded wait and the reschedule.
+/** A message Safari lost: its promise neither resolves nor rejects. */
+const never = () => new Promise<never>(() => {});
+
 const flush = async () => {
-  for (let i = 0; i < 10; i++) await Promise.resolve();
+  for (let i = 0; i < 50; i++) await Promise.resolve();
 };
 
 describe("content.js pump", () => {
@@ -196,5 +200,164 @@ describe("content.js pump", () => {
     page.fire("pageshow", { persisted: false });
     await flush();
     expect(page.polls()).toBe(1);
+  });
+});
+
+/**
+ * A message that never settles. Safari can lose a content script's
+ * `sendMessage` when the background worker is terminated or starting at the
+ * wrong moment, and the promise then neither resolves nor rejects. Measured
+ * 2026-11-07: polling stopped for up to 1 h 43 min with the page visible, and
+ * came back only when Safari restarted the worker or the page reloaded. An
+ * unbounded await there stops the tab's loop for good, so every wait on the
+ * background is bounded, and a wait that runs out counts as a failed poll.
+ */
+describe("content.js pump, when a message never settles", () => {
+  type Timer = { fn: () => void; delay: number; cleared: boolean };
+
+  /**
+   * `reply` answers each message; `poll` numbers the pump's polls from 1, and
+   * is 0 for anything else. The capture block also sends and sets its own
+   * settle timers at load, so only timers set from the first poll on are the
+   * pump's waits.
+   */
+  const hangingPage = (reply: (message: { kind: string }, poll: number) => Promise<unknown>) => {
+    const timers: Timer[] = [];
+    const sent: Array<{ kind: string }> = [];
+    const ran: string[] = [];
+    let firstPollTimer = -1;
+    let pollCount = 0;
+    const context: Record<string, any> = {
+      browser: {
+        runtime: {
+          getManifest: () => ({ version: "1.0.0" }),
+          sendMessage: (message: { kind: string }) => {
+            sent.push(message);
+            if (message.kind !== "poll") return reply(message, 0);
+            pollCount += 1;
+            if (firstPollTimer < 0) firstPollTimer = timers.length;
+            return reply(message, pollCount);
+          },
+        },
+      },
+      setTimeout: (fn: () => void, delay: number) => {
+        timers.push({ fn, delay, cleared: false });
+        return timers.length;
+      },
+      clearTimeout: (id: number) => {
+        const timer = timers[id - 1];
+        if (timer) timer.cleared = true;
+      },
+      addEventListener: () => {},
+      MutationObserver: class {
+        observe() {}
+        disconnect() {}
+      },
+      document: { hidden: false, title: "", documentElement: { outerHTML: "" } },
+      history: { pushState: () => {} },
+      location: { href: "https://app.example.com/", origin: "https://app.example.com" },
+      cupertinoRunCommand: (command: { id: string }) => {
+        ran.push(command.id);
+        return { ok: true };
+      },
+    };
+    context.window = context;
+    createContext(context);
+    runInContext(SOURCE, context);
+    const isWait = (timer: Timer, index: number) =>
+      !timer.cleared &&
+      firstPollTimer >= 0 &&
+      index >= firstPollTimer &&
+      timer.fn !== context.cupertinoPumpNow;
+    /** Run out every wait the pump has pending. */
+    const expireWaits = () => {
+      timers.forEach((timer, index) => {
+        if (!isWait(timer, index)) return;
+        timer.cleared = true;
+        timer.fn();
+      });
+    };
+    const waits = () => timers.filter(isWait).length;
+    const pumpDelays = () =>
+      timers.filter((t) => !t.cleared && t.fn === context.cupertinoPumpNow).map((t) => t.delay);
+    const polls = () => pollCount;
+    return { context, expireWaits, pumpDelays, polls, ran, sent, waits };
+  };
+
+  it("polls again after a poll that never settles", async () => {
+    const page = hangingPage((_message, poll) =>
+      poll === 1 ? never() : Promise.resolve({ commands: [] }),
+    );
+    await flush();
+    expect(page.polls()).toBe(1);
+    expect(page.pumpDelays()).toEqual([]);
+
+    page.expireWaits();
+    await flush();
+    expect(page.pumpDelays()).toEqual([1000]);
+
+    page.context.cupertinoPumpNow();
+    await flush();
+    expect(page.polls()).toBe(2);
+  });
+
+  it("never runs the commands of a reply that came after its wait ran out", async () => {
+    const late: { resolve?: (value: unknown) => void } = {};
+    const page = hangingPage((_message, poll) =>
+      poll === 1
+        ? new Promise((resolve) => {
+            late.resolve = resolve;
+          })
+        : Promise.resolve({ commands: [] }),
+    );
+    await flush();
+    page.expireWaits();
+    await flush();
+
+    late.resolve?.({ commands: [{ id: "c-late" }] });
+    await flush();
+    expect(page.ran).toEqual([]);
+    expect(page.sent.filter((m) => m.kind === "result")).toEqual([]);
+  });
+
+  it("keeps polling when filing a result never settles", async () => {
+    const page = hangingPage((message) =>
+      message.kind === "poll"
+        ? Promise.resolve({ commands: [{ id: "c1" }] })
+        : message.kind === "result"
+          ? never()
+          : Promise.resolve(undefined),
+    );
+    await flush();
+    expect(page.ran).toEqual(["c1"]);
+    expect(page.pumpDelays()).toEqual([]);
+
+    page.expireWaits();
+    await flush();
+    // The poll carried work, so the next one is immediate, as after any command.
+    expect(page.pumpDelays()).toEqual([0]);
+  });
+
+  it("still runs the next command when filing a result never settles", async () => {
+    const page = hangingPage((message) =>
+      message.kind === "poll"
+        ? Promise.resolve({ commands: [{ id: "c1" }, { id: "c2" }] })
+        : message.kind === "result"
+          ? never()
+          : Promise.resolve(undefined),
+    );
+    await flush();
+    expect(page.ran).toEqual(["c1"]);
+    page.expireWaits();
+    await flush();
+    expect(page.ran).toEqual(["c1", "c2"]);
+  });
+
+  it("clears the wait's timer once the reply is in", async () => {
+    const page = hangingPage(() => Promise.resolve({ commands: [] }));
+    await flush();
+    expect(page.pumpDelays()).toEqual([1000]);
+    // Only the pump's reschedule is left: no timeout piles up per poll.
+    expect(page.waits()).toBe(0);
   });
 });

@@ -5,6 +5,25 @@
 // terminated when idle, which is why nothing is kept in memory between
 // messages — the store on the native side is the state.
 
+// How long a native call may take before the worker gives up on it. A round
+// trip takes about a millisecond; this only has to outlast the handler's
+// process starting cold. A call that never came back would otherwise hold the
+// page's message open with it, and the page's poll loop with that. Shorter
+// than the page's own wait (`WAIT_MS` in content.js), so the page gets this
+// worker's undefined and polls again, rather than timing out first.
+const NATIVE_WAIT_MS = 8000;
+
+/** `browser.runtime.sendNativeMessage`, given up on after `NATIVE_WAIT_MS`. */
+function sendNative(message) {
+  let timer;
+  return Promise.race([
+    browser.runtime.sendNativeMessage("application.id", message),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("no answer from native")), NATIVE_WAIT_MS);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 browser.runtime.onMessage.addListener(async (message) => {
   const kind = message?.kind;
   if (kind !== "capture" && kind !== "poll" && kind !== "result") return;
@@ -13,7 +32,7 @@ browser.runtime.onMessage.addListener(async (message) => {
     // capture this is returned rather than awaited and dropped. Returning a
     // value from this listener is what resolves the content script's
     // sendMessage, which is the only channel a content script has back.
-    const reply = await browser.runtime.sendNativeMessage("application.id", message);
+    const reply = await sendNative(message);
     return kind === "poll" ? await answerHere(reply, message) : reply;
   } catch (error) {
     // The handler is the only thing that can persist a capture or hold a
@@ -48,7 +67,7 @@ async function answerHere(reply, poll) {
     }
     const result = await cookies(command, poll);
     try {
-      await browser.runtime.sendNativeMessage("application.id", {
+      await sendNative({
         kind: "result",
         id: command.id,
         extensionVersion: manifestVersion(),
