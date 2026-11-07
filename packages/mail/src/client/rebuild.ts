@@ -621,6 +621,18 @@ export const rebuildDraft = async (
       }
       handle = found.handle;
 
+      // A reply's subject is set inside a try and read back: one Mail did not
+      // take would be rebuilt under its own "Re:", and reported replaced.
+      if (squash(opened.subject) !== squash(subject)) {
+        return refuse(
+          "subject",
+          `Mail did not take the subject: it was given "${subject}" and the new ${kind} holds ` +
+            `"${opened.subject}". Nothing was filled. ${leftOpen(handle)}`,
+          closeIt,
+          { composer: handle },
+        );
+      }
+
       const wanted = recipients;
       const got = opened.recipients;
       if (
