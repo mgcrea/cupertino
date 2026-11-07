@@ -826,6 +826,8 @@ final class FakeConsent: ShellConsenting, @unchecked Sendable {
   private var holding = false
   private var asked: [ShellPrompt] = []
   private var cancels: [String] = []
+  /// Answers given to one held `ask`, by `answer(_:_:_:)`.
+  private var given: [String: ShellPromptAnswer] = [:]
   private var shown = 0
   private var finished = 0
   private var lastStop: (@Sendable () -> Void)?
@@ -863,10 +865,19 @@ final class FakeConsent: ShellConsenting, @unchecked Sendable {
     waiting.signal()
     let deadline = Date().addingTimeInterval(5)
     while !cancels.contains(key) {
+      if let answer = given.removeValue(forKey: key) { return answer }
       if !state.wait(until: deadline) { return .noAnswer }
     }
     cancels.removeAll { $0 == key }
     return .cancelled
+  }
+
+  /// Answer the held `ask` for this request, as the person would in its window.
+  func answer(_ connection: UUID, _ requestId: String, _ answer: ShellPromptAnswer) {
+    state.lock()
+    given[Self.key(connection, requestId)] = answer
+    state.broadcast()
+    state.unlock()
   }
 
   func cancel(connection: UUID, requestId: String) {
@@ -1622,6 +1633,44 @@ extension ShellCheck {
     check(
       "once they are gone a window opens again",
       !shellRun(on: UUID()).isError && fake.asks == asksWithFour + 1)
+
+    // An agent with a shell can open a connection whenever it likes, so a client can have a
+    // window waiting on each of several. The person's "Don't run" on one is the cooldown's
+    // reason to exist: the rest must not come straight back in front of them.
+    print("\nShellServer: a decline calls off the same client's waiting windows")
+    fake.hold = true
+    let burst = (0..<3).map { _ in UUID().named("Burst Client") }
+    let bystander = UUID().named("Bystander Client")
+    let burstCalls = burst.enumerated().map { index, connection in
+      let call = runAside(touch, on: connection, id: 80 + index)
+      _ = fake.waiting.wait(timeout: .now() + 5)
+      return call
+    }
+    let bystanderCall = runAside("true", on: bystander, id: 90)
+    _ = fake.waiting.wait(timeout: .now() + 5)
+    fake.answer(burst[0], "i80", .dontRun)
+    check(
+      "the window answered is declined",
+      burstCalls[0].done.wait(timeout: .now() + 5) == .success
+        && burstCalls[0].answer().flatMap(decision) == "declined")
+    check(
+      "the client's other waiting windows are called off at once",
+      burstCalls.dropFirst().allSatisfy { $0.done.wait(timeout: .now() + 2) == .success })
+    check(
+      "each refused as the cooldown, with its wait",
+      burstCalls.dropFirst().allSatisfy {
+        $0.answer().flatMap(decision) == "cooldown"
+          && $0.answer().flatMap { cooldownWait($0.text) } != nil
+      } && !exists())
+    check(
+      "another client's window is left waiting",
+      bystanderCall.done.wait(timeout: .now() + 0.3) == .timedOut)
+    fake.answer(bystander, "i90", .runOnce)
+    check(
+      "and answers as its person says",
+      bystanderCall.done.wait(timeout: .now() + 5) == .success
+        && bystanderCall.answer()?.isError == false)
+    fake.hold = false
 
     print("\nShellServer: Don't ask")
     ShellSeal.setBefore(.none, store)

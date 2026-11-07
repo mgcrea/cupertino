@@ -240,16 +240,24 @@ nonisolated enum ShellServer {
     let consent: any ShellConsenting
     let connection: UUID
     let requestId: String
+    /// The client's name as capped, which a decline's cooldown is kept under.
+    let client: String
     private let lock = NSLock()
     // Guarded by `lock`.
     private var cancelled = false
     private var asking = false
+    /// Set where the decision is `.ask`, cleared once its window answers.
+    private var waitsForWindow = false
+    /// When the call was called off because its client was declined meanwhile, the end of
+    /// that cooldown.
+    private var withdrawnUntil: Date?
     private var running: ShellRunner.Running?
 
-    init(consent: any ShellConsenting, connection: UUID, requestId: String) {
+    init(consent: any ShellConsenting, connection: UUID, requestId: String, client: String) {
       self.consent = consent
       self.connection = connection
       self.requestId = requestId
+      self.client = client
     }
 
     /// The canceller: from `InProcessCalls` (a cancel or a hang-up, perhaps inline inside
@@ -266,6 +274,28 @@ nonisolated enum ShellServer {
 
     var isCancelled: Bool { lock.withLock { cancelled } }
 
+    /// The decision was to ask: this call will wait for a window.
+    func willAsk() { lock.withLock { waitsForWindow = true } }
+
+    /// Called off because the person declined its client in another window: the window this
+    /// call waits for, or is about to wait for, never comes up. A call already answered, or
+    /// one that runs without a window, is left alone. Quick, as `cancel` is.
+    func withdraw(until: Date) {
+      lock.lock()
+      guard waitsForWindow, !cancelled else {
+        lock.unlock()
+        return
+      }
+      cancelled = true
+      withdrawnUntil = until
+      let asking = self.asking
+      lock.unlock()
+      if asking { consent.cancel(connection: connection, requestId: requestId) }
+    }
+
+    /// The end of the cooldown that called this call off, if that is what did.
+    var withdrawn: Date? { lock.withLock { withdrawnUntil } }
+
     /// Marks the window as up, unless the call was cancelled first. False means do not ask.
     func beginAsking() -> Bool {
       lock.withLock {
@@ -279,6 +309,7 @@ nonisolated enum ShellServer {
     func endAsking() -> Bool {
       lock.withLock {
         asking = false
+        waitsForWindow = false
         return cancelled
       }
     }
@@ -453,7 +484,7 @@ nonisolated enum ShellServer {
 
     let before = ShellSeal.effectiveBefore(defaults)
     let requestId = InProcessCalls.requestId(id) ?? "u\(UUID().uuidString)"
-    let call = Call(consent: consent, connection: who, requestId: requestId)
+    let call = Call(consent: consent, connection: who, requestId: requestId, client: client)
 
     // The decision, the slot it takes and the call `stopAll` can reach, in one step.
     let decision = state.lock.withLock { () -> ShellPolicy.Decision? in
@@ -474,6 +505,7 @@ nonisolated enum ShellServer {
         state.calls[ObjectIdentifier(call)] = call
       case .ask:
         state.waiting += 1
+        call.willAsk()
         state.calls[ObjectIdentifier(call)] = call
       case .declined, .busy:
         break
@@ -516,28 +548,35 @@ nonisolated enum ShellServer {
         decision: before == .none ? .notAsked : .approvedForSession, record: record)
     }
 
+    /// Called off: as the cooldown when a decline of its client did it, else as cancelled.
+    func calledOff() -> String {
+      guard let until = call.withdrawn else { return refuse(.cancelled, cancelledCopy) }
+      return refuse(.cooldown, cooldownCopy(until.timeIntervalSince(clock())))
+    }
+
     // The window. Its place among the waiting is given back once it has answered.
     let answer: ShellPromptAnswer
     do {
       defer { state.lock.withLock { state.waiting -= 1 } }
-      guard call.beginAsking() else {
-        return refuse(.cancelled, cancelledCopy)
-      }
+      guard call.beginAsking() else { return calledOff() }
       answer = call.consent.ask(prompt)
     }
-    if call.endAsking() || answer == .cancelled {
-      return refuse(.cancelled, cancelledCopy)
-    }
+    if call.endAsking() || answer == .cancelled { return calledOff() }
 
     switch answer {
     case .dontRun, .noAnswer:
-      state.lock.withLock {
+      let (until, waiting) = state.lock.withLock { () -> (Date, [Call]) in
         let until = clock().addingTimeInterval(ShellPolicy.declineCooldown)
         state.declinedClients[client] = until
         if let connection {
           state.connections[connection, default: (nil, nil)].declinedUntil = until
         }
+        return (until, state.calls.values.filter { $0 !== call && $0.client == client })
       }
+      // The client's other windows still waiting, on any connection, would come straight
+      // back in front of the person who just said no. Outside the lock, as `stopAll` cancels:
+      // the consent's cancel may take locks of its own.
+      for other in waiting { other.withdraw(until: until) }
       return answer == .dontRun
         ? refuse(.declined, declinedCopy) : refuse(.noAnswer, noAnswerCopy)
 
