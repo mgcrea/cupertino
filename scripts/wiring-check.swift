@@ -92,6 +92,13 @@ struct WiringCheck {
   }
 
   static func main() {
+    allowlistUnsetOrEmpty()
+    allowlistCommandsMatchExactly()
+    allowlistNamesOnlyWithoutCommands()
+    allowlistDenyWins()
+    allowlistScopesMerge()
+    allowlistOffersTheRuleThatFits()
+    allowlistRecognisesBastion()
     unrelatedKeysSurvive()
     rootKeyIsReal()
     legacyMigratesOnlyWhenOurs()
@@ -2103,5 +2110,199 @@ struct WiringCheck {
       names(try? ClientWiringTOML.read(config)) == [
         "computer-use", "node_repl", "something_new",
       ])
+  }
+
+  // MARK: - Claude Code's allowedMcpServers
+
+  /// One entry as Cupertino writes it into `~/.claude.json`.
+  static let desktop: [String: Any] = [
+    "type": "stdio", "command": bridge, "args": ["--server=desktop", "--client=claude-code"],
+    "env": ["A": "1"],
+  ]
+  static let desktopRule: [String: Any] = [
+    "serverCommand": [bridge, "--server=desktop", "--client=claude-code"]
+  ]
+
+  static func verdict(
+    _ user: [String: Any], managed: [String: Any] = [:], key: String = "cupertino-desktop",
+    entry: [String: Any] = desktop
+  ) -> ClientAllowlist.Verdict {
+    ClientAllowlist.verdict(
+      key: key, entry: entry, policy: ClientAllowlist.policy(user: user, managed: managed))
+  }
+
+  static func allowlistUnsetOrEmpty() {
+    print("\nClaude Code's allowlist: unset and empty")
+    check("no list: allowed", verdict([:]) == .allowed)
+    check(
+      "an empty list: nothing is allowed", verdict(["allowedMcpServers": [Any]()]) == .notAllowed)
+    check(
+      "a list that is not an array is not a list",
+      verdict(["allowedMcpServers": "cupertino-desktop"]) == .allowed)
+    check(
+      "the rule an allowlist needs is command and args, never env",
+      deepEqual(ClientAllowlist.rule(for: desktop), desktopRule))
+    check("an entry with no command has no rule", ClientAllowlist.rule(for: remote) == nil)
+  }
+
+  static func allowlistCommandsMatchExactly() {
+    print("\nClaude Code's allowlist: commands")
+    check("the exact command: allowed", verdict(["allowedMcpServers": [desktopRule]]) == .allowed)
+    check(
+      "another surface's command: not allowed",
+      verdict([
+        "allowedMcpServers": [
+          ["serverCommand": [bridge, "--server=screen", "--client=claude-code"]]
+        ]
+      ]) == .notAllowed)
+    check(
+      "the same args in another order: not allowed",
+      verdict([
+        "allowedMcpServers": [
+          ["serverCommand": [bridge, "--client=claude-code", "--server=desktop"]]
+        ]
+      ]) == .notAllowed)
+    check(
+      "the bridge at another path: not allowed",
+      verdict([
+        "allowedMcpServers": [
+          ["serverCommand": [moved, "--server=desktop", "--client=claude-code"]]
+        ]
+      ]) == .notAllowed)
+    check(
+      "an entry written before --client= needs a rule without it",
+      verdict(
+        ["allowedMcpServers": [desktopRule]],
+        entry: ["command": bridge, "args": ["--server=desktop"]]) == .notAllowed)
+  }
+
+  static func allowlistNamesOnlyWithoutCommands() {
+    print("\nClaude Code's allowlist: names")
+    check(
+      "the key by name, no commands listed: allowed",
+      verdict(["allowedMcpServers": [["serverName": "cupertino-desktop"]]]) == .allowed)
+    check(
+      "the key by name beside a URL rule: still allowed",
+      verdict([
+        "allowedMcpServers": [
+          ["serverName": "cupertino-desktop"], ["serverUrl": "http://127.0.0.1:8720/s/*"],
+        ]
+      ]) == .allowed)
+    check(
+      "the key by name beside any command rule: not allowed",
+      verdict([
+        "allowedMcpServers": [["serverName": "cupertino-desktop"], ["serverCommand": ["npx"]]]
+      ]) == .notAllowed)
+    check(
+      "a URL rule alone admits no stdio server",
+      verdict(["allowedMcpServers": [["serverUrl": "*"]]]) == .notAllowed)
+  }
+
+  static func allowlistDenyWins() {
+    print("\nClaude Code's allowlist: the denylist")
+    check(
+      "denied by name, though allowed by command: denied",
+      verdict([
+        "allowedMcpServers": [desktopRule],
+        "deniedMcpServers": [["serverName": "cupertino-desktop"]],
+      ]) == .denied(inManaged: false))
+    check(
+      "denied by command, with no allowlist: denied",
+      verdict(["deniedMcpServers": [desktopRule]]) == .denied(inManaged: false))
+    check(
+      "denied in managed settings: says so, the user's file cannot lift it",
+      verdict(
+        ["deniedMcpServers": [["serverName": "cupertino-desktop"]]],
+        managed: ["deniedMcpServers": [desktopRule]]) == .denied(inManaged: true))
+    check(
+      "a URL deny never touches a stdio server",
+      verdict(["deniedMcpServers": [["serverUrl": "https://*"]]]) == .allowed)
+    check(
+      "another server's name: allowed",
+      verdict(["deniedMcpServers": [["serverName": "plugin:data:snowflake"]]]) == .allowed)
+  }
+
+  static func allowlistScopesMerge() {
+    print("\nClaude Code's allowlist: user and managed settings")
+    check(
+      "the rule only in managed settings: allowed, the lists are one",
+      verdict(
+        ["allowedMcpServers": [["serverCommand": ["npx"]]]],
+        managed: ["allowedMcpServers": [desktopRule]]) == .allowed)
+    check(
+      "a managed empty list alone: nothing is allowed",
+      verdict([:], managed: ["allowedMcpServers": [Any]()]) == .notAllowed)
+    check(
+      "managed only: the user's rule no longer counts",
+      verdict(
+        ["allowedMcpServers": [desktopRule]],
+        managed: ["allowManagedMcpServersOnly": true, "allowedMcpServers": [Any]()])
+        == .notAllowed)
+    check(
+      "managed only with no managed list: nothing restricts",
+      verdict(
+        ["allowedMcpServers": [Any]()], managed: ["allowManagedMcpServersOnly": true]) == .allowed)
+    check(
+      "managed only: the user's denylist still counts",
+      verdict(
+        ["deniedMcpServers": [["serverName": "cupertino-desktop"]]],
+        managed: ["allowManagedMcpServersOnly": true]) == .denied(inManaged: false))
+  }
+
+  static func allowlistOffersTheRuleThatFits() {
+    print("\nClaude Code's allowlist: the entry to add")
+    func rule(_ user: [String: Any], managed: [String: Any] = [:]) -> [String: Any]? {
+      ClientAllowlist.rule(
+        key: "cupertino-desktop", entry: desktop,
+        policy: ClientAllowlist.policy(user: user, managed: managed))
+    }
+    check(
+      "a list of commands: the exact command",
+      deepEqual(rule(["allowedMcpServers": [["serverCommand": ["npx"]]]]), desktopRule))
+    check(
+      "a list of names only: the name, so the names already there keep counting",
+      deepEqual(
+        rule(["allowedMcpServers": [["serverName": "github"], ["serverName": "linear"]]]),
+        ["serverName": "cupertino-desktop"]))
+    check(
+      "a list of URLs only: the name",
+      deepEqual(
+        rule(["allowedMcpServers": [["serverUrl": "https://*"]]]),
+        ["serverName": "cupertino-desktop"]))
+    check(
+      "a command only in managed settings still decides it",
+      deepEqual(
+        rule(
+          ["allowedMcpServers": [["serverName": "github"]]],
+          managed: ["allowedMcpServers": [["serverCommand": ["npx"]]]]), desktopRule))
+    check(
+      "managed only: the user's file cannot admit it",
+      ClientAllowlist.policy(user: [:], managed: ["allowManagedMcpServersOnly": true])
+        .isManagedOnly)
+    check(
+      "the snippet is entries to paste into a list, not a list",
+      ClientAllowlist.snippet([desktopRule, ["serverName": "x"]])
+        == "{\"serverCommand\":[\"\(bridge)\",\"--server=desktop\",\"--client=claude-code\"]},\n{\"serverName\":\"x\"}"
+    )
+  }
+
+  static func allowlistRecognisesBastion() {
+    print("\nClaude Code's allowlist: written by Bastion")
+    func bastion(_ user: [String: Any], managed: [String: Any] = [:]) -> Bool {
+      ClientAllowlist.policy(user: user, managed: managed).isBastions
+    }
+    check(
+      "Bastion's wildcard in the user list",
+      bastion(["allowedMcpServers": [["serverUrl": "http://127.0.0.1:8720/s/*"], desktopRule]]))
+    check(
+      "on localhost and another port",
+      bastion(["allowedMcpServers": [["serverUrl": "http://localhost:9/s/*"]]]))
+    check("a hand-written list is not", !bastion(["allowedMcpServers": [desktopRule]]))
+    check(
+      "one Bastion endpoint is not the wildcard",
+      !bastion(["allowedMcpServers": [["serverUrl": "http://127.0.0.1:8720/s/prod/x"]]]))
+    check(
+      "Bastion writes the user file only",
+      !bastion([:], managed: ["allowedMcpServers": [["serverUrl": "http://127.0.0.1:8720/s/*"]]]))
   }
 }

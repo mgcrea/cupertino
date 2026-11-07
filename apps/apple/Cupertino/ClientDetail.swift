@@ -54,6 +54,12 @@ struct ClientDetail: View {
     /// fact is written in the file rather than decided quietly at load. The
     /// ChatGPT app is reported to set it on servers it did not expect.
     var isDisabled = false
+    /// What Claude Code's `allowedMcpServers` and `deniedMcpServers` make of
+    /// the entry as written. Claude Code alone; every other client reads as
+    /// allowed. See `ClientAllowlist`.
+    var allowlist: ClientAllowlist.Verdict = .allowed
+    /// The allowlist entry that would admit it, for the card to offer.
+    var rule: [String: Any]?
 
     var id: String { surface.id }
   }
@@ -72,6 +78,12 @@ struct ClientDetail: View {
     var others: [ClientWiringMerge.ForeignEntry]
     var projects: [(folder: String, entries: [ClientWiringMerge.ForeignEntry])]
     var hasOurEntries: Bool
+    /// The allowlist holds Bastion's wildcard, so Bastion keeps it current.
+    var allowlistIsBastions = false
+    /// Managed settings allow only their own list: no user-side remedy.
+    var allowlistIsManagedOnly = false
+
+    var blocked: [Row] { rows.filter { !$0.isOff && $0.allowlist != .allowed } }
   }
 
   /// Rebuilt on every redraw rather than cached. The file belongs to another
@@ -149,6 +161,23 @@ struct ClientDetail: View {
           isOff: true))
     }
 
+    // Claude Code hides a server its allowlist refuses, so an entry that audits
+    // as configured can be missing from every session. Only entries that are
+    // already right: a `taken` key is somebody else's server, and a rule built
+    // from a `points elsewhere` entry would stop matching the moment Update
+    // rewrites it. Judged as written, since the list matches command and args.
+    var policy: ClientAllowlist.Policy?
+    if client.id == ClientWiring.claudeCodeID {
+      let read = ClientAllowlist.read()
+      policy = read
+      for index in rows.indices where !rows[index].isOff && rows[index].state == .matches {
+        let entry = servers[rows[index].key]
+        rows[index].allowlist = ClientAllowlist.verdict(
+          key: rows[index].key, entry: entry, policy: read)
+        rows[index].rule = ClientAllowlist.rule(key: rows[index].key, entry: entry, policy: read)
+      }
+    }
+
     return Snapshot(
       // The same file the rows were read from, reduced by the same function
       // `status(of:)` uses. The header sentence and the badges cannot disagree,
@@ -163,7 +192,9 @@ struct ClientDetail: View {
         ? ClientWiringMerge.foreignLocalScopeEntries(in: config.root) : [],
       // Including an entry for a surface this build has never heard of, which is
       // exactly the case worth being able to clean up.
-      hasOurEntries: servers.values.contains { ClientWiringMerge.isOurs($0) })
+      hasOurEntries: servers.values.contains { ClientWiringMerge.isOurs($0) },
+      allowlistIsBastions: policy?.isBastions ?? false,
+      allowlistIsManagedOnly: policy?.isManagedOnly ?? false)
   }
 
   var body: some View {
@@ -174,6 +205,7 @@ struct ClientDetail: View {
         header(snapshot)
         fileCard
         entriesCard(snapshot)
+        if !snapshot.blocked.isEmpty { allowlistCard(snapshot) }
         if !snapshot.others.isEmpty { othersCard(snapshot) }
         if ClientWiring.hasLocalScope(client) { ProjectFoldersCard() }
         if !snapshot.projects.isEmpty { projectsCard(snapshot) }
@@ -323,6 +355,12 @@ struct ClientDetail: View {
           Badge("surface off", tint: .secondary)
         } else {
           stateBadge(row.state)
+          switch row.allowlist {
+          case .allowed: EmptyView()
+          case .notAllowed: Badge("not in allowlist", tint: .orange)
+          case .denied(let inManaged):
+            Badge(inManaged ? "denied by managed settings" : "denied", tint: .red)
+          }
         }
       }
       Text(reachLine(for: row.surface))
@@ -400,6 +438,105 @@ struct ClientDetail: View {
     let command = entry["command"] as? String ?? ClientWiring.bridgePath
     let arguments = (entry["args"] as? [String] ?? []).joined(separator: " ")
     return arguments.isEmpty ? command : "\(command) \(arguments)"
+  }
+
+  // MARK: - Claude Code's allowlist
+
+  /// Entries that are written correctly and that Claude Code will still not
+  /// load, because its `allowedMcpServers` leaves them out or its
+  /// `deniedMcpServers` names them. Claude Code says nothing about either: the
+  /// server is simply missing from `/mcp`. Read from the user's and managed
+  /// settings; see `ClientAllowlist` for the rules and what is not read.
+  private func allowlistCard(_ snapshot: Snapshot) -> some View {
+    let notAllowed = snapshot.blocked.filter { $0.allowlist == .notAllowed }
+    let denied = snapshot.blocked.filter { $0.allowlist == .denied(inManaged: false) }
+    let deniedManaged = snapshot.blocked.filter { $0.allowlist == .denied(inManaged: true) }
+    let settings = (ClientAllowlist.userSettingsURL.path as NSString).abbreviatingWithTildeInPath
+
+    return Card("Claude Code's allowlist") {
+      if !notAllowed.isEmpty {
+        Text(
+          "\(client.displayName) will not load \(names(notAllowed)). Its settings set "
+            + "allowedMcpServers, and \(notAllowed.count == 1 ? "it is" : "they are") not on it. "
+            + "A server the allowlist refuses is hidden: it is missing from /mcp, with no error."
+        )
+        .font(.callout).foregroundStyle(.orange)
+        .fixedSize(horizontal: false, vertical: true)
+
+        if snapshot.allowlistIsManagedOnly {
+          Text(
+            "Managed settings on this Mac allow only their own list "
+              + "(allowManagedMcpServersOnly), so nothing in \(settings) can add "
+              + "\(notAllowed.count == 1 ? "it" : "them"). Whoever manages the Mac can."
+          )
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        } else if snapshot.allowlistIsBastions {
+          Text(
+            "The list is Bastion's (Only Bastion, on its Claude Code pane). Bastion adds "
+              + "\(notAllowed.count == 1 ? "it" : "them") when it next brings the list current; "
+              + "Update on that pane does it now."
+          )
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+        } else {
+          let snippet = ClientAllowlist.snippet(notAllowed.compactMap(\.rule))
+          Text(
+            "Add \(notAllowed.count == 1 ? "this entry" : "these entries") to allowedMcpServers in \(settings):"
+          )
+          .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          Text(snippet)
+            .font(.system(.caption2, design: .monospaced))
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+          Button("Copy") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(snippet, forType: .string)
+          }
+          .controlSize(.small)
+        }
+      }
+
+      if !denied.isEmpty {
+        if !notAllowed.isEmpty { Divider() }
+        Text(
+          "deniedMcpServers names \(names(denied)), and a denylist entry wins over everything. "
+            + "Take it out of \(settings) to load \(denied.count == 1 ? "it" : "them")."
+        )
+        .font(.callout).foregroundStyle(.red)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+
+      if !deniedManaged.isEmpty {
+        if !notAllowed.isEmpty || !denied.isEmpty { Divider() }
+        Text(
+          "Managed settings on this Mac deny \(names(deniedManaged)). Only whoever manages the "
+            + "Mac can lift that."
+        )
+        .font(.callout).foregroundStyle(.red)
+        .fixedSize(horizontal: false, vertical: true)
+      }
+
+      Divider()
+      HStack(alignment: .firstTextBaseline) {
+        Text(
+          "Read from \(settings) and managed settings. A repository's own settings can widen or "
+            + "narrow the list inside it."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        Spacer(minLength: 8)
+        Button("Reveal settings.json") {
+          NSWorkspace.shared.activateFileViewerSelecting([ClientAllowlist.userSettingsURL])
+        }
+        .controlSize(.small)
+      }
+    }
+  }
+
+  private func names(_ rows: [Row]) -> String {
+    ListFormatter.localizedString(byJoining: rows.map(\.surface.displayName))
   }
 
   // MARK: - What Cupertino did not write

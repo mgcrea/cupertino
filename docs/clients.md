@@ -282,16 +282,47 @@ value is used for its answer; the status is always computed from the file.
 
 ### Per entry
 
-| Badge              | Means                                                     |
-| ------------------ | --------------------------------------------------------- |
-| `configured`       | ours, reaching the bridge in this bundle                  |
-| `not written`      | no entry under that key                                   |
-| `points elsewhere` | ours, reaching another copy of the app — Update fixes it  |
-| `taken`            | somebody else's entry under a key Configure wants         |
-| `surface off`      | in the file, correct, and the server behind it is stopped |
+| Badge              | Means                                                             |
+| ------------------ | ----------------------------------------------------------------- |
+| `configured`       | ours, reaching the bridge in this bundle                          |
+| `not written`      | no entry under that key                                           |
+| `points elsewhere` | ours, reaching another copy of the app — Update fixes it          |
+| `taken`            | somebody else's entry under a key Configure wants                 |
+| `surface off`      | in the file, correct, and the server behind it is stopped         |
+| `not in allowlist` | Claude Code only: correct, and refused by its `allowedMcpServers` |
+| `denied`           | Claude Code only: correct, and named by its `deniedMcpServers`    |
 
 Plus one line no badge covers, on Codex only: `enabled = false`, which the client honours and no
 JSON client has.
+
+### Claude Code's allowlist
+
+Claude Code filters servers through `allowedMcpServers` and `deniedMcpServers` in its settings,
+and a server either list refuses is **hidden**: missing from `/mcp` and `claude mcp list`, with no
+error. So an entry that audits as `configured` can be absent from every session. The usual author
+is Bastion, whose _Only Bastion_ switch writes an allowlist built from `~/.claude.json`; a surface
+switched on in Cupertino after that list was built is refused until Bastion brings it current.
+Bastion 1.36.1 and earlier do that only on their next launch; later builds watch the file and do it
+within a second or so.
+
+`ClientAllowlist` predicts the verdict from `~/.claude/settings.json` and managed settings, with
+Claude Code's rules: the scopes merge into one list, an unset list allows everything and `[]`
+nothing, `allowManagedMcpServersOnly` drops the user's allowlist but not its denylist, a stdio
+server passes on a `serverCommand` equal to its command and args in order (`env` ignored), a
+`serverName` counts only while the merged list holds no `serverCommand`, and a denylist match
+wins. The entry is judged as written in the file, so a list built for another copy of the app
+refuses it too.
+
+Only `configured` entries are judged: a `taken` key is somebody else's server, and a rule for a
+`points elsewhere` entry would stop matching once Update rewrites it. When anything is refused, the
+pane shows a card naming the surfaces. If the list holds Bastion's `http://127.0.0.1:<port>/s/*`
+wildcard, the card points at Bastion's _Update_. If managed settings set
+`allowManagedMcpServersOnly`, or a managed denylist names the surface, it says only whoever manages
+the Mac can change it. Otherwise it gives the entries to add, ready to paste into the existing array,
+in the kind the list already uses: `serverCommand` if it holds one, `serverName` if not, because the
+first `serverCommand` added to a list of names stops every stdio server it allows by name. A
+repository's own settings merge into the same lists, so inside one the verdict can differ; the card
+says so.
 
 ### The whole file
 
