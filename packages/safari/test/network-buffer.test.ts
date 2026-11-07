@@ -782,6 +782,36 @@ describe("entries", () => {
     expect(entry).toMatchObject({ status: null, durationMs: null, bodyAvailable: false });
   });
 
+  it("shows a streamed request's status from its response record, and keeps one entry", () => {
+    const t = tab();
+    t.start();
+    const url = `${ORIGIN}/api/stream`;
+    const ref = t.request({ url }, null);
+    const response = {
+      kind: "fetch",
+      ref,
+      method: "GET",
+      url,
+      startedAt: T0,
+      requestHeaders: {},
+      requestBody: null,
+      status: 200,
+      statusText: "OK",
+      responseHeaders: { "content-type": "text/event-stream" },
+      contentType: "text/event-stream",
+      durationMs: null,
+      error: null,
+      body: null,
+    };
+    t.emit("cupertino:net-record", { ...response, phase: "response" });
+    const [inFlight] = listed(t).entries;
+    expect(listed(t).entries).toHaveLength(1);
+    expect(inFlight).toMatchObject({ status: 200, ok: null, durationMs: null });
+    t.emit("cupertino:net-record", { ...response, phase: "end", durationMs: 40 });
+    expect(listed(t).entries).toHaveLength(1);
+    expect(listed(t).entries[0]).toMatchObject({ id: inFlight!.id, status: 200, ok: true });
+  });
+
   it("gives console entries the first line of their stack", () => {
     const t = tab();
     t.start();

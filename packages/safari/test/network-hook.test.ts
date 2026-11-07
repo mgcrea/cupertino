@@ -375,6 +375,7 @@ const load = (
     ping: () => send("cupertino:net-ping"),
     ends: () => records.filter((r) => r.phase === "end"),
     starts: () => records.filter((r) => r.phase === "start"),
+    responses: () => records.filter((r) => r.phase === "response"),
   };
 };
 
@@ -860,6 +861,48 @@ describe("fetch", () => {
     expect(await page.fetch("/api")).toBe(response);
     const end = await endOf(page);
     expect(end).toMatchObject({ status: 200, body: null });
+  });
+});
+
+describe("fetch, streamed", () => {
+  /*
+   * SSE over fetch, NDJSON and token streams keep their body open for as long
+   * as the page reads it, maybe for good. The status and headers are known
+   * once the response starts, so they are sent then, as a `response` record
+   * with the same ref; the end follows once the body has been read.
+   */
+  it("sends the status and headers once the response starts, before the body ends", async () => {
+    const response = new FakeResponse(bytesOf(""), {
+      headers: { "content-type": "text/event-stream" },
+    });
+    // A body that never ends, as an event stream's may not.
+    response.clone = () =>
+      ({
+        body: null,
+        arrayBuffer: () => new Promise<ArrayBuffer>(() => {}),
+      }) as unknown as FakeResponse;
+    const page = load({ respond: async () => response });
+    page.install();
+    await page.fetch("/api/stream");
+    await vi.waitFor(() => expect(page.responses()).toHaveLength(1));
+    const [start] = page.starts();
+    expect(page.responses()[0]).toMatchObject({
+      kind: "fetch",
+      ref: start!.ref,
+      status: 200,
+      contentType: "text/event-stream",
+      responseHeaders: { "content-type": "text/event-stream" },
+      body: null,
+    });
+    expect(page.ends()).toHaveLength(0);
+  });
+
+  it("sends no response record when the end goes out at once", async () => {
+    const page = load({ respond: async () => new FakeResponse(bytesOf("{}")) });
+    page.install({ captureBodies: false });
+    await page.fetch("/api");
+    await endOf(page);
+    expect(page.responses()).toHaveLength(0);
   });
 });
 
