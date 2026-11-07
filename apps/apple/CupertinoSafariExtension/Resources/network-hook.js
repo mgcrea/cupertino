@@ -608,6 +608,12 @@
         // up to `maxBodyBytes`, so on an armed tab a cancelled download keeps
         // using the network until the cap is reached or the body ends.
         const clone = res.clone();
+        // The status and headers are known now, and the body may take as long
+        // as the page reads it (SSE over fetch, NDJSON, token streams), maybe
+        // for good. So they go out now, as a `response` record with the same
+        // ref, which the buffer takes in place of the start's; the end follows
+        // once the body has been read.
+        emit(EVENT_RECORD, Object.assign({}, rec, { phase: "response" }));
         readCapped(clone, cap).then(
           (read) => {
             try {

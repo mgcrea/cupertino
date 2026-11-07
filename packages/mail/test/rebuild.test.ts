@@ -162,6 +162,8 @@ type Over = {
   unsaved?: boolean;
   /** Mail does not apply the recipients it was given. */
   dropsRecipients?: boolean;
+  /** Mail does not take the subject it was given, and keeps this one. */
+  keepsSubject?: string;
 };
 
 /** A fake Mail and app, sharing one timeline of what was asked, in order. */
@@ -249,7 +251,7 @@ const world = (over: Over = {}) => {
       if (name === "DRAFT_FACTS") return FACTS;
       if (name === "OPEN_COMPOSER") {
         if (over.openThrows) throw new Error("Mail did not return a composer for the reply.");
-        opened = { subject: String(params.subject) };
+        opened = { subject: over.keepsSubject ?? String(params.subject) };
         const recipients = params.recipients as Record<string, string[]>;
         return {
           subject: opened.subject,
@@ -442,6 +444,25 @@ describe("rebuilding a closed reply draft", () => {
     expect(result).toMatchObject({ replaced: false, capability: "recipients" });
     expect(String(result.hint)).toMatch(/without saving/i);
     expect(timeline).not.toContain("edit");
+  });
+
+  /*
+   * The reply's subject is set inside a try, and read back. A subject Mail did
+   * not take would otherwise be rebuilt under Mail's own "Re:" and reported
+   * replaced, as recipients that did not take are refused.
+   */
+  it("refuses when Mail did not take the subject it was asked for", async () => {
+    const { deps, timeline, edits } = world({ keepsSubject: "Re: Quarterly numbers" });
+    const result = await rebuildDraft(deps, TARGET, {
+      facts: FACTS,
+      subject: "Re: Quarterly numbers, revised",
+      body: "BRAVO",
+    });
+    expect(result).toMatchObject({ replaced: false, capability: "subject", composer: "mc-new" });
+    expect(String(result.reason)).toMatch(/Re: Quarterly numbers, revised/);
+    expect(String(result.hint)).toMatch(/without saving/i);
+    expect(edits).toEqual([]);
+    expect(timeline).not.toContain("COMMIT_REPLACEMENT");
   });
 
   it("refuses a forward draft", async () => {

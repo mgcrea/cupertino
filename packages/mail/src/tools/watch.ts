@@ -72,8 +72,9 @@ import { wrap } from "./util.js";
  * that writes a new `Envelope Index` and renames it over the old one leaves that
  * connection reading the deleted file: nothing new arrives there and nothing
  * errors. So the service records the file's inode when it opens it, compares on
- * every trigger, and reopens before the tick when it changed. The registry then
- * sees the renumbered head below its mark and resets without notifying. The
+ * every trigger, and reopens before the tick when it changed, then restarts the
+ * registry at the new file's head, so nothing it already holds is reported,
+ * whether its renumbered head is below the old mark or past it. The
  * mailbox rowids may be renumbered too, so the lookup is rebuilt from the new
  * file's `mailboxes` table with the accounts already in hand.
  *
@@ -367,6 +368,8 @@ export class MailWatchService {
     try {
       this.#open(this.#path);
       this.#reopenFailing = false;
+      // Its rowids start again, whether below the old mark or past it.
+      this.#registry?.restart();
     } catch (err) {
       if (!this.#reopenFailing) {
         this.#logger?.warn?.(

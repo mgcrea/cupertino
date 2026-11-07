@@ -7,7 +7,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { OsascriptRunner } from "../src/client/osascript.js";
-import { encodeRef } from "../src/client/ref.js";
+import { decodeRef, encodeRef } from "../src/client/ref.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
@@ -188,6 +188,32 @@ const layDownMessage = (rowid: number) => {
   );
 };
 
+/** A Gmail message's file, which lives under All Mail whatever label lists it. */
+const layDownGmailMessage = (rowid: number) => {
+  const mime = [
+    "From: Sam Rivers <sam@example.com>",
+    "Subject: Deploy failed",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Rolled back.",
+  ].join("\r\n");
+  const body = Buffer.from(mime, "utf8");
+  const messages = join(
+    gmailDir,
+    "[Gmail].mbox",
+    "All Mail.mbox",
+    "MBOX-UUID",
+    "Data",
+    "0",
+    "Messages",
+  );
+  mkdirSync(messages, { recursive: true });
+  writeFileSync(
+    join(messages, `${rowid}.emlx`),
+    Buffer.concat([Buffer.from(`${body.length}\n`), body, Buffer.from(PLIST)]),
+  );
+};
+
 const connect = async (env: Record<string, string> = {}) => {
   const recorder = recordingRunner();
   const config = loadConfig({ APPLE_MAIL_ENVELOPE_INDEX: dbPath, ...env });
@@ -262,6 +288,21 @@ describe("list_attachments", () => {
    * interface has none. Fetching the body over Apple Events only to discard it
    * was a slow way to say "degraded".
    */
+  /*
+   * A Gmail message listed in INBOX is held there by label only: its file is
+   * under All Mail. A ref naming the mailbox it was listed in still reads its
+   * file, from where the index says the row lives.
+   */
+  it("reads a Gmail INBOX ref's file from All Mail, where the index puts the row", async () => {
+    layDownGmailMessage(106);
+    const { call, mailEvents } = await connect();
+    const ref = encodeRef({ accountUuid: GMAIL, mailbox: "INBOX", id: 106 });
+    const payload = await call("apple_mail_list_attachments", { ref });
+
+    expect(mailEvents()).toEqual([]);
+    expect(payload).toMatchObject({ source: "emlx", count: 0 });
+  });
+
   it("does not fetch a body from Mail it cannot use when the file is missing", async () => {
     const { call, mailEvents } = await connect();
     const payload = await call("apple_mail_list_attachments", { ref: ref102 });
@@ -318,6 +359,24 @@ describe("list_messages", () => {
       "Deploy failed",
       "Standup notes",
     ]);
+  });
+
+  /*
+   * Each ref names the mailbox listed, as the Apple Events lane's did, not the
+   * one the row lives in (All Mail): a move or delete by that ref then acts on
+   * the message in INBOX, which is what the caller saw. Its file is still found
+   * under All Mail.
+   */
+  it("names the Gmail mailbox it listed in each ref, and still reads the file", async () => {
+    layDownGmailMessage(106);
+    const { call } = await connect();
+    const payload = await call("apple_mail_list_messages", { account: "Google", mailbox: "INBOX" });
+    const refs = payload.messages.map((m: { ref: string }) => decodeRef(m.ref));
+
+    expect(refs.map((r: { mailbox: string }) => r.mailbox)).toEqual(["INBOX", "INBOX"]);
+    expect(refs.map((r: { id: number }) => r.id)).toEqual([106, 105]);
+    const attachments = await call("apple_mail_list_attachments", { ref: payload.messages[0].ref });
+    expect(attachments).toMatchObject({ source: "emlx" });
   });
 
   it("is not held to the Apple Events cap", async () => {

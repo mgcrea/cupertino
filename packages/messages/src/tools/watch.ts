@@ -44,8 +44,9 @@ import { wrap } from "./util.js";
  * store rebuilt as a new file and renamed over the old name leaves it reading
  * the deleted one: nothing new ever arrives there, and nothing errors. So the
  * service records the file's inode when it opens, compares on every trigger, and
- * reopens before the tick when it changed. The registry then sees the renumbered
- * head below its mark and resets without notifying, which is what a rebuild is.
+ * reopens before the tick when it changed, then restarts the registry at the new
+ * file's head, so nothing it already holds is reported, whether its renumbered
+ * head is below the old mark or past it: a rebuild is not new mail.
  *
  * The handle is the service's own rather than the client's: the client closes
  * its store to reopen it after a send (`#reconcile`), which would close a shared
@@ -185,6 +186,8 @@ export class MessagesWatchService {
     try {
       this.#open(this.#path);
       this.#reopenFailing = false;
+      // Its rowids start again, whether below the old mark or past it.
+      this.#registry?.restart();
     } catch (err) {
       if (!this.#reopenFailing) {
         this.#logger?.warn?.("watch: chat.db was replaced and could not be reopened", err);

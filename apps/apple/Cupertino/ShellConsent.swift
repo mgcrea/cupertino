@@ -450,6 +450,10 @@ final class HandPressedButton: NSButton {
 /// Return and Escape both mean Cancel, and pressing it any way at all can only leave the setting
 /// where it was.
 ///
+/// The confirming button is watched as the run window's are (`CoverWatch`): the switch that opens
+/// the sheet takes an Accessibility press, so a program, not the person, may have opened it, and
+/// a click-through window of its own over the button would otherwise borrow the person's click.
+///
 /// `onConfirm` and `onCancel` are called at most once between them, and the sheet does not take
 /// itself down: the caller ends it in both.
 @MainActor
@@ -457,6 +461,9 @@ struct ShellConfirmSheet {
   let panel: ShellPanel
   let confirm: HandPressedButton
   let cancel: NSButton
+  /// Shown while another program's window is over the sheet.
+  let coverNotice: NSTextField
+  let watch: CoverWatch
 
   static let width: CGFloat = 460
   static let inset: CGFloat = 20
@@ -483,6 +490,15 @@ struct ShellConfirmSheet {
     let cancel = ShellButton.make(ShellPane.Copy.cancel) { cancelOnce() }
     cancel.keyEquivalent = "\r"
     let confirm = HandPressedButton.make(confirmTitle) { confirmOnce() }
+    // Sized for the longest notice, so the sheet does not grow when one shows.
+    let coverNotice = PromptWindow.label(
+      CoverWatch.notice(String(repeating: "W", count: ShellText.ownerLimit), button: confirmTitle),
+      width: content, size: 11, color: .systemRed)
+    coverNotice.heightAnchor.constraint(equalToConstant: coverNotice.fittingSize.height)
+      .isActive = true
+    coverNotice.stringValue = CoverWatch.notice(nil, button: confirmTitle)
+    coverNotice.alphaValue = 0
+    views.append(coverNotice)
     let spacer = NSView()
     spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
     let row = NSStackView(views: [spacer, confirm, cancel])
@@ -527,13 +543,16 @@ struct ShellConfirmSheet {
     self.panel = panel
     self.confirm = confirm
     self.cancel = cancel
+    self.coverNotice = coverNotice
+    // Off from here, until the watch has seen the sheet on screen, uncovered, for the arming
+    // delay: a click already on its way lands on nothing.
+    watch = CoverWatch(panel: panel, buttons: [confirm], notice: coverNotice, button: confirmTitle)
   }
 
   /// Attached to `window` as a sheet, or on its own in the middle of the screen when there is no
-  /// window to attach it to. The confirming button is armed first, so a click already on its
-  /// way lands on nothing.
+  /// window to attach it to. The confirming button stays off for the arming delay, and while
+  /// another program's window is over the sheet.
   func present(on window: NSWindow?) {
-    confirm.arm(after: ShellConsent.armDelay)
     if let window, window.isVisible {
       window.beginSheet(panel)
     } else {
@@ -545,9 +564,11 @@ struct ShellConfirmSheet {
       panel.windowNumber,
       frame: ShellCover.windowListRect(
         panel.frame, primaryScreenHeight: NSScreen.screens.first?.frame.height ?? 0))
+    watch.start()
   }
 
   func dismiss() {
+    watch.stop()
     ShellPanels.closed(panel.windowNumber)
     if let parent = panel.sheetParent {
       parent.endSheet(panel)
@@ -830,13 +851,16 @@ final class CoverWatch {
   private let panel: NSPanel
   private let buttons: [HandPressedButton]
   private let notice: NSTextField
+  /// What the notice calls the buttons it turns off.
+  private let button: String
   private var armedAt: Date
   private var timer: Timer?
 
-  init(panel: NSPanel, buttons: [HandPressedButton], notice: NSTextField) {
+  init(panel: NSPanel, buttons: [HandPressedButton], notice: NSTextField, button: String = "Run") {
     self.panel = panel
     self.buttons = buttons
     self.notice = notice
+    self.button = button
     armedAt = Date().addingTimeInterval(ShellConsent.armDelay)
     for button in buttons {
       button.isEnabled = false
@@ -857,10 +881,10 @@ final class CoverWatch {
   }
 
   /// What the window says while `owner`'s window is over it, naming the program when the list
-  /// gave a name with something left once made safe to show.
-  nonisolated static func notice(_ owner: String?) -> String {
+  /// gave a name with something left once made safe to show, and the `button` it turns off.
+  nonisolated static func notice(_ owner: String?, button: String = "Run") -> String {
     let who = ShellText.owner(owner).map { "A window of \($0)" } ?? "Another window"
-    return "\(who) is over this one, so Run is off until it moves."
+    return "\(who) is over this one, so \(button) is off until it moves."
   }
 
   /// After the panel is on screen.
@@ -885,7 +909,7 @@ final class CoverWatch {
     let covered = coverer != nil
     if let coverer {
       armedAt = max(armedAt, Date().addingTimeInterval(ShellConsent.armDelay))
-      let text = Self.notice(coverer.owner)
+      let text = Self.notice(coverer.owner, button: button)
       if notice.stringValue != text { notice.stringValue = text }
     }
     notice.alphaValue = covered ? 1 : 0

@@ -300,6 +300,27 @@ struct ShellWindowCheck {
     check(
       "and its Cancel is an ordinary button: any press can only leave things as they were",
       dontAskCancelled == 1 && dontAskConfirmed == 0)
+
+    // A program with Accessibility can press the switch that opens a sheet, so the person did
+    // not necessarily open it. A click-through window over its confirming button would then
+    // borrow their click, as it would over Run: the sheets get the run window's watch.
+    for (name, watchedSheet, confirmTitle) in [
+      ("Turn On Shell", sheet, ShellPane.Copy.enableConfirm),
+      ("Don't ask", dontAsk, ShellPane.Copy.dontAskConfirm),
+    ] {
+      check(
+        "the \(name) sheet's confirm starts off, with a test at the moment of a click",
+        !watchedSheet.confirm.isEnabled && watchedSheet.confirm.clear != nil)
+      check(
+        "and its notice, hidden until a window covers it, names that button",
+        watchedSheet.coverNotice.alphaValue == 0
+          && watchedSheet.coverNotice.stringValue
+            == CoverWatch.notice(nil, button: confirmTitle)
+      )
+    }
+    check(
+      "the run window's notice still names Run",
+      CoverWatch.notice(nil) == CoverWatch.notice(nil, button: "Run"))
   }
 
   /// A panel with a window number, never ordered on screen.

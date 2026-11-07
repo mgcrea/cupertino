@@ -371,6 +371,20 @@ export class WatchRegistry<R extends ArrivalRow> {
     return { watch: watch.id, filter: watch.filter, cursor, messages, more };
   }
 
+  /**
+   * The source now reads a different store: its file was replaced and
+   * reopened, and its cursors start again. Every watch, and the mark, start
+   * over at its head, so nothing the new file already holds is reported as
+   * arrived, and nothing after it is missed. Only the source can tell a
+   * replaced file from new rows: a new file whose cursors reach past the mark
+   * would otherwise read, to `tick`, as everything above the mark arriving.
+   */
+  restart(): void {
+    const head = this.#source.head();
+    this.#mark = head;
+    for (const [id, watch] of this.#watches) this.#watches.set(id, { ...watch, createdAt: head });
+  }
+
   /** Scan what arrived since the last tick and notify each watch it concerns. */
   tick(): void {
     if (this.#watches.size === 0) return;

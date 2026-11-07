@@ -782,6 +782,36 @@ describe("entries", () => {
     expect(entry).toMatchObject({ status: null, durationMs: null, bodyAvailable: false });
   });
 
+  it("shows a streamed request's status from its response record, and keeps one entry", () => {
+    const t = tab();
+    t.start();
+    const url = `${ORIGIN}/api/stream`;
+    const ref = t.request({ url }, null);
+    const response = {
+      kind: "fetch",
+      ref,
+      method: "GET",
+      url,
+      startedAt: T0,
+      requestHeaders: {},
+      requestBody: null,
+      status: 200,
+      statusText: "OK",
+      responseHeaders: { "content-type": "text/event-stream" },
+      contentType: "text/event-stream",
+      durationMs: null,
+      error: null,
+      body: null,
+    };
+    t.emit("cupertino:net-record", { ...response, phase: "response" });
+    const [inFlight] = listed(t).entries;
+    expect(listed(t).entries).toHaveLength(1);
+    expect(inFlight).toMatchObject({ status: 200, ok: null, durationMs: null });
+    t.emit("cupertino:net-record", { ...response, phase: "end", durationMs: 40 });
+    expect(listed(t).entries).toHaveLength(1);
+    expect(listed(t).entries[0]).toMatchObject({ id: inFlight!.id, status: 200, ok: true });
+  });
+
   it("gives console entries the first line of their stack", () => {
     const t = tab();
     t.start();
@@ -844,6 +874,25 @@ describe("list filters", () => {
 
   it("urlContains", () => {
     expect(listed(seeded(), { filter: { urlContains: "/api/" } }).entries).toHaveLength(3);
+  });
+
+  /*
+   * fetch("data:…;base64,…") is the usual way to turn base64 into a Blob, and
+   * its URL is the whole payload: one 4 MiB URL made a 4.19M-character list.
+   * A long one is listed as its header and its length; the filter still reads
+   * the whole of it, and network_get still returns the body.
+   */
+  it("summarises a long data: URL, and still filters on the whole of it", () => {
+    const t = tab();
+    t.start();
+    t.request({ url: `data:image/png;base64,${"A".repeat(5000)}MARK` });
+    t.request({ url: "data:,hi" });
+    const entries = listed(t).entries;
+    expect(entries[0]!.url).toBe("data:image/png;base64,… (5026 chars)");
+    expect(entries[1]!.url).toBe("data:,hi");
+    const found = listed(t, { filter: { urlContains: "MARK" } }).entries;
+    expect(found).toHaveLength(1);
+    expect(found[0]!.url).toBe("data:image/png;base64,… (5026 chars)");
   });
 
   it("kind", () => {
