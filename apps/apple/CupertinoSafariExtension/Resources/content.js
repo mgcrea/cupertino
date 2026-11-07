@@ -213,9 +213,17 @@
   const VISIBLE_MS = 1000;
   const HIDDEN_MS = 10000;
   let stopped = false;
+  // Whether a poll is in flight or scheduled. A stopped pump's last timer can
+  // still fire after the page comes back from the back/forward cache, so a
+  // restart checks this rather than start a second loop beside it.
+  let alive = false;
 
   async function pump() {
-    if (stopped) return;
+    if (stopped) {
+      alive = false;
+      return;
+    }
+    alive = true;
     // Whether this poll handed us work. A command is usually one step of a
     // sequence (click, then read), so the next one is probably already queued.
     let gotWork = false;
@@ -269,6 +277,16 @@
 
   addEventListener("pagehide", () => {
     stopped = true;
+  });
+
+  // Back from the back/forward cache: the same page, script state and all, so
+  // the pump `pagehide` stopped would stay stopped, and every command to the
+  // tab would time out as if the page had gone. A first load's pageshow is not
+  // `persisted`, and finds the pump already running.
+  addEventListener("pageshow", (event) => {
+    if (!event.persisted || !stopped) return;
+    stopped = false;
+    if (!alive) pump();
   });
 
   pump();

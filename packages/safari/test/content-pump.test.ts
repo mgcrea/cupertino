@@ -114,4 +114,87 @@ describe("content.js pump", () => {
     const poll = sent.find((m) => m.kind === "poll");
     expect(poll?.origin).toBe("https://gallica.bnf.fr");
   });
+
+  /**
+   * Back/forward cache. Leaving a page fires `pagehide`, which stops the pump;
+   * coming back to it from the cache fires `pageshow` with `persisted` and
+   * restores the same page, script state and all. A pump left stopped then
+   * answers no command again, and every command to the tab times out as if the
+   * page had gone. The timer the stopped pump had scheduled is frozen with the
+   * page and may fire after the restore, so a restart must not start a second
+   * loop beside it.
+   */
+  const bfcachePage = () => {
+    let polls = 0;
+    const listeners: Record<string, Array<(event: unknown) => void>> = {};
+    const context: Record<string, any> = {
+      browser: {
+        runtime: {
+          getManifest: () => ({ version: "1.0.0" }),
+          sendMessage: async (message: { kind: string }) => {
+            if (message.kind === "poll") polls += 1;
+            return { commands: [] };
+          },
+        },
+      },
+      setTimeout: () => 0,
+      clearTimeout: () => {},
+      addEventListener: (type: string, listener: (event: unknown) => void) => {
+        (listeners[type] ??= []).push(listener);
+      },
+      MutationObserver: class {
+        observe() {}
+        disconnect() {}
+      },
+      document: { hidden: false, title: "", documentElement: { outerHTML: "" } },
+      history: { pushState: () => {} },
+      location: { href: "https://app.example.com/", origin: "https://app.example.com" },
+    };
+    context.window = context;
+    createContext(context);
+    runInContext(SOURCE, context);
+    const fire = (type: string, event: unknown = {}) => {
+      for (const listener of listeners[type] ?? []) listener(event);
+    };
+    /** What the pump's scheduled timer does when it fires: call the pump. */
+    const timerFires = () => context.cupertinoPumpNow();
+    return { polls: () => polls, fire, timerFires };
+  };
+
+  it("polls again when the page comes back from the back/forward cache", async () => {
+    const page = bfcachePage();
+    await flush();
+    expect(page.polls()).toBe(1);
+
+    page.fire("pagehide", { persisted: true });
+    page.timerFires();
+    await flush();
+    expect(page.polls()).toBe(1);
+
+    page.fire("pageshow", { persisted: true });
+    await flush();
+    expect(page.polls()).toBe(2);
+  });
+
+  it("starts no second loop when the stopped pump's timer is still pending at the restore", async () => {
+    const page = bfcachePage();
+    await flush();
+
+    page.fire("pagehide", { persisted: true });
+    page.fire("pageshow", { persisted: true });
+    await flush();
+    expect(page.polls()).toBe(1);
+
+    page.timerFires();
+    await flush();
+    expect(page.polls()).toBe(2);
+  });
+
+  it("ignores the pageshow of a first load", async () => {
+    const page = bfcachePage();
+    await flush();
+    page.fire("pageshow", { persisted: false });
+    await flush();
+    expect(page.polls()).toBe(1);
+  });
 });
