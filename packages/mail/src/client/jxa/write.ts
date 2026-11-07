@@ -1224,7 +1224,7 @@ export const REPLY_OR_FORWARD = script(
       );
     }
     return ok({ sent: true, mode: p.mode, bodyVerified: bodyVerified,
-                verifiedChars: verifiedChars, subject: subject });
+                verifiedChars: verifiedChars, subject: subject, attachments: attached.count });
   }
 
   // A draft is left for the person to read, unless the setting asks otherwise.
@@ -1236,6 +1236,7 @@ export const REPLY_OR_FORWARD = script(
     subject: subject,
     bodyVerified: bodyVerified,
     verifiedChars: verifiedChars,
+    attachments: attached.count,
     note: bodyVerified
       ? "Draft window is open in Mail for review; its body was read back out of the window and matches."
       : "Draft window is open in Mail for review."

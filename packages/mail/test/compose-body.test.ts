@@ -46,6 +46,8 @@ type MailBehaviour = {
   bodyUnreadable?: boolean;
   /** Someone sends or closes the composer by hand, right after the paste. */
   windowVanishesAfterPaste?: boolean;
+  /** Mail refuses a file, as it would one it cannot read. */
+  attachFails?: boolean;
 };
 
 const paragraphs = (text: string) => text.split("\n").filter((line) => line.trim());
@@ -58,6 +60,9 @@ const staticText = (value: string) => ({
   value: () => value,
   uiElements: () => [],
 });
+
+/** JXA's `Path`, as `attachFiles` hands it to `Attachment`. */
+const Path = (path: string) => ({ path });
 
 const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {}) => {
   const {
@@ -72,6 +77,7 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     closeFails = false,
     bodyUnreadable = false,
     windowVanishesAfterPaste = false,
+    attachFails = false,
   } = behaviour;
 
   const state = {
@@ -93,6 +99,8 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     composersOpened: 0,
     closes: 0,
     closedSaving: null as string | null,
+    /** Paths attached, and how many pastes had happened when each went on. */
+    attached: [] as { path: string; pastesBefore: number }[],
   };
 
   // A reference into a window that has closed does not come back empty, it
@@ -218,12 +226,24 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
       throw new Error("send() must not be called on a composer: it is not the verified path");
     },
     toRecipients: { push: (r: { address: string }) => recipients.push(r.address) },
+    content: {
+      attachments: {
+        push: (a: { fileName: { path: string } }) => {
+          if (attachFails) throw new Error("-10000 AppleEvent handler failed");
+          state.attached.push({ path: a.fileName.path, pastesBefore: state.pastes });
+        },
+        get length() {
+          return state.attached.length;
+        },
+      },
+    },
   };
   const recipients: string[] = [];
   const message = { subject: () => "original" };
   const mailbox = { name: () => "INBOX", messages: { byId: () => message } };
   const account = { id: () => "UUID", mailboxes: () => [mailbox] };
   const mail = {
+    Attachment: (spec: unknown) => spec,
     accounts: () => [account],
     reply: () => {
       state.composersOpened++;
@@ -266,8 +286,14 @@ const runScript = (params: Record<string, unknown>, behaviour: MailBehaviour = {
     },
   };
 
-  const factory = new Function("ObjC", "Application", "$", `${REPLY_OR_FORWARD}\nreturn run;`);
-  const run = factory(ObjC, Application, dollar) as (argv: string[]) => string;
+  const factory = new Function(
+    "ObjC",
+    "Application",
+    "$",
+    "Path",
+    `${REPLY_OR_FORWARD}\nreturn run;`,
+  );
+  const run = factory(ObjC, Application, dollar, Path) as (argv: string[]) => string;
   const envelope = JSON.parse(
     run([JSON.stringify({ accountUuid: "UUID", mailbox: "INBOX", id: 42, ...params })]),
   );
@@ -404,6 +430,41 @@ describe("sending", () => {
     expect(envelope.ok).toBe(false);
     expect(envelope.error.code).toBe("SEND_UNCONFIRMED");
     expect(envelope.error.message).toMatch(/DO NOT send it again/);
+  });
+});
+
+/*
+ * The lane that runs without Cupertino.app attaches files as the other two do,
+ * before the body, and says how many Mail holds. Whether a push onto a reply's
+ * content wraps it in a hidden quote, as it does a new message's, is not
+ * measured; this pins only what the script does.
+ */
+describe("reply attachments", () => {
+  it("attaches every file before the body, and reports how many Mail holds", () => {
+    const { envelope, state } = runScript({ ...REPLY, attachments: ["/tmp/a.pdf", "/tmp/b.png"] });
+    expect(envelope.ok).toBe(true);
+    expect(state.attached).toEqual([
+      { path: "/tmp/a.pdf", pastesBefore: 0 },
+      { path: "/tmp/b.png", pastesBefore: 0 },
+    ]);
+    expect(envelope.data).toMatchObject({ draft: true, attachments: 2 });
+  });
+
+  it("reports them on a send too", () => {
+    const { envelope } = runScript({ ...REPLY, sendNow: true, attachments: ["/tmp/a.pdf"] });
+    expect(envelope.ok).toBe(true);
+    expect(envelope.data).toMatchObject({ sent: true, attachments: 1 });
+  });
+
+  it("writes nothing and closes the composer when a file is refused", () => {
+    const { envelope, state } = runScript(
+      { ...REPLY, attachments: ["/tmp/a.pdf"] },
+      { attachFails: true },
+    );
+    expect(envelope.ok).toBe(false);
+    expect(envelope.error.code).toBe("ATTACHMENT_FAILED");
+    expect(state.pastes).toBe(0);
+    expect(state.closes).toBe(1);
   });
 });
 
