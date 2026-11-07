@@ -1029,6 +1029,16 @@ nonisolated enum MailComposer {
         }
         if let refused = try outsideQuote(w, state: untouched) { return refused }
       }
+      // The files go to the end of the own text after a body or edits as well, and that caret
+      // can resolve into a reply's first quoted block where a whole-own selection does not
+      // (`selectionReachesQuote`). Checked here too, so that refusal comes before the body is
+      // in an autosaved window rather than after it; step 11 checks it again at its paste.
+      if !request.files.isEmpty, !steps.isEmpty || request.body != nil {
+        guard let back = try w.selectOwnEnd(), back.isEmpty else {
+          return misselected(nil, state: untouched)
+        }
+        if let refused = try outsideQuote(w, state: untouched) { return refused }
+      }
     } catch {
       return refusal(
         "composer", "The composer's text could not be selected (\(describe(error))). \(untouched)",
