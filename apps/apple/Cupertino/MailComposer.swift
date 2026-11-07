@@ -454,6 +454,10 @@ nonisolated enum MailComposer {
     var save = true
     /// The opening the caller expects the own text to have (the old `sameDraft`).
     var expectHead: String?
+    /// `expectHead` is the draft's whole stored text, up to its cap: below `headLength` the own
+    /// text must be exactly it, not merely begin it. The Mail server sends it for a draft that
+    /// is not a reply; a reply's stored text runs on into its quote, so it keeps the prefix.
+    var expectWhole = false
     /// The front goes back to the application that had it once the edit is
     /// verified. False (Mail's "Return to the previous app after a draft",
     /// off) leaves Mail in front with the draft in it, for the person to read.
@@ -521,6 +525,12 @@ nonisolated enum MailComposer {
     if let head = args["expectHead"] {
       guard let head = head as? String else { throw ArgumentError("'expectHead' is a string.") }
       request.expectHead = head
+    }
+    if let whole = args["expectWhole"] {
+      guard let whole = whole as? Bool else {
+        throw ArgumentError("'expectWhole' is a boolean.")
+      }
+      request.expectWhole = whole
     }
     if let handBack = args["handBack"] {
       guard let handBack = handBack as? Bool else {
@@ -880,7 +890,7 @@ nonisolated enum MailComposer {
     }
 
     // 3.
-    if let head = request.expectHead, !sameHead(head, before.text) {
+    if let head = request.expectHead, !sameHead(head, before.text, whole: request.expectWhole) {
       return refusal(
         "identity",
         "The composer's own text does not begin the way this draft's does, so it may be "
@@ -1452,13 +1462,16 @@ nonisolated enum MailComposer {
   static let headLength = 120
 
   /// The old `sameDraft`: the two openings agree for as long as both run, up to
-  /// `headLength` characters. Both empty is a match.
-  static func sameHead(_ expected: String, _ shown: String) -> Bool {
+  /// `headLength` characters. Both empty is a match. With `whole`, `expected` is the draft's
+  /// whole stored text, so below `headLength` the two must be equal: a window that only begins
+  /// it ("Hi Dave," for "Hi Dave, the VMs are up") is another message.
+  static func sameHead(_ expected: String, _ shown: String, whole: Bool = false) -> Bool {
     let a = Array(squash(expected))
     let b = Array(squash(shown))
     if a.isEmpty || b.isEmpty { return a.isEmpty == b.isEmpty }
     let n = min(a.count, b.count, headLength)
-    return a.prefix(n) == b.prefix(n)
+    guard a.prefix(n) == b.prefix(n) else { return false }
+    return !whole || n == headLength || a.count == b.count
   }
 
   /// Said by every refusal issued once a paste has reached Mail. Mail autosaves

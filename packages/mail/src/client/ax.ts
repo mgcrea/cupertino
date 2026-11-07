@@ -162,6 +162,14 @@ export type EditComposerArgs = {
   attachments?: string[];
   save?: boolean;
   expectHead?: string;
+  /**
+   * With `expectHead`: the head is the draft's whole stored text (up to its
+   * cap), so below 120 characters the window must hold exactly that text, not
+   * merely begin it. Sent for a draft that is not a reply, whose stored text is
+   * its own; a reply's runs on into its quote, which the window lists apart. An
+   * app that predates it ignores it and checks the prefix.
+   */
+  expectWhole?: boolean;
 };
 
 export type ReachReport = {

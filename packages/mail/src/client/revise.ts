@@ -16,8 +16,11 @@ import { squash, type MailAxLane, type NativeComposer } from "./ax.js";
  *
  *   * The window is matched to the draft by CONTENT, not only by subject. Two
  *     replies in one thread carry the same title.
- *   * The first 120 characters of the stored text go along as `expectHead`, so
- *     the app checks the same thing again against the window it actually edits.
+ *   * The stored text's opening goes along as `expectHead`, so the app checks
+ *     the same thing again against the window it actually edits: the first 120
+ *     characters for a reply, and for any other draft its stored text whole (up
+ *     to 400 characters) with `expectWhole`, since below the cap its window must
+ *     hold exactly that text.
  *   * Every refusal the app makes is returned exactly as it answered.
  */
 
@@ -92,7 +95,7 @@ const refuse = (
  * the other is what an accessibility client sees a WebKit view display — and
  * they agree on the words while disagreeing about every line break.
  */
-const sameDraft = (stored: string, shown: string): boolean => {
+const sameDraft = (stored: string, shown: string, whole: boolean): boolean => {
   // A file is an element with no value in the window, and plain text renders
   // one as an object replacement character (unmeasured for a stored draft), so
   // neither side's reading of one is compared with the other's.
@@ -102,7 +105,13 @@ const sameDraft = (stored: string, shown: string): boolean => {
   // compare, and pasting into it destroys nothing either way.
   if (a.length === 0 || b.length === 0) return a.length === b.length;
   const chars = Math.min(a.length, b.length, IDENTITY_CHARS);
-  return a.slice(0, chars) === b.slice(0, chars);
+  if (a.slice(0, chars) !== b.slice(0, chars)) return false;
+  // `whole`: the stored text is the draft's own and nothing else, so below the
+  // cap one text that merely begins the other is a different message that has
+  // not got as far: an open "Hi Dave," is not the closed "Hi Dave, the VMs are
+  // up". A reply's stored text runs on into its quote, which the window lists
+  // apart, so for a reply the prefix is all there is to compare.
+  return !whole || chars === IDENTITY_CHARS || a.length === b.length;
 };
 
 /** A composer whose text the listing could not read: a background tab, or a body not loaded. */
@@ -139,7 +148,7 @@ export const reviseDraftInPlace = async (
     if (sameSubject.length === 0) return null;
     const hidden = sameSubject.filter(isHidden);
     const read = sameSubject.filter((c) => !isHidden(c));
-    const matches = read.filter((c) => sameDraft(facts.contentHead, c.text ?? ""));
+    const matches = read.filter((c) => sameDraft(facts.contentHead, c.text ?? "", !facts.isReply));
     if (matches.length === 0 && hidden.length === 0) {
       return refuse(
         "identity",
@@ -185,13 +194,16 @@ export const reviseDraftInPlace = async (
   }
 
   const files = opts.attachments ?? [];
-  const head = facts.contentHead.slice(0, IDENTITY_CHARS);
+  const whole = !facts.isReply;
+  const head = whole ? facts.contentHead : facts.contentHead.slice(0, IDENTITY_CHARS);
   const answer = await lane.editComposer({
     composer: handle,
     ...(opts.edits !== undefined ? { edits: opts.edits } : {}),
     ...(opts.body !== undefined ? { body: opts.body } : {}),
     ...(files.length > 0 ? { attachments: files } : {}),
-    ...(matched || head.length > 0 ? { expectHead: head } : {}),
+    ...(matched || head.length > 0
+      ? { expectHead: head, ...(whole ? { expectWhole: true } : {}) }
+      : {}),
   });
   if (answer.replaced !== true) return answer;
 

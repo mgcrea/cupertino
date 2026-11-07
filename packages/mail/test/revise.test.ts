@@ -162,6 +162,67 @@ describe("reviseDraftInPlace", () => {
     await reviseDraftInPlace(lane, facts({ contentHead: head }), { body: "BRAVO" });
     lane.close();
     expect(edits(seen)[0]!.args.expectHead).toBe("x".repeat(120));
+    // A reply's stored text runs on into its quote, so the app keeps the prefix rule for it.
+    expect(edits(seen)[0]!.args.expectWhole).toBeUndefined();
+  });
+
+  /*
+   * A draft that is not a reply is stored as its own text and nothing else, so
+   * below the 120-character cap its window must hold exactly that text. A
+   * prefix used to do: an open message reading "Hi Dave," passed for the
+   * closed draft "Hi Dave, the VMs are up…" under the same subject, and was
+   * overwritten.
+   */
+  describe("a draft that is not a reply", () => {
+    const NEW = "Quarterly numbers";
+    const draft = facts({
+      subject: NEW,
+      isReply: false,
+      contentHead: "Hi Dave, the VMs are up\nand running.",
+    });
+
+    it("refuses an open composer whose text only begins the draft's", async () => {
+      const { env, seen } = await hostStub({
+        composers: [{ composer: "mc-7", subject: NEW, text: "Hi Dave," }],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, draft, { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: false, capability: "identity" });
+      expect(edits(seen)).toHaveLength(0);
+    });
+
+    it("edits the composer holding the draft's whole text, and has the app check it whole", async () => {
+      const { env, seen } = await hostStub({
+        composers: [
+          { composer: "mc-7", subject: NEW, text: "Hi Dave," },
+          { composer: "mc-8", subject: NEW, text: "Hi Dave,  the VMs are up and running." },
+        ],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(lane, draft, { body: "BRAVO" });
+      lane.close();
+      expect(result).toMatchObject({ replaced: true });
+      expect(edits(seen)[0]!.args).toMatchObject({
+        composer: "mc-8",
+        expectHead: draft.contentHead,
+        expectWhole: true,
+      });
+    });
+
+    it("matches a draft past the cap on its first 120 characters", async () => {
+      const { env } = await hostStub({
+        composers: [{ composer: "mc-9", subject: NEW, text: "y".repeat(500) }],
+      });
+      const lane = MailAxLane.open(env)!;
+      const result = await reviseDraftInPlace(
+        lane,
+        facts({ subject: NEW, isReply: false, contentHead: "y".repeat(400) }),
+        { body: "BRAVO" },
+      );
+      lane.close();
+      expect(result).toMatchObject({ replaced: true });
+    });
   });
 
   it("passes the native refusal through unchanged", async () => {

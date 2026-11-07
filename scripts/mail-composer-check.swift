@@ -897,6 +897,39 @@ struct MailComposerCheck {
         EditFake(own: "Dear Ann,\nthe plans"), Request(body: "New", expectHead: "Dear Ann,  the"))
       check("an expectHead differing only in whitespace passes", ok["replaced"] as? Bool == true)
     }
+    // A draft that is not a reply is stored as its own text, so with `expectWhole` the window
+    // must hold exactly that text below the cap: an open "Hi Dave," is not the closed draft
+    // "Hi Dave, the VMs are up…". A reply's head runs on into its quote and keeps the prefix.
+    do {
+      let short = EditFake(own: "Hi Dave,")
+      let (refused, board, front) = run(
+        short,
+        Request(body: "New", expectHead: "Hi Dave, the VMs are up\nand running.", expectWhole: true)
+      )
+      check(
+        "a window that only begins a whole expectHead is refused as identity",
+        capability(refused) == "identity" && untouched(short, board, front))
+      let (asReply, _, _) = run(
+        EditFake(own: "Hi Dave,"), Request(body: "New", expectHead: "Hi Dave, the VMs are up"))
+      check(
+        "without expectWhole, as for a reply, the prefix still passes",
+        asReply["replaced"] as? Bool == true)
+      let (whole, _, _) = run(
+        EditFake(own: "Hi Dave, the VMs are up\nand running."),
+        Request(body: "New", expectHead: "Hi Dave,  the VMs are up and running.", expectWhole: true)
+      )
+      check("the whole text, whitespace aside, passes", whole["replaced"] as? Bool == true)
+      let long = String(repeating: "y", count: 500)
+      let (capped, _, _) = run(
+        EditFake(own: long),
+        Request(body: "New", expectHead: String(repeating: "y", count: 400), expectWhole: true))
+      check("past the cap the first 120 characters decide", capped["replaced"] as? Bool == true)
+      check(
+        "expectWhole is read as a boolean, off by default",
+        (try? MailComposer.request(from: ["body": "a", "expectWhole": true]))?.expectWhole == true
+          && (try? MailComposer.request(from: ["body": "a"]))?.expectWhole == false
+          && (try? MailComposer.request(from: ["body": "a", "expectWhole": "yes"])) == nil)
+    }
 
     // The quote goes with the paste.
     do {
