@@ -14,7 +14,8 @@ store path (file lane). For reads the app links no data frameworks: it brokers, 
 read. Voice Memos' writes are the exception. The app saves them itself, through Core Data with
 Voice Memos' own model, because only a Core Data save reaches iCloud; the reads stay with the
 server. See [the store lane design](superpowers/specs/2026-11-10-swift-write-lane-design.md) and
-[voice-memos.md](voice-memos.md). That leaves three ways to reach anything:
+[voice-memos.md](voice-memos.md). Whichever side does the work, an app can be reached in three
+ways:
 
 | Lane                                       | Cost                                                             | Ceiling                                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -22,8 +23,10 @@ server. See [the store lane design](superpowers/specs/2026-11-10-swift-write-lan
 | **File lane** (read-only SQLite under FDA) | grant already held; schema must be reverse-engineered by a probe | fast, read-only, drifts across macOS releases                                               |
 | **Neither**                                | link EventKit / Contacts / PhotoKit in the app; new TCC grants   | complete and fast, but moves logic from TypeScript into Swift and forks the two-lane design |
 
-No surface has needed the third lane. Calendar looked like it would and did not — see
-[calendar.md](calendar.md).
+No surface reads through the third lane. Calendar looked like it would and did not — see
+[calendar.md](calendar.md). Voice Memos' writes are its one use, a narrow and write-only one: the
+app saves through Core Data with Voice Memos' own model, under the Full Disk Access the file lane
+already holds, so it asks for no new grant.
 
 ## Scriptability, measured on macOS 26.6
 

@@ -39,7 +39,9 @@ transcribed can be handed to it. A file is never overwritten unless asked.
 
 Five more change the library itself, and are registered only when Cupertino.app hosts this
 server: the app makes the save, so a package run from npm has no way to reach them and is never
-told they exist.
+told they exist. Switching Voice Memos' writes off in Cupertino while a session runs does not take
+them away: until the server restarts they stay listed, and each call is refused with reason
+`writesOff`.
 
 | Tool                                  | What                                         |
 | ------------------------------------- | -------------------------------------------- |

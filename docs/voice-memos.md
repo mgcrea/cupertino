@@ -3,7 +3,9 @@
 Phase 0 for a `voice-memos` surface. Measured on 2026-11-10, macOS 27.2, with
 [`scripts/probe-voice-memos.mjs`](../scripts/probe-voice-memos.mjs), run through `apple_shell_run`
 because the agent's own shell holds no Full Disk Access. That library held 87 recordings from
-2019 to 2026. The verdict is **GO, file lane only, read-only**.
+2019 to 2026. The verdict is **GO, file lane only, read-only**. That was phase 0's verdict: the
+reads still take the file lane, and writes later shipped through Cupertino's store lane (see
+[Writing](#writing-sql-stays-on-this-mac-core-data-reaches-icloud)).
 
 ## Lanes
 
