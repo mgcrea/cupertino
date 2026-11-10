@@ -83,7 +83,7 @@ const SWIFT_SERVERS = [
  * here until its release adds the card. The last test below fails once a card exists, so
  * an entry cannot outlive the reason for it.
  */
-const UNLISTED = new Set(["voice-memos"]);
+const UNLISTED = new Set([]);
 
 /** Every tool name passed to `server.registerTool`, across every listed package. */
 const registeredTools = ({ unlisted = false } = {}) => {
@@ -202,9 +202,16 @@ const surfaceBlocks = () => {
   });
 };
 
-/** The bullet a surface gets in llms.txt, from its first line to the next blank line or bullet. */
+/**
+ * The bullet a surface gets in llms.txt, from its first line to the next blank line or bullet.
+ * The bullet opens with the display name, which a hyphenated id spells as words:
+ * `voice-memos` is "Voice Memos".
+ */
 const llmsBullet = (text, id) => {
-  const name = id[0].toUpperCase() + id.slice(1);
+  const name = id
+    .split("-")
+    .map((w) => w[0].toUpperCase() + w.slice(1))
+    .join(" ");
   const lines = text.split("\n");
   const start = lines.findIndex((l) => l.startsWith(`- ${name} — `));
   if (start < 0) return null;
