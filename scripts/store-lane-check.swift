@@ -501,8 +501,11 @@ struct StoreLaneCheck {
       try expect(moved?.changed == ["folder"], "changed is \(moved?.changed ?? [])")
       let (one, two) = (try folderCount(storeURL, "F-ONE"), try folderCount(storeURL, "F-TWO"))
       try expect(one == 0 && two == 1, "counts are F-ONE \(one ?? -1), F-TWO \(two ?? -1)")
+      // A deleted memo still counts in its folder, and counts again once restored.
       _ = try writer.delete(id: "R-ONE")
       try expect(try folderCount(storeURL, "F-TWO") == 1, "the delete changed F-TWO's count")
+      _ = try writer.restore(id: "R-ONE")
+      try expect(try folderCount(storeURL, "F-TWO") == 1, "the restore changed F-TWO's count")
       var out: VoiceMemosWriter.Result?
       try expectMoveHistory(storeURL, "the move out", id: "R-ONE", folders: ["F-TWO"]) {
         out = try writer.move(id: "R-ONE", folderId: nil)
@@ -544,25 +547,47 @@ struct StoreLaneCheck {
       }
     }
 
+    check("editsRefusedInRecentlyDeleted") {
+      let (writer, storeURL) = try voiceMemosFixture("deleted-edits")
+      _ = try writer.delete(id: "R-ONE")
+      let before = try history(storeURL).count
+      let edits: [(String, () throws -> Void)] = [
+        ("rename", { _ = try writer.rename(id: "R-ONE", title: "Synthetic renamed") }),
+        ("favourite", { _ = try writer.setFavorite(id: "R-ONE", favorite: true) }),
+        ("move", { _ = try writer.move(id: "R-ONE", folderId: "F-TWO") }),
+      ]
+      for (label, call) in edits {
+        let message = try expectRefusal("invalid", label, call)
+        try expect(
+          message == "the recording is in Recently Deleted: restore it first",
+          "\(label) says \(message)")
+      }
+      let after = try history(storeURL).count
+      try expect(after == before, "the refused edits wrote \(after - before) transactions")
+      let title = try recording(storeURL, "R-ONE", "encryptedTitle") as? String
+      try expect(title == "Synthetic one", "the title changed to \(title ?? "nil")")
+    }
+
     check("noOpWritesNoHistory") {
       let (writer, storeURL) = try voiceMemosFixture("no-op")
-      _ = try writer.delete(id: "R-ONE")
       _ = try writer.setFavorite(id: "R-ONE", favorite: true)
-      let before = try history(storeURL).count
+      // Edits are refused in Recently Deleted, so they run before the delete the last needs.
       let noOps: [(String, () throws -> VoiceMemosWriter.Result)] = [
-        ("a second delete", { try writer.delete(id: "R-ONE") }),
         ("a repeated favourite", { try writer.setFavorite(id: "R-ONE", favorite: true) }),
         ("a move to the current folder", { try writer.move(id: "R-ONE", folderId: "F-ONE") }),
         ("a move out of no folder", { try writer.move(id: "R-TWO", folderId: nil) }),
         ("the same title", { try writer.rename(id: "R-TWO", title: "Synthetic two ") }),
         ("restoring a memo not deleted", { try writer.restore(id: "R-TWO") }),
+        ("a second delete", { try writer.delete(id: "R-ONE") }),
       ]
       for (label, call) in noOps {
+        if label == "a second delete" { _ = try writer.delete(id: "R-ONE") }
+        let before = try history(storeURL).count
         let result = try call()
         try expect(result.changed.isEmpty, "\(label) changed \(result.changed)")
+        let after = try history(storeURL).count
+        try expect(after == before, "\(label) wrote \(after - before) history transactions")
       }
-      let after = try history(storeURL).count
-      try expect(after == before, "the no-ops wrote \(after - before) history transactions")
     }
 
     check("unknownRecordingIsNotFound") {

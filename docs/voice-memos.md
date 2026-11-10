@@ -204,6 +204,10 @@ has no lane and registers none of them, so a host is never told about a capabili
 Without writes on, none is registered either, as for `save_recording`. If writes are switched off
 in Cupertino while a session runs, the next call is refused with `writesOff`.
 
+**Rename, move and favourite refuse a recording in Recently Deleted** with `invalid` ("the
+recording is in Recently Deleted: restore it first"), since the app offers none of them there and
+a state it never makes would sync to every device; delete and restore take it as it is.
+
 **How one call runs.** The server sends one JSON-RPC request over Cupertino's socket, and the app
 admits it only from the Voice Memos server it spawned itself. The app then:
 

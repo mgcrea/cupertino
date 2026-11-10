@@ -40,6 +40,10 @@ const savedLike = (what: string): string =>
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true } as const;
 
+/** Rename, move and favourite say this: the app offers none of them in Recently Deleted. */
+const NOT_DELETED =
+  "A recording in Recently Deleted is refused with reason invalid: restore it first.";
+
 /**
  * The store lane's tools. Registered only when writes are on and Cupertino hosts this server;
  * see `tools/index.ts`. The app validates every argument and answers with a `reason` on
@@ -56,7 +60,7 @@ export const registerStoreWriteTools = (server: McpServer, lane: VoiceMemosLane)
         "Memos next runs. Only available when Cupertino hosts this server. Changes the title " +
         "and nothing else.",
       inputSchema: z.object({
-        id: idArg,
+        id: idArg.describe(`${idArg.description ?? "The recording's id."} ${NOT_DELETED}`),
         title: z
           .string()
           .describe(
@@ -74,7 +78,7 @@ export const registerStoreWriteTools = (server: McpServer, lane: VoiceMemosLane)
     {
       description:
         "Move one recording into a folder, or out of every folder with folderId null. " +
-        `${savedLike("a move")} Changes the folder and nothing else.`,
+        `${savedLike("a move")} Changes the folder and nothing else. ${NOT_DELETED}`,
       inputSchema: z.object({
         id: idArg,
         folderId: z
@@ -96,7 +100,7 @@ export const registerStoreWriteTools = (server: McpServer, lane: VoiceMemosLane)
     {
       description:
         "Mark one recording as a favourite, or clear it. " +
-        `${savedLike("a favourite set")} Changes the favourite and nothing else.`,
+        `${savedLike("a favourite set")} Changes the favourite and nothing else. ${NOT_DELETED}`,
       inputSchema: z.object({
         id: idArg,
         favorite: z.boolean().describe("True to mark it a favourite, false to clear it."),

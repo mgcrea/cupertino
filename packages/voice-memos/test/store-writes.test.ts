@@ -157,6 +157,23 @@ describe("store lane tools", () => {
     for (const name of STORE_WRITE_TOOLS) expect(names).not.toContain(name);
   });
 
+  it("tells rename, move and favourite, and only those, that Recently Deleted is refused", async () => {
+    const { env } = await hostStub(saves);
+    const tools = (await (await connect({ writes: true, lane: env })).listTools()).tools;
+    const refusal = "Recently Deleted is refused with reason invalid: restore it first.";
+    for (const name of STORE_WRITE_TOOLS) {
+      const tool = tools.find((t) => t.name === name);
+      const text = JSON.stringify([tool?.description, tool?.inputSchema]);
+      const edits = !/delete_recording|restore_recording/.test(name);
+      expect(text.includes(refusal), name).toBe(edits);
+    }
+    const rename = tools.find((t) => t.name === "apple_voice_memos_rename_recording");
+    const properties = rename?.inputSchema.properties as
+      | Record<string, { description?: string }>
+      | undefined;
+    expect(properties?.id?.description).toMatch(/^The recording's id\. .+ restore it first\.$/);
+  });
+
   it("annotates every lane tool idempotent, and only delete destructive", async () => {
     const { env } = await hostStub(saves);
     const tools = (await (await connect({ writes: true, lane: env })).listTools()).tools;

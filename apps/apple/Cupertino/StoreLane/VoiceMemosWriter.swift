@@ -15,6 +15,9 @@ import Foundation
 /// - delete: `evictionDate` to now; the folder count keeps the deleted memo.
 /// - restore: `evictionDate` to nil.
 ///
+/// Rename, favourite and move refuse a recording in Recently Deleted (`evictionDate` set), as
+/// the app offers none of them there; delete and restore take it as it is.
+///
 /// A call that would change nothing sets nothing, so the opener sees no changes and does not
 /// save. Values are compared before they are set: Core Data counts some same-value sets as
 /// changes.
@@ -69,7 +72,7 @@ nonisolated struct VoiceMemosWriter: Sendable {
 
   func rename(id: String, title: String) throws -> Result {
     let title = try Self.validTitle(title)
-    return try update(id) { recording, _ in
+    return try edit(id) { recording, _ in
       var changed: [String] = []
       for key in ["encryptedTitle", "customLabelForSorting"]
       where Self.set(recording, key, to: title) {
@@ -80,7 +83,7 @@ nonisolated struct VoiceMemosWriter: Sendable {
   }
 
   func setFavorite(id: String, favorite: Bool) throws -> Result {
-    try update(id) { recording, _ in
+    try edit(id) { recording, _ in
       let old = (recording.value(forKey: "sharedFlags") as? NSNumber)?.int64Value
       // Clearing a favourite that was never set leaves the nil alone rather than writing 0.
       if old == nil && !favorite { return [] }
@@ -91,7 +94,7 @@ nonisolated struct VoiceMemosWriter: Sendable {
   }
 
   func move(id: String, folderId: String?) throws -> Result {
-    try update(id) { recording, context in
+    try edit(id) { recording, context in
       let destination = try folderId.map {
         try CoreDataStore.fetchOne("Folder", key: "uuid", value: $0, in: context)
       }
@@ -135,6 +138,20 @@ nonisolated struct VoiceMemosWriter: Sendable {
       throw StoreLaneError.invalid("the title has a line break")
     }
     return trimmed
+  }
+
+  /// `update`, refused for a recording in Recently Deleted: the app never renames, favourites or
+  /// moves a deleted memo, so no state it never made is saved for sync to carry.
+  private func edit(
+    _ id: String,
+    _ body: (NSManagedObject, NSManagedObjectContext) throws -> [String]
+  ) throws -> Result {
+    try update(id) { recording, context in
+      guard recording.value(forKey: "evictionDate") == nil else {
+        throw StoreLaneError.invalid("the recording is in Recently Deleted: restore it first")
+      }
+      return try body(recording, context)
+    }
   }
 
   /// Fetches the recording `id` and runs `body` on it in one write; `body` returns the

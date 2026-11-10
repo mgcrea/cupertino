@@ -41,6 +41,9 @@ Core Data with Voice Memos' own model, so iCloud uploads it like a change made i
 else is refused with reason \`invalid\`. Pass the id the read tools return; a folder id comes
 from \`list_folders\`.
 
+**A recording in Recently Deleted cannot be renamed, moved or favourited**, as in the app: those
+three refuse it with reason \`invalid\`, so restore it first, and only if the person asked for that.
+
 **A write syncs when Voice Memos next runs.** Nothing is launched to make it happen, so say the
 change is saved on this Mac and will reach other devices once Voice Memos runs, not that it is
 already on the iPhone. When the result's \`syncMeasured\` is false, the save still happened but
