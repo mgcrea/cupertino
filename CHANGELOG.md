@@ -22,10 +22,20 @@ summary.
   can be found again by listening. Search ignores case and accents, so "cafe" finds "Café".
   Recordings from before 2025 have no transcript, because Apple did not backfill, and the server
   says so rather than making one up. With writes on, `save_recording` copies a recording's audio to
-  `~/Downloads`, where Cadence can pick it up. Nothing writes to Voice Memos itself: the app ships
-  no scripting dictionary, and its App Intents can only be run from Shortcuts. Full Disk Access is
-  required. Checked against a real library of 87 recordings: all 28 from 2025 on read, and an
-  exported `.m4a` and `.qta` both transcribed in Cadence.
+  `~/Downloads`, where Cadence can pick it up. The app ships no scripting dictionary, and its App
+  Intents can only be run from Shortcuts, so from npm nothing writes to Voice Memos itself. Full
+  Disk Access is required. Checked against a real library of 87 recordings: all 28 from 2025 on
+  read, and an exported `.m4a` and `.qta` both transcribed in Cadence.
+- **Rename, move, favourite, delete and restore a voice memo, in Cupertino.** Five tools,
+  `rename_recording`, `move_recording`, `set_favorite`, `delete_recording` (to Recently Deleted)
+  and `restore_recording`, exist only when Cupertino hosts the Voice Memos server and its writes
+  are on; from npm they are absent. Cupertino.app saves each one through Core Data with Voice
+  Memos' own model, so iCloud uploads it like a change made in the app. A rename written straight
+  into the database showed on the Mac and never reached the iPhone. Each tool changes only what
+  Voice Memos itself changes for the same edit, watched one step at a time. A write syncs when
+  Voice Memos next runs, and Cupertino launches nothing to make it happen. Sync was measured on
+  macOS 27.2 on a Mac and an iPhone; on another Voice Memos model version the result says sync is
+  not yet measured.
 
 ## [1.37.2] - 2026-11-10
 

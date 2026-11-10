@@ -42,7 +42,7 @@ off cannot see that they exist.
 | Messages    | [`packages/messages`](packages/messages)       | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches             |
 | Safari      | [`packages/safari`](packages/safari)           | implemented — 21 tools, history/tabs/reading list/page reads + gated writes, codes, network, cookies |
 | Maps        | [`packages/maps`](packages/maps)               | implemented — 13 tools, favourites/Guides/recents + gated writes                                     |
-| Voice Memos | [`packages/voice-memos`](packages/voice-memos) | implemented — 6 tools, recordings/folders/search over Apple's transcripts + gated audio export       |
+| Voice Memos | [`packages/voice-memos`](packages/voice-memos) | implemented — 11 tools, recordings/folders/search over Apple's transcripts + gated export and edits  |
 | Screen      | —                                              | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on        |
 | Sound       | —                                              | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on       |
 | Desktop     | —                                              | implemented — 27 tools, AXUIElement natively; in-app, no npm package; off until switched on          |
@@ -416,17 +416,26 @@ it sits in the one directory of Maps' container that Full Disk Access gates, and
 
 ### Voice Memos
 
-| Always available                                 | Write-gated      |
-| ------------------------------------------------ | ---------------- |
-| `list_folders` `list_recordings` `get_recording` | `save_recording` |
-| `search_recordings` `diagnostics`                |                  |
+| Always available                                 | Write-gated                                  |
+| ------------------------------------------------ | -------------------------------------------- |
+| `list_folders` `list_recordings` `get_recording` | `save_recording`                             |
+| `search_recordings` `diagnostics`                | `rename_recording` `move_recording` (in-app) |
+|                                                  | `set_favorite` `delete_recording` (in-app)   |
+|                                                  | `restore_recording` (in-app)                 |
 
 Recordings, folders, favourites and Recently Deleted from `CloudRecordings.db`, and the transcript
 **Apple made on-device and embedded in each audio file**, read box by box without touching the
 audio. Every segment carries its start and end, so a quote can be found again by listening.
 Recordings from before 2025 have no transcript (Apple did not backfill), and this server says so
 rather than transcribing; `save_recording` copies the audio to `~/Downloads`, where Cadence can
-pick it up. Nothing writes to the store. See [docs/voice-memos.md](docs/voice-memos.md).
+pick it up.
+
+The five tools marked in-app exist only when Cupertino hosts the server with writes on; from npm
+they are absent. Cupertino.app saves each one through Core Data with Voice Memos' own model, so
+iCloud uploads it like a change made in the app. A write syncs when Voice Memos next runs, and the
+lane launches nothing. Sync was measured on macOS 27.2 (model `VoiceMemos14`) on a Mac and an
+iPhone; on another model version the result says sync is not yet measured. The node server never
+writes the store itself. See [docs/voice-memos.md](docs/voice-memos.md).
 
 All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_` / `apple_calendar_` /
 `apple_contacts_` / `apple_messages_` / `apple_safari_` / `apple_maps_` / `apple_voice_memos_` — and `apple_screen_` /

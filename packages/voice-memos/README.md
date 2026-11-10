@@ -27,7 +27,7 @@ embeds in the audio file, with a start and end time for every segment.
 
 ## What it writes
 
-Only with `APPLE_VOICE_MEMOS_ALLOW_WRITES=1`, and the tool is unregistered rather than refused
+Only with `APPLE_VOICE_MEMOS_ALLOW_WRITES=1`. Every write tool is unregistered rather than refused
 when it is off.
 
 | Tool                               | What                                                         |
@@ -37,12 +37,32 @@ when it is off.
 The default folder is `~/Downloads`, one Cadence can import from, so a recording Apple never
 transcribed can be handed to it. A file is never overwritten unless asked.
 
+Five more change the library itself, and are registered only when Cupertino.app hosts this
+server: the app makes the save, so a package run from npm has no way to reach them and is never
+told they exist.
+
+| Tool                                  | What                                         |
+| ------------------------------------- | -------------------------------------------- |
+| `apple_voice_memos_rename_recording`  | set a recording's title                      |
+| `apple_voice_memos_move_recording`    | file a recording in a folder, or in none     |
+| `apple_voice_memos_set_favorite`      | mark a recording as a favourite, or clear it |
+| `apple_voice_memos_delete_recording`  | move a recording to Recently Deleted         |
+| `apple_voice_memos_restore_recording` | bring a recording back from Recently Deleted |
+
+Cupertino saves each one through Core Data with Voice Memos' own model, so iCloud uploads it like
+a change made in the app. A write syncs when Voice Memos next runs; nothing is launched to make it
+happen. Sync was measured on macOS 27.2 (model `VoiceMemos14`) on a Mac and an iPhone. On another
+model version the save still happens, and the result says sync is not yet measured there. A title
+is trimmed, then must be 1 to 500 characters with no line break inside. A call that would change
+nothing saves nothing and returns `changed: []`.
+
 ## What it does not do
 
 It does not transcribe: recordings from before 2025 have no transcript (Apple did not backfill),
-and this server says so rather than making one. It cannot rename, move, favourite, delete,
-record or play a memo. Voice Memos ships no scripting dictionary, and the App Intents that could
-do those things can only be run from Shortcuts. Nothing here writes to Voice Memos' store.
+and this server says so rather than making one. It cannot record or play a memo, or create a
+folder. Voice Memos ships no scripting dictionary, and its App Intents can only be run from
+Shortcuts. This server never writes Voice Memos' store itself: the five tools above ask
+Cupertino.app to make the save.
 
 ## Full Disk Access is mandatory
 
@@ -61,7 +81,8 @@ never an empty list. Grant it to the app running the server, not to Voice Memos.
 
 Only one schema has been measured: fingerprint `fb804d4a4d59`, on macOS 27.2. Other versions
 are read by which columns exist, and `diagnostics` reports `schema.verified: false` for them.
-See [docs/voice-memos.md](../../docs/voice-memos.md) for the phase-0 measurements.
+See [docs/voice-memos.md](../../docs/voice-memos.md) for the phase-0 measurements and what each
+write changes.
 
 ## Licence
 

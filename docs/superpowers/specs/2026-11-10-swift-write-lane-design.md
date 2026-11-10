@@ -13,13 +13,13 @@ Core Data save writes that history, and Node cannot make one.
 That changes what the write tools can be. Four surfaces have a better write path that only Swift
 can reach:
 
-| Surface | Writes today | Better path | What it fixes |
-| --- | --- | --- | --- |
-| Voice Memos | none | Core Data, the app's own model | rename, move, favourite, delete become possible |
-| Maps | SQL via `node:sqlite` | Core Data, the app's own model | inserts sync today because Core Data reconciles new objects; deletes and updates are **unmeasured**, and `remove_favorite` says it syncs |
-| Calendar | JXA, ~2 s per Apple Event | EventKit | speed, transactions, the operations JXA cannot do (one occurrence, calendars by id) |
-| Reminders | JXA, ~1 s per Apple Event | EventKit | speed, and a move keeps the reminder's id |
-| Contacts | JXA, `save()` commits the whole app | Contacts.framework | a save that touches only its own contact, and delete |
+| Surface     | Writes today                        | Better path                    | What it fixes                                                                                                                            |
+| ----------- | ----------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Voice Memos | none                                | Core Data, the app's own model | rename, move, favourite, delete become possible                                                                                          |
+| Maps        | SQL via `node:sqlite`               | Core Data, the app's own model | inserts sync today because Core Data reconciles new objects; deletes and updates are **unmeasured**, and `remove_favorite` says it syncs |
+| Calendar    | JXA, ~2 s per Apple Event           | EventKit                       | speed, transactions, the operations JXA cannot do (one occurrence, calendars by id)                                                      |
+| Reminders   | JXA, ~1 s per Apple Event           | EventKit                       | speed, and a move keeps the reminder's id                                                                                                |
+| Contacts    | JXA, `save()` commits the whole app | Contacts.framework             | a save that touches only its own contact, and delete                                                                                     |
 
 ## The decision this reverses
 

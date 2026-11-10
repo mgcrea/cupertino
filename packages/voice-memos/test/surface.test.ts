@@ -33,12 +33,24 @@ describe("voice-memos resources", () => {
     expect(() => JSON.parse(textOf(res.contents))).not.toThrow();
   });
 
-  it("states that it transcribes nothing and edits nothing", async () => {
+  it("states that it transcribes nothing, and edits only through Cupertino", async () => {
     const res = await (await connect()).readResource({ uri: "cupertino://voice-memos/guide" });
     expect(res.contents[0]?.mimeType).toBe("text/markdown");
     const guide = textOf(res.contents);
     expect(guide).toMatch(/does \*\*not\*\* transcribe/);
-    expect(guide).toMatch(/cannot rename, move, favourite or delete/);
+    expect(guide).not.toMatch(/cannot rename/);
+    expect(guide).toMatch(/exist only when Cupertino hosts this server with\s+writes on/);
+    for (const tool of [
+      "rename_recording",
+      "move_recording",
+      "set_favorite",
+      "delete_recording",
+      "restore_recording",
+    ]) {
+      expect(guide).toContain(`apple_voice_memos_${tool}`);
+    }
+    expect(guide).toMatch(/syncs when Voice Memos next runs/);
+    expect(guide).toMatch(/trimmed, then must be 1 to 500 characters with no line break inside/);
   });
 
   it("ships no prompts", async () => {

@@ -10,8 +10,11 @@ now generalise across surfaces.
 ## The question is which lane can reach an app, not which apps exist
 
 `Surfaces.swift` fixes a closed table, each entry a bundle ID (Apple Events lane) and an optional
-store path (file lane). The app links no data frameworks — it is a pure broker. That leaves three
-ways to reach anything:
+store path (file lane). For reads the app links no data frameworks: it brokers, and the servers
+read. Voice Memos' writes are the exception. The app saves them itself, through Core Data with
+Voice Memos' own model, because only a Core Data save reaches iCloud; the reads stay with the
+server. See [the store lane design](superpowers/specs/2026-11-10-swift-write-lane-design.md) and
+[voice-memos.md](voice-memos.md). That leaves three ways to reach anything:
 
 | Lane                                       | Cost                                                             | Ceiling                                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -52,7 +55,7 @@ rather than about capability.
 | Calendar    | **file lane mandatory** — 3.4 s range query             | implemented                                            |
 | Safari      | two lanes see disjoint things                           | implemented                                            |
 | Maps        | **file lane only** — no `.sdef` exists                  | implemented, and writes without an Apple Event         |
-| Voice Memos | **file lane only**, no `.sdef`; App Intents unreachable | implemented, read-only plus export                     |
+| Voice Memos | **file lane only**, no `.sdef`; App Intents unreachable | implemented; edits saved by the app through Core Data  |
 | Contacts    | file-lane reads, 0 ms; store is plural                  | implemented                                            |
 | Screen      | **capture lane** — ScreenCaptureKit, ~30 ms             | implemented, in the app: the first with no npm package |
 | Sound       | CoreAudio — 4 devices in 28 ms                          | implemented, in the app; two independent gates         |

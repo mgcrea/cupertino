@@ -51,7 +51,7 @@ vitest + zod (node packages), pnpm workspace, oxlint/oxfmt.
    so before anyone writes. Pinned in Task 1 (`refusesMismatchedStore`).
 2. **A connection from a process that is not a spawned voice-memos server**, including another
    surface's server, claiming `for=voice-memos`. Expected: `err this connection is not a
-   voice-memos server`. Pinned in Task 3 (admission) and Task 4 (host-check).
+voice-memos server`. Pinned in Task 3 (admission) and Task 4 (host-check).
 3. **Writes switched off while the server keeps running.** Expected: the next write method is
    refused with reason `writesOff`, read per request, and `status` still answers. Pinned in Task 3.
 4. **A move that leaves a folder.** Expected: both the old and the new folder's
@@ -66,6 +66,7 @@ vitest + zod (node packages), pnpm workspace, oxlint/oxfmt.
 ### Task 1: The Core Data opener
 
 **Files:**
+
 - Create: `apps/apple/Cupertino/StoreLane/StoreLaneError.swift`
 - Create: `apps/apple/Cupertino/StoreLane/CoreDataStore.swift`
 - Create: `scripts/store-lane-check.swift`
@@ -73,6 +74,7 @@ vitest + zod (node packages), pnpm workspace, oxlint/oxfmt.
 - Modify: `.github/workflows/ci.yml` (run `make store-lane-check` in the macOS job, next to `make unit`)
 
 **Interfaces:**
+
 - Produces:
   - `enum StoreLaneError: Error, Equatable { case invalid(String), notFound(String), incompatible(String), writesOff(String), failed(String) }`
     with `var reason: String` (`"invalid"`, `"notFound"`, `"incompatible"`, `"writesOff"`, `"failed"`)
@@ -88,9 +90,9 @@ vitest + zod (node packages), pnpm workspace, oxlint/oxfmt.
     throws `.notFound` unless exactly one matches.
 
 - [ ] **Step 1: Write the failing check.** `scripts/store-lane-check.swift` with a `check(_ name:, _ body:)`
-  harness in the style of `scripts/unit-check.swift` (prints `PASS name` / `FAIL name: why`, exits 1
-  on any failure). Its first cases use a model built in code (entity `Thing`, string attributes
-  `key` and `name`), with stores in a fresh `FileManager.default.temporaryDirectory` subfolder:
+      harness in the style of `scripts/unit-check.swift` (prints `PASS name` / `FAIL name: why`, exits 1
+      on any failure). Its first cases use a model built in code (entity `Thing`, string attributes
+      `key` and `name`), with stores in a fresh `FileManager.default.temporaryDirectory` subfolder:
   - `opensMatchingStore`: a store created from model A; `CoreDataStore(model A).write` sets one
     `name` and returns; reading back gives the new value.
   - `refusesMismatchedStore`: a store created from model A, opened with model B (A plus an
@@ -104,31 +106,33 @@ vitest + zod (node packages), pnpm workspace, oxlint/oxfmt.
     `measuredVersions` holds it, false otherwise.
   - `fetchOneRefusesZeroAndTwo`: zero matches and two matches both throw `.notFound`.
 - [ ] **Step 2: Add the Makefile target and run it.**
-  `store-lane-check:` compiles `apps/apple/Cupertino/StoreLane/*.swift scripts/store-lane-check.swift`
-  into `apps/apple/.build/store-lane-check` and runs it, in the form the neighbouring targets use.
-  Run: `make store-lane-check`. Expected: compile error (no `CoreDataStore`).
+      `store-lane-check:` compiles `apps/apple/Cupertino/StoreLane/*.swift scripts/store-lane-check.swift`
+      into `apps/apple/.build/store-lane-check` and runs it, in the form the neighbouring targets use.
+      Run: `make store-lane-check`. Expected: compile error (no `CoreDataStore`).
 - [ ] **Step 3: Implement `StoreLaneError.swift` and `CoreDataStore.swift`.** The opener runs the
-  spec's steps in order: load the model from `modelURL`, `copy()` it, apply `patch`, read the
-  store's metadata with `NSPersistentStoreCoordinator.metadataForPersistentStore(type: .sqlite, at:)`,
-  pick the first of `[nil] + model.configurations` for which `isConfiguration(withName:compatibleWithStoreMetadata:)`
-  is true (the order the 2026-11-10 measurement used), else throw `.incompatible` naming the entities
-  whose `versionHash` differs from `NSStoreModelVersionHashes`. Then add the store with the Global
-  Constraints' options. The model version comes from `modelURL/VersionInfo.plist`'s
-  `NSManagedObjectModel_CurrentVersionName` (nil when that file is absent, and then
-  `syncMeasured` is false). Keep the loaded model alive for the life of the call: an
-  entity does not retain its model (found 2026-11-10).
+      spec's steps in order: load the model from `modelURL`, `copy()` it, apply `patch`, read the
+      store's metadata with `NSPersistentStoreCoordinator.metadataForPersistentStore(type: .sqlite, at:)`,
+      pick the first of `[nil] + model.configurations` for which `isConfiguration(withName:compatibleWithStoreMetadata:)`
+      is true (the order the 2026-11-10 measurement used), else throw `.incompatible` naming the entities
+      whose `versionHash` differs from `NSStoreModelVersionHashes`. Then add the store with the Global
+      Constraints' options. The model version comes from `modelURL/VersionInfo.plist`'s
+      `NSManagedObjectModel_CurrentVersionName` (nil when that file is absent, and then
+      `syncMeasured` is false). Keep the loaded model alive for the life of the call: an
+      entity does not retain its model (found 2026-11-10).
 - [ ] **Step 4: Run it.** Run: `make store-lane-check`. Expected: `PASS` for all five, exit 0.
 - [ ] **Step 5: Commit.**
-  `git add apps/apple/Cupertino/StoreLane scripts/store-lane-check.swift Makefile .github/workflows/ci.yml`
-  `git commit -m "feat(store-lane): a Core Data opener that refuses a store its model does not match"`
+      `git add apps/apple/Cupertino/StoreLane scripts/store-lane-check.swift Makefile .github/workflows/ci.yml`
+      `git commit -m "feat(store-lane): a Core Data opener that refuses a store its model does not match"`
 
 ### Task 2: The Voice Memos writer
 
 **Files:**
+
 - Create: `apps/apple/Cupertino/StoreLane/VoiceMemosWriter.swift`
 - Modify: `scripts/store-lane-check.swift`
 
 **Interfaces:**
+
 - Consumes: `CoreDataStore`, `StoreLaneError`, `CoreDataStore.fetchOne` (Task 1).
 - Produces: `struct VoiceMemosWriter: Sendable` with `init(store: CoreDataStore)`,
   `static let live: VoiceMemosWriter` (the Global Constraints' model and store paths, the
@@ -143,13 +147,13 @@ vitest + zod (node packages), pnpm workspace, oxlint/oxfmt.
 
 What each method changes, from the app itself (watched 2026-11-10, one transaction per step):
 
-| Method | Attributes it sets | As the app did it |
-| --- | --- | --- |
-| `rename` | `encryptedTitle`, `customLabelForSorting` | measured by the Core Data rename that reached the iPhone |
-| `setFavorite` | `sharedFlags`: bit 0 set (`(old ?? 0) \| 1`) or cleared (`(old ?? 0) & ~1`) | favourite went `null` → `1`, nothing else |
-| `move` | the recording's `folder`; `countOfRecordings` on the old and the new folder, each set to its `recordings.count` | the move set `folder` and the destination's count 0 → 1 in one save |
-| `delete` | `evictionDate = Date()` | nothing else; the folder count kept the deleted memo |
-| `restore` | `evictionDate = nil` | nothing else |
+| Method        | Attributes it sets                                                                                              | As the app did it                                                   |
+| ------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `rename`      | `encryptedTitle`, `customLabelForSorting`                                                                       | measured by the Core Data rename that reached the iPhone            |
+| `setFavorite` | `sharedFlags`: bit 0 set (`(old ?? 0) \| 1`) or cleared (`(old ?? 0) & ~1`)                                     | favourite went `null` → `1`, nothing else                           |
+| `move`        | the recording's `folder`; `countOfRecordings` on the old and the new folder, each set to its `recordings.count` | the move set `folder` and the destination's count 0 → 1 in one save |
+| `delete`      | `evictionDate = Date()`                                                                                         | nothing else; the folder count kept the deleted memo                |
+| `restore`     | `evictionDate = nil`                                                                                            | nothing else                                                        |
 
 Rulings to implement: a title is trimmed, must be 1 to 500 characters and contain no newline,
 else `.invalid`. A call that would change nothing (same title, flag already in that state, same
@@ -158,10 +162,10 @@ favourite on a `nil` `sharedFlags` is a no-op. A `folderId` that matches no `Fol
 `.notFound`.
 
 - [ ] **Step 1: Write the failing cases.** Append to `scripts/store-lane-check.swift` a fixture
-  that builds a temporary store from the real `VoiceMemos.momd` with the patch (skip the whole
-  group with `SKIP voice-memos: model not on this machine` when the file is absent), holding
-  folders `F-ONE` (rank 0) and `F-TWO` (rank 1), and recordings `R-ONE` ("Synthetic one", in
-  `F-ONE`, `F-ONE` count 1) and `R-TWO` ("Synthetic two", no folder). Cases:
+      that builds a temporary store from the real `VoiceMemos.momd` with the patch (skip the whole
+      group with `SKIP voice-memos: model not on this machine` when the file is absent), holding
+      folders `F-ONE` (rank 0) and `F-TWO` (rank 1), and recordings `R-ONE` ("Synthetic one", in
+      `F-ONE`, `F-ONE` count 1) and `R-TWO` ("Synthetic two", no folder). Cases:
   - `renameSetsTitleAndSortKey`: `rename("R-ONE", "  Synthetic renamed ")` → `changed == ["customLabelForSorting", "encryptedTitle"]`,
     both read back as `"Synthetic renamed"`.
   - `renameRefusesBadTitles`: `""`, `"   "`, `"a\nb"` and 501 characters each throw `.invalid`.
@@ -179,19 +183,21 @@ favourite on a `nil` `sharedFlags` is a no-op. A `folderId` that matches no `Fol
     `.incompatible` mentioning `CloudRecording`.
 - [ ] **Step 2: Run it.** Run: `make store-lane-check`. Expected: compile error (no `VoiceMemosWriter`).
 - [ ] **Step 3: Implement `VoiceMemosWriter.swift`** to the table and rulings above, every write
-  through `store.write`, every fetch through `CoreDataStore.fetchOne` (`CloudRecording.uniqueID`,
-  `Folder.uuid`).
+      through `store.write`, every fetch through `CoreDataStore.fetchOne` (`CloudRecording.uniqueID`,
+      `Folder.uuid`).
 - [ ] **Step 4: Run it.** Run: `make store-lane-check`. Expected: all Task 1 and Task 2 cases `PASS`.
 - [ ] **Step 5: Commit.**
-  `git commit -m "feat(store-lane): rename, favourite, move, delete and restore a Voice Memo the way the app saves them"`
+      `git commit -m "feat(store-lane): rename, favourite, move, delete and restore a Voice Memo the way the app saves them"`
 
 ### Task 3: The lane's dispatch and admission
 
 **Files:**
+
 - Create: `apps/apple/Cupertino/StoreLane/StoreLane.swift`
 - Modify: `scripts/store-lane-check.swift`
 
 **Interfaces:**
+
 - Consumes: `VoiceMemosWriter` (Task 2), `StoreLaneError` (Task 1).
 - Produces:
   - `enum StoreLane` with `static let surfaces: Set<String> = ["voice-memos"]`.
@@ -202,6 +208,7 @@ favourite on a `nil` `sharedFlags` is a no-op. A `folderId` that matches no `Fol
     one JSON-RPC 2.0 reply line, no trailing newline.
 
 Wire format:
+
 - Request: `{"jsonrpc":"2.0","id":<n>,"method":"voiceMemos.<verb>","params":{...}}`.
 - Methods: `voiceMemos.rename {id, title}`, `voiceMemos.setFavorite {id, favorite}`,
   `voiceMemos.move {id, folderId|null}`, `voiceMemos.delete {id}`, `voiceMemos.restore {id}`,
@@ -216,22 +223,23 @@ Wire format:
   when `allowWrites` is false.
 
 - [ ] **Step 1: Write the failing cases.** Against the Task 2 fixture (`voiceMemos:` injected):
-  `admitsOnlyItsOwnServer` (`admit("voice-memos", "voice-memos")` nil; `admit("voice-memos", "mail")`
-  and `admit("voice-memos", nil)` give the "not a voice-memos server" text; `admit("mail", "mail")`
-  gives "'mail' has no store lane"), `renameRoundTrip` (a rename line returns the result shape
-  above), `writesOffRefusedStatusAnswers` (with `allowWrites: false` a rename returns reason
-  `writesOff` and `status` still returns `compatible: true`), `garbageIsParseError`,
-  `foreignNamespaceIsUnknownMethod` (`maps.add` from `voice-memos` → `-32601`),
-  `missingParamsIsInvalid` (`voiceMemos.rename {id}` → reason `invalid`).
+      `admitsOnlyItsOwnServer` (`admit("voice-memos", "voice-memos")` nil; `admit("voice-memos", "mail")`
+      and `admit("voice-memos", nil)` give the "not a voice-memos server" text; `admit("mail", "mail")`
+      gives "'mail' has no store lane"), `renameRoundTrip` (a rename line returns the result shape
+      above), `writesOffRefusedStatusAnswers` (with `allowWrites: false` a rename returns reason
+      `writesOff` and `status` still returns `compatible: true`), `garbageIsParseError`,
+      `foreignNamespaceIsUnknownMethod` (`maps.add` from `voice-memos` → `-32601`),
+      `missingParamsIsInvalid` (`voiceMemos.rename {id}` → reason `invalid`).
 - [ ] **Step 2: Run it.** Run: `make store-lane-check`. Expected: compile error (no `StoreLane`).
 - [ ] **Step 3: Implement `StoreLane.swift`** with `JSONSerialization`, mapping each
-  `StoreLaneError` to the failure shape.
+      `StoreLaneError` to the failure shape.
 - [ ] **Step 4: Run it.** Run: `make store-lane-check`. Expected: every case `PASS`.
 - [ ] **Step 5: Commit.** `git commit -m "feat(store-lane): JSON-RPC dispatch, and admission only for the surface's own server"`
 
 ### Task 4: The socket verb in `ServerHost`
 
 **Files:**
+
 - Modify: `apps/apple/Cupertino/BridgeProtocol.swift` (add `static let storeLane = "store"` and
   `static func storeHandshake(onBehalfOf: String) -> String` returning `"\(version) store for=\(id)\n"`)
 - Modify: `apps/apple/Cupertino/ServerHost.swift` (handshake parsing, around `:545-633`; a
@@ -241,6 +249,7 @@ Wire format:
 - Modify: `scripts/host-check.swift`
 
 **Interfaces:**
+
 - Consumes: `StoreLane.admit`, `StoreLane.handle`, `StoreLane.surfaces` (Task 3).
 - Produces: the handshake `cupertino/1 store for=<surface>` → `ok` or `err <text>`, then one
   reply line per request line.
@@ -258,26 +267,28 @@ outcome (no titles), and records no call in the observer: the borrower's own too
 already recorded, as for a lend.
 
 - [ ] **Step 1: Write the failing host-check cases**, using the check's existing socket helpers:
-  `store for=voice-memos` from the check process → reply starts `err this connection is not a voice-memos server`;
-  `store for=mail` → `err 'mail' has no store lane`; `cupertino/1 store` → `err malformed handshake`.
+      `store for=voice-memos` from the check process → reply starts `err this connection is not a voice-memos server`;
+      `store for=mail` → `err 'mail' has no store lane`; `cupertino/1 store` → `err malformed handshake`.
 - [ ] **Step 2: Run it.** Run: `make host-check`. Expected: the three new cases FAIL (today's reply is
-  `err unknown server 'store'`), the rest PASS.
+      `err unknown server 'store'`), the rest PASS.
 - [ ] **Step 3: Implement** the behaviour above, plus the `BridgeProtocol` constants and the
-  Makefile source lists.
+      Makefile source lists.
 - [ ] **Step 4: Run them.** Run: `make host-check && make store-lane-check && make unit`. Expected: all PASS.
-  Then build the app: `xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino -configuration Debug build`
-  (or the `BuildProject` Xcode tool). Expected: `BUILD SUCCEEDED`. The `StoreLane/` folder is
-  picked up by the synchronized root group, with no `project.pbxproj` edit.
+      Then build the app: `xcodebuild -project apps/apple/Cupertino.xcodeproj -scheme Cupertino -configuration Debug build`
+      (or the `BuildProject` Xcode tool). Expected: `BUILD SUCCEEDED`. The `StoreLane/` folder is
+      picked up by the synchronized root group, with no `project.pbxproj` edit.
 - [ ] **Step 5: Commit.** `git commit -m "feat(store-lane): the store verb on cupertino.sock, admitted like the desktop lend"`
 
 ### Task 5: `openStoreLane` in core
 
 **Files:**
+
 - Create: `packages/core/src/store-lane.ts`
 - Create: `packages/core/test/store-lane.test.ts`
 - Modify: `packages/core/src/index.ts` (export)
 
 **Interfaces:**
+
 - Consumes: `SurfaceContext`, `AppleAutomationError` from `./errors.js`; the env vars
   `CUPERTINO_AX_SOCKET` and `CUPERTINO_AX_FOR` that `ServerLocator` sets.
 - Produces:
@@ -294,12 +305,12 @@ socket reconnects on the next call. Handshake `cupertino/1 store for=<CUPERTINO_
 second file is cheaper than a shared abstraction now).
 
 - [ ] **Step 1: Write the failing tests**, with a fake socket server in the style of
-  `packages/core/test/ax.test.ts`: `returns null without the host's env`; `does not connect until
-  the first call`; `sends the store handshake for the surface`; `returns the result of a call`;
-  `throws StoreLaneError with the reply's reason` (`data.reason: "notFound"` → `reason === "notFound"`);
-  `reports a refused handshake as reason refused with the host's text`; `serialises overlapping calls`;
-  `times out a call that is never answered` (inject a short timeout through an optional
-  `opts: { timeoutMs?: number }` third parameter).
+      `packages/core/test/ax.test.ts`: `returns null without the host's env`; `does not connect until
+the first call`; `sends the store handshake for the surface`; `returns the result of a call`;
+      `throws StoreLaneError with the reply's reason` (`data.reason: "notFound"` → `reason === "notFound"`);
+      `reports a refused handshake as reason refused with the host's text`; `serialises overlapping calls`;
+      `times out a call that is never answered` (inject a short timeout through an optional
+      `opts: { timeoutMs?: number }` third parameter).
 - [ ] **Step 2: Run them.** Run: `pnpm --filter @mgcrea/mcp-apple-core test -- store-lane`. Expected: FAIL, module not found.
 - [ ] **Step 3: Implement `store-lane.ts`** and the export.
 - [ ] **Step 4: Run them.** Run: `pnpm --filter @mgcrea/mcp-apple-core test && pnpm --filter @mgcrea/mcp-apple-core typecheck`. Expected: PASS.
@@ -308,6 +319,7 @@ second file is cheaper than a shared abstraction now).
 ### Task 6: The Voice Memos lane tools
 
 **Files:**
+
 - Create: `packages/voice-memos/src/client/lane.ts`
 - Create: `packages/voice-memos/src/tools/store-writes.ts`
 - Create: `packages/voice-memos/test/store-writes.test.ts`
@@ -316,6 +328,7 @@ second file is cheaper than a shared abstraction now).
 - Modify: `packages/voice-memos/src/config.ts` (the doc comment: the store is now written through the app's lane)
 
 **Interfaces:**
+
 - Consumes: `openStoreLane`, `StoreLaneError` (Task 5); the Task 3 wire format.
 - Produces:
   - `class VoiceMemosLane` with `static open(env?: NodeJS.ProcessEnv): VoiceMemosLane | null` and
@@ -354,7 +367,7 @@ favourite and delete need the app" when `client.lane` is null; else the `status(
 `{ error: <message> }` when it throws. It also lists `STORE_WRITE_TOOLS` beside `WRITE_TOOLS`.
 
 - [ ] **Step 1: Write the failing tests** in `store-writes.test.ts`, with a fake store-lane socket
-  (as in Task 5) and a synthetic fixture store for the client:
+      (as in Task 5) and a synthetic fixture store for the client:
   - `registers the five lane tools when hosted and writes are on`
   - `registers none of them without the host's env` (writes on, `env: {}`)
   - `registers none of them with writes off` (lane env set)
@@ -363,15 +376,16 @@ favourite and delete need the app" when `client.lane` is null; else the `status(
   - `says sync is not yet measured when the lane says so`
   - `diagnostics reports writeLane null without the host, and the lane status with it`
 - [ ] **Step 2: Run them.** Run: `pnpm --filter @mgcrea/mcp-apple-voice-memos test -- store-writes`
-  (the package name is the one in `packages/voice-memos/package.json`). Expected: FAIL.
+      (the package name is the one in `packages/voice-memos/package.json`). Expected: FAIL.
 - [ ] **Step 3: Implement** `lane.ts`, `store-writes.ts` and the edits above.
 - [ ] **Step 4: Run them.** Run: `pnpm --filter @mgcrea/mcp-apple-voice-memos test && pnpm --filter @mgcrea/mcp-apple-voice-memos typecheck && pnpm lint`.
-  Expected: PASS, and the existing `tools.test.ts` registration counts still PASS (no lane env in vitest).
+      Expected: PASS, and the existing `tools.test.ts` registration counts still PASS (no lane env in vitest).
 - [ ] **Step 5: Commit.** `git commit -m "feat(voice-memos): rename, move, favourite, delete and restore through Cupertino's store lane"`
 
 ### Task 7: Documentation and the generated checks
 
 **Files:**
+
 - Modify: `docs/voice-memos.md` (a section "What the app changes, watched 2026-11-10": the Task 2
   table, with the probe facts. Folder counts are maintained and include Recently Deleted members;
   `EntityRevision` is empty; history rows carry no author; `ZFLAGS` is never touched. Plus a
@@ -386,15 +400,16 @@ favourite and delete need the app" when `client.lane` is null; else the `status(
 - Modify: `CHANGELOG.md` (Unreleased: the five tools, Cupertino-only, sync measured on macOS 27.2)
 
 - [ ] **Step 1: Run the checks that guard these files.** Run: `node scripts/readme-surfaces-check.mjs && pnpm test:scripts`.
-  Expected: FAIL on the README tool count (6 against 11 registered).
+      Expected: FAIL on the README tool count (6 against 11 registered).
 - [ ] **Step 2: Write the docs above.** Synthetic examples only.
 - [ ] **Step 3: Run them again.** Run: `node scripts/readme-surfaces-check.mjs && pnpm test:scripts && pnpm format:check && pnpm test`.
-  Expected: PASS. The website test keeps Voice Memos in `UNLISTED`.
+      Expected: PASS. The website test keeps Voice Memos in `UNLISTED`.
 - [ ] **Step 4: Commit.** `git commit -m "docs(voice-memos): the store lane's writes, and what the app itself changes"`
 
 ### Task 8: The live check (needs Olivier, the Mac and the iPhone)
 
 **Files:**
+
 - Modify: `docs/voice-memos.md` (the measurement, per tool)
 
 Run on a Debug build of this branch (the `use-the-dev-build` skill), with Voice Memos' writes on
@@ -404,11 +419,11 @@ restart"). Before each step, take a `.backup` of the store into the scratchpad, 
 
 - [ ] **Step 1:** `diagnostics` → `writeLane.compatible: true`, `modelVersion: "VoiceMemos14"`, `syncMeasured: true`.
 - [ ] **Step 2:** Each tool in turn: rename, set_favorite on and off, move into "Cupertino test" and out,
-  delete, restore. Olivier confirms each one on the Mac (live) and on the iPhone (within a minute).
-  The watcher (`vm-watch.mjs`) confirms one transaction per call, author `cupertino`, and only
-  the Task 2 attributes. Also watch the app unfavourite once by hand, to confirm it writes `0` as the writer does.
+      delete, restore. Olivier confirms each one on the Mac (live) and on the iPhone (within a minute).
+      The watcher (`vm-watch.mjs`) confirms one transaction per call, author `cupertino`, and only
+      the Task 2 attributes. Also watch the app unfavourite once by hand, to confirm it writes `0` as the writer does.
 - [ ] **Step 3: App closed.** Quit Voice Memos, rename. Olivier checks the iPhone: not yet. Open
-  Voice Memos on the Mac: the iPhone gets the rename within a minute. If it never arrives, the tool
-  copy and docs say so, and the result is recorded before anything ships.
+      Voice Memos on the Mac: the iPhone gets the rename within a minute. If it never arrives, the tool
+      copy and docs say so, and the result is recorded before anything ships.
 - [ ] **Step 4:** Record the results in `docs/voice-memos.md` and commit:
-  `git commit -m "docs(voice-memos): the store lane's writes, measured on a Mac and an iPhone"`
+      `git commit -m "docs(voice-memos): the store lane's writes, measured on a Mac and an iPhone"`

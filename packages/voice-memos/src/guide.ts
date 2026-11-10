@@ -9,15 +9,46 @@ export const VOICE_MEMOS_GUIDE = `# Voice Memos: how to drive this server
 It reads the recordings in Voice Memos on this Mac: their titles, dates, durations, folders,
 favourites and Recently Deleted, and the **transcript Apple made of each one**, with timings.
 It does **not** transcribe: when Apple has no transcript, say so; Cadence transcribes audio.
-It cannot rename, move, favourite or delete a memo, and it cannot record or play one. The only
-thing it writes, and only with writes allowed, is a copy of a recording's audio.
+It cannot record or play a memo, or create a folder. With writes allowed it can copy a
+recording's audio, and, only when Cupertino hosts this server, rename, move, favourite, delete
+and restore a recording (see "Writing" below).
 
-## One lane, and no fallback
+## One read lane, and no fallback
 
 Voice Memos ships no scripting dictionary, and its App Intents can only be run from Shortcuts.
-Everything comes from \`CloudRecordings.db\` and the audio files beside it, under **Full Disk
+Every read comes from \`CloudRecordings.db\` and the audio files beside it, under **Full Disk
 Access**. Without the grant this server returns an **error**, not an empty list. Check
 \`cupertino://voice-memos/diagnostics\` before concluding anything from an empty answer.
+
+## Writing
+
+\`apple_voice_memos_save_recording\` copies a recording's audio into the export folder. It
+changes nothing in Voice Memos.
+
+Five tools change the library itself. **They exist only when Cupertino hosts this server with
+writes on**; run from npm, this server does not have them. Cupertino.app saves each one through
+Core Data with Voice Memos' own model, so iCloud uploads it like a change made in the app.
+
+| Tool | What it does |
+| --- | --- |
+| \`apple_voice_memos_rename_recording\` | sets the title |
+| \`apple_voice_memos_move_recording\` | files the recording in a folder, or in none with \`folderId: null\` |
+| \`apple_voice_memos_set_favorite\` | marks it a favourite, or clears it |
+| \`apple_voice_memos_delete_recording\` | moves it to Recently Deleted, where Voice Memos removes it for good later |
+| \`apple_voice_memos_restore_recording\` | brings it back from Recently Deleted |
+
+**A title is trimmed, then must be 1 to 500 characters with no line break inside.** Anything
+else is refused with reason \`invalid\`. Pass the id the read tools return; a folder id comes
+from \`list_folders\`.
+
+**A write syncs when Voice Memos next runs.** Nothing is launched to make it happen, so say the
+change is saved on this Mac and will reach other devices once Voice Memos runs, not that it is
+already on the iPhone. When the result's \`syncMeasured\` is false, the save still happened but
+sync is not yet measured on this macOS: pass on its \`sync\` sentence, which asks to check the
+recording on another device.
+
+**\`changed: []\` means nothing needed changing**, for instance a favourite already set, and
+nothing was saved.
 
 ## Which tool answers which question
 
