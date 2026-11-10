@@ -105,6 +105,12 @@ export {
   type ReadOnlyMode,
 } from "./sqlite.js";
 export {
+  openStoreLane,
+  StoreLaneError,
+  type StoreLane,
+  type StoreLaneOptions,
+} from "./store-lane.js";
+export {
   compact,
   confirmArg,
   fail,
