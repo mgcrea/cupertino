@@ -547,11 +547,52 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return
     }
 
+    // ─── the store lane ──────────────────────────────────────────────────────
+    //
+    // `cupertino/1 store for=voice-memos` — the node server this app spawned for
+    // a surface, asking to save into that app's own store. `store` is a verb in
+    // the place a surface goes, so it is read before the table below and never
+    // comes back as an unknown server.
+    //
+    // It is admitted the way the lend below is, and for the same reason: the
+    // line is a claim, the peer pid is the check. `StoreLane.admit` refuses
+    // unless `for=` names a surface with a lane AND the process that connected
+    // is the server this host spawned for that very surface. Without the pid,
+    // any process running as this user could rename or delete somebody's
+    // recordings through the app's Full Disk Access grant.
+    //
+    // Past admission the borrower is the surface for every gate that follows,
+    // so a store connection is refused exactly when its own server would be:
+    // switched off, or no licence and no trial. No gate of its own.
+    var storeFor: Surface?
+    if parts[1] == BridgeProtocol.storeLane {
+      guard parts.count == 3, parts[2].hasPrefix(BridgeProtocol.onBehalfOfPrefix) else {
+        reply(client, "err malformed handshake '\(line)'")
+        return
+      }
+      let borrowerId = String(parts[2].dropFirst(BridgeProtocol.onBehalfOfPrefix.count))
+      let peerSurface = peerPID(client).flatMap { pid in serverPIDs.withLock { $0[pid] } }
+      if let refusal = StoreLane.admit(borrowerId: borrowerId, peerSurface: peerSurface) {
+        hostLog(
+          StoreLane.surfaces.contains(borrowerId) ? borrowerId : "cupertino", .error,
+          "refused a store connection: \(refusal)")
+        reply(client, BridgeProtocol.errorPrefix + refusal)
+        return
+      }
+      // Unreachable while every lane surface is in the table, and a refusal
+      // rather than a crash if one ever is not.
+      guard let borrower = Surface.named(borrowerId) else {
+        reply(client, "err unknown server '\(borrowerId)'")
+        return
+      }
+      storeFor = borrower
+    }
+
     // Validate against the closed table. This is the same invariant
     // native/launcher.c held by compiling its paths in: a caller names a
     // surface, never a path, so this can never be turned into a
     // read-anything-with-my-permissions gadget.
-    guard let surface = Surface.named(parts[1]) else {
+    guard let surface = storeFor ?? Surface.named(parts[1]) else {
       reply(client, "err unknown server '\(parts[1])'")
       return
     }
@@ -591,7 +632,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     /// and a client that lied would get the listing it asked for. There is no
     /// reason to lie and nothing gained by it.
     var wiredClient: String?
-    if parts.count == 3, parts[2] != BridgeProtocol.selfSuffix,
+    // A store connection's third field is its own `for=`, read above, and is
+    // not a lend: both branches below are for the surfaces in the table only.
+    if storeFor == nil, parts.count == 3, parts[2] != BridgeProtocol.selfSuffix,
       parts[2].hasPrefix(BridgeProtocol.clientPrefix)
     {
       let claimed = String(parts[2].dropFirst(BridgeProtocol.clientPrefix.count))
@@ -600,7 +643,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
         return
       }
       wiredClient = claimed
-    } else if parts.count == 3, parts[2] != BridgeProtocol.selfSuffix {
+    } else if storeFor == nil, parts.count == 3, parts[2] != BridgeProtocol.selfSuffix {
       guard parts[2].hasPrefix(BridgeProtocol.onBehalfOfPrefix) else {
         reply(client, "err malformed handshake '\(line)'")
         return
@@ -742,6 +785,14 @@ nonisolated final class ServerHost: @unchecked Sendable {
             + "\(Int(Trial.duration / 60))-minute trial")
         return
       }
+    }
+
+    // Before the runtime branch below: the borrower is a node surface, and what
+    // is served here is its lane, not the surface.
+    if let borrower = storeFor {
+      reply(client, BridgeProtocol.ok)
+      serveStoreLane(borrower: borrower, client: client, onTrial: onTrial)
+      return
     }
 
     // A swift-hosted surface is served here rather than spawned. There is no
@@ -1043,6 +1094,79 @@ nonisolated final class ServerHost: @unchecked Sendable {
     pending.close()
     finished.wait()
     InProcessCalls.forget(connection: session)
+  }
+
+  /// The store lane past its `ok`: one JSON-RPC reply line per request line,
+  /// for `borrower`, whose switches govern every line — see `serve`.
+  ///
+  /// One thread that reads, handles and writes, where `serveInProcess` splits a
+  /// reader from a worker. That split is there so a cancel or a hang-up is seen
+  /// while a call runs for minutes. A lane call is one Core Data save, a few
+  /// milliseconds, the lane has no cancel, and the node client sends one
+  /// request and waits for its reply before the next, so there is nothing to
+  /// read mid-call. This is already `serve`'s dedicated session thread.
+  ///
+  /// Nothing goes to the observer or to `Sessions`: the lane is how one tool
+  /// call on the borrower's own connection does its work, and that call and
+  /// that session are already recorded there, as for a lend.
+  private func serveStoreLane(borrower: Surface, client: Int32, onTrial: Bool) {
+    let session = UUID()
+    // The borrower's server is in `trialPIDs` and is signalled when the trial
+    // ends, which ends this too. Registered anyway, as every in-process
+    // connection is, so the lane never outlives the window on the strength of
+    // a child that did not exit.
+    if onTrial { trialClients.withLock { $0[session] = (borrower.id, client) } }
+    // Before `serve` closes the descriptor: see `trialClients`.
+    defer { if onTrial { _ = trialClients.withLock { $0.removeValue(forKey: session) } } }
+
+    while let line = InProcessRPC.nextLine(client) {
+      if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
+      // Per line, as in `serveInProcess`: switching the surface off has to
+      // take effect on a connection that is already open. Returning is the
+      // close: `serve` closes the descriptor and the client reads end of
+      // stream.
+      guard SurfaceSettings.isEnabled(borrower) else {
+        hostLog(borrower.id, .info, "switched off — closing the store lane")
+        return
+      }
+      // In a pool for the reason `serveInProcess` gives: this thread lives as
+      // long as the connection, and the JSON and Core Data work leave
+      // autoreleased objects behind on every line.
+      let answer = autoreleasepool { () -> String in
+        let answer = StoreLane.handle(
+          line, borrower: borrower.id, allowWrites: SurfaceSettings.allowWrites(borrower))
+        if let outcome = Self.storeLaneOutcome(request: line, reply: answer) {
+          hostLog(borrower.id, .info, outcome)
+        }
+        return answer
+      }
+      guard writeAll(client, Data("\(answer)\n".utf8)) else { return }
+    }
+  }
+
+  /// The log line for one write, or nil for anything that is not one.
+  ///
+  /// The method and what came of it: the names of the attributes it changed,
+  /// or the error's `reason`. Never the error's message or a params value,
+  /// which is where a title or an id would be. Only the lane's own code
+  /// (-32000) is a write that was dispatched: a method the lane does not know
+  /// is -32601 and is not logged, so the method named here is one of its own
+  /// fixed names. The character check is a backstop for that, not the rule.
+  private static func storeLaneOutcome(request: String, reply: String) -> String? {
+    guard
+      let sent = (try? JSONSerialization.jsonObject(with: Data(request.utf8))) as? [String: Any],
+      let method = sent["method"] as? String, !method.hasSuffix(".status"), method.count <= 64,
+      method.allSatisfy({ $0.isASCII && ($0.isLetter || $0 == ".") }),
+      let answer = (try? JSONSerialization.jsonObject(with: Data(reply.utf8))) as? [String: Any]
+    else { return nil }
+    if let result = answer["result"] as? [String: Any] {
+      guard let changed = result["changed"] as? [String] else { return nil }
+      return "store \(method): ok, changed [\(changed.joined(separator: ", "))]"
+    }
+    guard let error = answer["error"] as? [String: Any], error["code"] as? Int == -32000,
+      let reason = (error["data"] as? [String: Any])?["reason"] as? String
+    else { return nil }
+    return "store \(method): \(reason)"
   }
 
   private func run(

@@ -330,6 +330,26 @@ struct HostCheck {
       "an unknown server is refused by name",
       handshake("\(BridgeProtocol.version) nosuchsurface\n")?.contains("unknown server") == true)
 
+    // ─── the store lane's door ──────────────────────────────────────────────
+    //
+    // `store` is a verb, not a surface, so it must never read as an unknown
+    // server. And it saves into an Apple app's own store, so the only caller it
+    // admits is the node server this host spawned for that surface: this check
+    // process is in nobody's `serverPIDs`, so it is refused before any gate.
+    // The lines are spelled out rather than built, because they are the
+    // contract the node client is written against.
+    check(
+      "a store connection from a process that is not the surface's server is refused",
+      handshake("\(BridgeProtocol.version) store for=voice-memos\n")?
+        .hasPrefix("err this connection is not a voice-memos server") == true)
+    check(
+      "a store connection for a surface with no lane is refused by name",
+      handshake("\(BridgeProtocol.version) store for=mail\n")?
+        .hasPrefix("err 'mail' has no store lane") == true)
+    check(
+      "a store connection that names no surface is malformed",
+      handshake("\(BridgeProtocol.version) store\n")?.hasPrefix("err malformed handshake") == true)
+
     // Unlicensed, which is what a check machine is: the licence gate refuses
     // before anything is spawned, and saying so proves the gate ran rather than
     // that the connection failed.

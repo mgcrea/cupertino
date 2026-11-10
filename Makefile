@@ -639,6 +639,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/ShellRecord.swift \
 		apps/apple/Cupertino/AuditChain.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
+		apps/apple/Cupertino/StoreLane/*.swift \
 		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
 	@apps/apple/.build/host-check
 
