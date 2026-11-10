@@ -31,8 +31,9 @@ summary.
   and `restore_recording`, exist only when Cupertino hosts the Voice Memos server and its writes
   are on; from npm they are absent. Cupertino.app saves each one through Core Data with Voice
   Memos' own model, so iCloud uploads it like a change made in the app. A rename written straight
-  into the database showed on the Mac and never reached the iPhone. Each tool changes only what
-  Voice Memos itself changes for the same edit, watched one step at a time. A write syncs when
+  into the database showed on the Mac and never reached the iPhone. The four tools other than
+  rename change only what Voice Memos itself changed for the same edit, watched one step at a
+  time; a rename sets the two columns a Core Data rename was measured to sync. A write syncs when
   Voice Memos next runs, and Cupertino launches nothing to make it happen. Sync was measured on
   macOS 27.2 on a Mac and an iPhone; on another Voice Memos model version the result says sync is
   not yet measured.
