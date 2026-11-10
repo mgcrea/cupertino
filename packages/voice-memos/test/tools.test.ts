@@ -44,6 +44,23 @@ describe("voice-memos tools", () => {
     );
   });
 
+  it("registers save_recording only with writes allowed", async () => {
+    expect(await toolNames(await connect())).not.toContain("apple_voice_memos_save_recording");
+    expect(await toolNames(await connect({ APPLE_VOICE_MEMOS_ALLOW_WRITES: "1" }))).toEqual(
+      [...EXPECTED, "apple_voice_memos_save_recording"].toSorted(),
+    );
+  });
+
+  it("annotates save_recording as a non-destructive write", async () => {
+    const tools = (await (await connect({ APPLE_VOICE_MEMOS_ALLOW_WRITES: "1" })).listTools())
+      .tools;
+    expect(tools.find((t) => t.name === "apple_voice_memos_save_recording")?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    });
+  });
+
   it("marks every read tool read-only", async () => {
     for (const t of (await (await connect()).listTools()).tools) {
       expect(t.annotations?.readOnlyHint).toBe(true);

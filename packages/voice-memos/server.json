@@ -26,6 +26,12 @@
           "description": "Register save_recording, which copies a recording's audio into the export folder. Off by default, and the gate decides whether the tool exists at all rather than merely refusing.",
           "isRequired": false,
           "isSecret": false
+        },
+        {
+          "name": "APPLE_VOICE_MEMOS_EXPORT_DIR",
+          "description": "Where save_recording copies audio. Defaults to ~/Downloads, one of the folders Cadence imports from. Nothing is written outside it.",
+          "isRequired": false,
+          "isSecret": false
         }
       ]
     }

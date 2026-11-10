@@ -36,6 +36,7 @@ export {
 } from "./client/transcript.js";
 export { TranscriptCache } from "./client/transcript-cache.js";
 export {
+  exportName,
   fold,
   VoiceMemosClient,
   type AudioFormat,

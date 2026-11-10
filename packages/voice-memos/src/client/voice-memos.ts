@@ -1,10 +1,22 @@
-import { statSync } from "node:fs";
-import { extname } from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { basename, extname } from "node:path";
 
-import { type Logger, openReadOnly, parseBound, type ReadOnlyMode } from "@mgcrea/mcp-apple-core";
+import {
+  type Logger,
+  openReadOnly,
+  parseBound,
+  PreconditionError,
+  type ReadOnlyMode,
+  WritesDisabledError,
+  writeConfinedFile,
+} from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
-import { RecordingNotFoundError, VoiceMemosStoreUnavailableError } from "./errors.js";
+import {
+  RecordingNotFoundError,
+  VOICE_MEMOS_SURFACE,
+  VoiceMemosStoreUnavailableError,
+} from "./errors.js";
 import { FDA_HINT, type LocateResult, locateStore } from "./locate.js";
 import {
   type FolderRow,
@@ -69,6 +81,21 @@ export const fold = (s: string): string => s.normalize("NFD").replace(/\p{M}/gu,
 const formatOf = (path: string): AudioFormat => {
   const ext = extname(path).toLowerCase();
   return ext === ".m4a" ? "m4a" : ext === ".qta" ? "qta" : "unknown";
+};
+
+export const EXPORT_NAME_MAX = 120;
+
+/**
+ * A file name for an exported recording: anything outside letters, digits, space, `.`, `_`
+ * and `-` becomes `_`, leading and trailing dots and spaces go (no hidden file, no `..`), the
+ * stem is capped at 120 characters, and the original extension is kept.
+ */
+export const exportName = (base: string, ext: string): string => {
+  const stem = basename(base.replace(/[^\p{L}\p{N} ._-]/gu, "_"))
+    .replace(/^[. ]+|[. ]+$/g, "")
+    .slice(0, EXPORT_NAME_MAX)
+    .replace(/[. ]+$/, "");
+  return `${stem || "recording"}${ext}`;
 };
 
 export type VoiceMemosStatus = {
@@ -257,6 +284,45 @@ export class VoiceMemosClient {
         ? { truncated: `Stopped at limit ${limit}; narrow the query or raise the limit.` }
         : {}),
     };
+  }
+
+  /**
+   * Copy a recording's audio into `exportDir`, confined there, never overwriting unless asked.
+   * Named from the title, else the label, else the id, with the original extension.
+   */
+  saveRecording(
+    id: string,
+    o: { directory?: string | undefined; overwrite?: boolean | undefined } = {},
+  ): { path: string; bytes: number; format: AudioFormat } {
+    if (!this.#config.allowWrites) throw new WritesDisabledError(VOICE_MEMOS_SURFACE);
+    const row = this.store()
+      .listRecordings()
+      .find((r) => r.id === id);
+    if (!row) throw new RecordingNotFoundError(id);
+    const source = row.audioPath;
+    let exists = false;
+    try {
+      exists = source !== null && statSync(source).isFile();
+    } catch {
+      exists = false;
+    }
+    if (!source || !exists) {
+      throw new PreconditionError(
+        `Recording "${id}" has no audio file on this Mac (transcript status no-audio): ` +
+          (source
+            ? "its file is not on disk, which usually means iCloud has not downloaded it; open it in Voice Memos first."
+            : "the store holds no path for it."),
+      );
+    }
+    const saved = writeConfinedFile({
+      root: this.#config.exportDir,
+      directory: o.directory,
+      name: exportName(row.title ?? row.label ?? row.id, extname(source).toLowerCase()),
+      bytes: () => new Uint8Array(readFileSync(source)),
+      overwrite: o.overwrite,
+      settingName: "APPLE_VOICE_MEMOS_EXPORT_DIR",
+    });
+    return { ...saved, format: formatOf(source) };
   }
 
   #folderNames(): Map<string, string | null> {

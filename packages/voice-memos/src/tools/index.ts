@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { VoiceMemosClient } from "../client/voice-memos.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
+import { registerExportTools } from "./export.js";
 import { registerRecordingTools } from "./recordings.js";
 
 export type ToolContext = {
@@ -24,4 +25,5 @@ export const registerTools = (
   registerDiagnosticsTools(server, client);
   registerRecordingTools(server, client);
   if (!ctx.allowWrites) return;
+  registerExportTools(server, client);
 };
