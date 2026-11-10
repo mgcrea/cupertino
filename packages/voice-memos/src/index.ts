@@ -43,6 +43,7 @@ export {
   type CreateClientOptions,
   type GetOptions,
   type ListQuery,
+  type NotSearched,
   type RecordingView,
   type SearchHit,
   type SearchQuery,

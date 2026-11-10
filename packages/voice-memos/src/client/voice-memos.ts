@@ -68,6 +68,8 @@ export type SearchQuery = {
 };
 
 export type SearchHit = { recording: RecordingView; title: boolean; segments: Segment[] };
+/** Recordings whose transcript could not be searched, by why: their titles still were. */
+export type NotSearched = { none: number; unreadable: number; noAudio: number };
 
 export const DEFAULT_MAX_CHARS = 20_000;
 export const DEFAULT_MAX_SEGMENTS = 200;
@@ -254,13 +256,19 @@ export class VoiceMemosClient {
   }
 
   /** Titles and transcript text, case- and accent-insensitive, newest first. Never the label. */
-  searchRecordings(q: SearchQuery): { hits: SearchHit[]; truncated?: string } {
+  searchRecordings(q: SearchQuery): {
+    hits: SearchHit[];
+    transcriptsNotSearched: NotSearched;
+    truncated?: string;
+  } {
     const needle = fold(q.query.trim());
-    if (!needle) return { hits: [] };
+    if (!needle)
+      return { hits: [], transcriptsNotSearched: { none: 0, unreadable: 0, noAudio: 0 } };
     const limit = Math.max(1, q.limit ?? DEFAULT_SEARCH_LIMIT);
     const folders = this.#folderNames();
     const hits: SearchHit[] = [];
     let more = false;
+    const notSearched: NotSearched = { none: 0, unreadable: 0, noAudio: 0 };
     for (const row of this.store().listRecordings()) {
       if (!q.includeDeleted && row.deletedAt !== null) continue;
       const title = row.title !== null && fold(row.title).includes(needle);
@@ -271,15 +279,17 @@ export class VoiceMemosClient {
               .filter((s) => fold(s.text).includes(needle))
               .slice(0, SEGMENTS_PER_HIT)
           : [];
+      if (transcript.status === "none") notSearched.none += 1;
+      else if (transcript.status === "unreadable") notSearched.unreadable += 1;
+      else if (transcript.status === "no-audio") notSearched.noAudio += 1;
       if (!title && segments.length === 0) continue;
-      if (hits.length === limit) {
-        more = true;
-        break;
-      }
-      hits.push({ recording: this.#view(row, folders), title, segments });
+      // Past the limit the scan goes on, so the counts above cover the whole library.
+      if (hits.length === limit) more = true;
+      else hits.push({ recording: this.#view(row, folders), title, segments });
     }
     return {
       hits,
+      transcriptsNotSearched: notSearched,
       ...(more
         ? { truncated: `Stopped at limit ${limit}; narrow the query or raise the limit.` }
         : {}),

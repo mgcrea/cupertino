@@ -114,7 +114,10 @@ export const registerRecordingTools = (server: McpServer, client: VoiceMemosClie
         "matching segments with their start time, so the moment can be quoted and found by " +
         "listening; `title: true` means the title matched. The default label is never " +
         "searched. Recently Deleted is skipped unless asked for. Reads every transcript, " +
-        `cached after the first search. ${TRANSCRIPT_NOTE}`,
+        "cached after the first search. `transcriptsNotSearched` counts the recordings whose " +
+        "transcript could not be searched (Apple never made one, the file would not parse, or " +
+        "the file is not on this Mac): with no hits, say how many, rather than that it was " +
+        `never said. ${TRANSCRIPT_NOTE}`,
       inputSchema: z.object({
         query: z.string().min(1).describe("Words to find, matched as one phrase."),
         includeDeleted: z.boolean().optional().describe("Search Recently Deleted too."),

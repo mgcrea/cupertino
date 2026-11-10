@@ -229,15 +229,15 @@ for (const s of manifest.surfaces) {
     );
   }
 
-  // The table names tools without their `apple_<surface>_` prefix.
-  const named = new Set(
-    [...body.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => `apple_${s.id}_${m[1]}`),
-  );
+  // The table names tools without their `apple_<surface>_` prefix, spelled with
+  // underscores: `voice-memos` tools are `apple_voice_memos_*`.
+  const prefix = `apple_${s.id.replaceAll("-", "_")}_`;
+  const named = new Set([...body.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => prefix + m[1]));
   const missing = [...listed.read, ...listed.write].filter((t) => !named.has(t));
   if (missing.length > 0) {
     problems.push(
       `${s.displayName}: registered but absent from its README table — ` +
-        missing.map((t) => t.replace(`apple_${s.id}_`, "")).join(", "),
+        missing.map((t) => t.replace(prefix, "")).join(", "),
     );
   }
 }

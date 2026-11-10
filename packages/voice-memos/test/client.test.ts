@@ -274,4 +274,15 @@ describe("searchRecordings", () => {
     expect(res.hits).toHaveLength(1);
     expect(res.truncated).toMatch(/limit/);
   });
+
+  // "No hits" must not read as "never said": count what had no transcript to search.
+  it("says how many recordings had no transcript it could search", () => {
+    const res = client.searchRecordings({ query: "nothing like this" });
+    expect(res.hits).toEqual([]);
+    expect(res.transcriptsNotSearched).toEqual({ none: 1, unreadable: 1, noAudio: 1 });
+    expect(
+      client.searchRecordings({ query: "nothing like this", includeDeleted: true })
+        .transcriptsNotSearched,
+    ).toEqual({ none: 1, unreadable: 1, noAudio: 1 });
+  });
 });

@@ -37,7 +37,8 @@ Favourites and Recently Deleted are filters on \`list_recordings\`, not folders.
 audio file, and recordings from before 2025 were never transcribed. A transcript status of
 \`none\` means Apple has not transcribed it; \`empty\` means it did and heard nothing;
 \`unreadable\` means the file would not parse, and is not evidence of either; \`no-audio\` means
-the recording has no file on this Mac.
+the recording has no file on this Mac. A search with no hits says, in \`transcriptsNotSearched\`, how
+many recordings it could not search: report that, not that the words were never said.
 
 **\`label\` is not a title.** A memo that was never named has \`title: null\`, and \`label\` is the
 date-shaped default Voice Memos shows in its place. Do not present the label as what the memo
