@@ -546,6 +546,12 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/ChildTermination.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
+store-lane-check: ## Assert the store lane's Core Data opener refuses a mismatched store and writes history, with no app
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/store-lane-check \
+		apps/apple/Cupertino/StoreLane/*.swift scripts/store-lane-check.swift
+	@apps/apple/.build/store-lane-check
+
 chat-check: ## Assert the chat pane's tool budget and schema subset, with no app and no model
 	@# The one file with no dependencies is the one holding every decision the
 	@# Chat pane makes before it can talk to anything: what fits in the context
@@ -1463,7 +1469,7 @@ clean: ## Remove the app build output
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
 	dev-config smoke wiring-check screen-check sound-check shell-check shell-window-check desktop-check mail-composer-check simulator-check \
-	simulator-spike dispatch-check unit chat-check chat-check-real audit-check license-check audit \
+	simulator-spike dispatch-check unit store-lane-check chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \
 	blame-setup icon clean smoke-swift audit-log-check host-check bridge-protocol-check \
