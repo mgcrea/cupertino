@@ -60,6 +60,7 @@ import {
 } from "./jxa/write.js";
 import { locateEnvelopeIndex, type LocateResult } from "./locate.js";
 import { MailboxMap, type MailAccount } from "./mailbox-map.js";
+import { decodeEncodedWords } from "./mime.js";
 import {
   createOsascriptRunner,
   type Logger,
@@ -1336,9 +1337,14 @@ export class AppleMailClient {
    */
   async saveAttachment(
     ref: string,
-    filename: string,
+    requested: string,
     opts: { overwrite?: boolean } = {},
   ): Promise<{ path: string; bytes: number; from: "inline" | "sidecar" | "mail" }> {
+    // The list tools report decoded names. Before they did, a name sent as an
+    // RFC 2047 encoded word was listed raw, so a caller holding that spelling is
+    // still answered, and the file is written under the decoded name. A name
+    // with no encoded word in it, which is every plain one, passes unchanged.
+    const filename = decodeEncodedWords(requested);
     const decoded = decodeRef(ref);
     const located = await this.#lookupMessageFile(decoded);
     if (!located.found) {

@@ -535,6 +535,122 @@ describe("an attachment Mail has not downloaded", () => {
   });
 });
 
+/**
+ * The live repro (Gmail "All Mail", 2017, Open-Xchange): a headers-only part
+ * whose filename is an RFC 2047 encoded word split across unstarred RFC 2231
+ * continuations. The list tools reported the raw encoded word; saving by that
+ * name passed the message-file check and then Mail, which lists the decoded
+ * name, refused it; saving by the decoded name failed the message-file check.
+ */
+const ENCODED_NAME = "=?UTF-8?Q?COF01_ind-_plan_ing=C3=A9nieur_b=C3=A9ton_du_28.02.2017.pdf?=";
+const DECODED_NAME = "COF01 ind- plan ingénieur béton du 28.02.2017.pdf";
+const PDF = "%PDF-1.4 plan\n";
+
+const SPLIT_ENCODED_WORD = [
+  "From: Jean-Christophe Simon <contact@example.fr>",
+  "Subject: =?UTF-8?Q?Etude_ing=C3=A9nieur?=",
+  "MIME-Version: 1.0",
+  "Content-Type: multipart/mixed;",
+  ' boundary="----=_Part_13453"',
+  "",
+  "",
+  "------=_Part_13453",
+  "Content-Transfer-Encoding: 7BIT",
+  "Content-Type: TEXT/HTML;",
+  "\tcharset=UTF-8",
+  "",
+  "<p>Ci joint le plan modifi&#233;.</p>",
+  "------=_Part_13453",
+  "Content-Transfer-Encoding: BASE64",
+  "Content-Disposition: ATTACHMENT;",
+  '\tfilename*0="=?UTF-8?Q?COF01_ind-_plan_ing=C3=A9nieur_b=C3=A9ton_du_28.02.201";',
+  '\tfilename*1="7.pdf?="',
+  "Content-Type: APPLICATION/PDF;",
+  '\tname*0="=?UTF-8?Q?COF01_ind-_plan_ing=C3=A9nieur_b=C3=A9ton_du_28.02.201";',
+  '\tname*1="7.pdf?="',
+  "X-Apple-Content-Length: 363882",
+  "",
+  "",
+  "------=_Part_13453--",
+].join("\n");
+
+/** Mail as it behaves: it lists the decoded name and matches it after NFC. */
+const mailHasDecodedName: Fetch = (p) => {
+  if (p.filename.normalize("NFC") !== DECODED_NAME.normalize("NFC")) {
+    return { saved: false, reason: "none", names: [DECODED_NAME] };
+  }
+  writeFileSync(p.dest, PDF);
+  return { saved: true, downloaded: false, fileSize: PDF.length };
+};
+
+describe("a filename sent as an encoded word split across continuations", () => {
+  it("lists the decoded name, in both list_attachments and get_message", async () => {
+    layDownMessage(undefined, SPLIT_ENCODED_WORD);
+
+    const listed = await callTool("apple_mail_list_attachments", { ref });
+    expect(listed.attachments).toEqual([
+      expect.objectContaining({ filename: DECODED_NAME, retrievable: false, sizeBytes: null }),
+    ]);
+
+    const message = await callTool("apple_mail_get_message", { ref });
+    expect(message.attachments.map((a: { filename: string }) => a.filename)).toEqual([
+      DECODED_NAME,
+    ]);
+    expect(message.note).toContain(DECODED_NAME);
+  });
+
+  it("saves it by the listed name, through Mail's download", async () => {
+    layDownMessage(undefined, SPLIT_ENCODED_WORD);
+    const fetch = vi.fn(mailHasDecodedName);
+    const saved = await client(runner(fetch)).saveAttachment(ref, DECODED_NAME);
+
+    expect(saved).toEqual({ path: join(downloads, DECODED_NAME), bytes: PDF.length, from: "mail" });
+    expect(readFileSync(saved.path, "utf8")).toBe(PDF);
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({ filename: DECODED_NAME }));
+  });
+
+  it("still accepts the raw encoded form an earlier version listed, and saves the decoded name", async () => {
+    layDownMessage(undefined, SPLIT_ENCODED_WORD);
+    const fetch = vi.fn(mailHasDecodedName);
+    const saved = await client(runner(fetch)).saveAttachment(ref, ENCODED_NAME);
+
+    expect(saved).toMatchObject({ path: join(downloads, DECODED_NAME), from: "mail" });
+    expect(fetch).toHaveBeenCalledWith(expect.objectContaining({ filename: DECODED_NAME }));
+  });
+
+  it("matches a name spelled in NFD against the message's NFC", async () => {
+    layDownMessage(undefined, SPLIT_ENCODED_WORD);
+    const fetch = vi.fn(mailHasDecodedName);
+    const saved = await client(runner(fetch)).saveAttachment(ref, DECODED_NAME.normalize("NFD"));
+
+    expect(saved.from).toBe("mail");
+    expect(readFileSync(saved.path, "utf8")).toBe(PDF);
+  });
+
+  it("finds a sidecar Mail stored under the NFD spelling", async () => {
+    const path = layDownMessage(undefined, SPLIT_ENCODED_WORD);
+    const part = join(path, "..", "..", "Attachments", String(ROWID), "2");
+    mkdirSync(part, { recursive: true });
+    writeFileSync(join(part, DECODED_NAME.normalize("NFD")), PDF);
+    const fetch = vi.fn(mailHasDecodedName);
+
+    const listed = await callTool("apple_mail_list_attachments", { ref });
+    expect(listed.attachments[0]).toMatchObject({ retrievable: true, sizeBytes: PDF.length });
+
+    const saved = await client(runner(fetch)).saveAttachment(ref, DECODED_NAME);
+    expect(saved.from).toBe("sidecar");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("names what the message holds when nothing matches", async () => {
+    layDownMessage(undefined, SPLIT_ENCODED_WORD);
+
+    await expect(client(runner(vi.fn())).saveAttachment(ref, "other.pdf")).rejects.toThrow(
+      `No attachment named "other.pdf" in this message. It lists: ${DECODED_NAME}.`,
+    );
+  });
+});
+
 describe("diagnostics probing the lane", () => {
   it("reports ok with the resolved nested path", async () => {
     layDownMessage("[Gmail]");

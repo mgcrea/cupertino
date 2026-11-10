@@ -119,6 +119,67 @@ describe("attachment filenames", () => {
   it("is null when there is no filename anywhere", () => {
     expect(headerFilename(`inline`, `text/plain; charset=utf-8`)).toBeNull();
   });
+
+  /**
+   * The live repro (Open-Xchange, 2017): RFC 2231 continuations WITHOUT the
+   * encoding star, whose joined text is one RFC 2047 encoded word, split in the
+   * middle. Joining them is not the end of it: unstarred continuations are just a
+   * plain value cut up, so the encoded word in it still has to be decoded.
+   */
+  it("decodes an encoded word split across unstarred continuations", () => {
+    const disposition = crlf(
+      [
+        "ATTACHMENT;",
+        '\tfilename*0="=?UTF-8?Q?COF01_ind-_plan_ing=C3=A9nieur_b=C3=A9ton_du_28.02.201";',
+        '\tfilename*1="7.pdf?="',
+      ].join("\n"),
+    );
+    const [header] = parseHeaders(`Content-Disposition: ${disposition}`);
+    expect(headerFilename(header!.value, null)).toBe(
+      "COF01 ind- plan ingénieur béton du 28.02.2017.pdf",
+    );
+  });
+
+  it("decodes the same split word in the content-type name", () => {
+    const contentType =
+      'APPLICATION/PDF; name*0="=?UTF-8?Q?ing=C3=A9nieur_b=C3=A9ton_du_28.02.201"; name*1="7.pdf?="';
+    expect(headerFilename(null, contentType)).toBe("ingénieur béton du 28.02.2017.pdf");
+  });
+
+  /** A starred segment is RFC 2231 encoding, and only that: `=?` there is literal. */
+  it("does not RFC 2047-decode starred continuations", () => {
+    const header = `attachment; filename*0*=UTF-8''%3D%3Fx%3F; filename*1*=Q%3Fy%3F%3D.txt`;
+    expect(headerFilename(header, null)).toBe("=?x?Q?y?=.txt");
+  });
+
+  it("joins adjacent encoded words, dropping the whitespace between them", () => {
+    const header = `attachment; filename="=?UTF-8?Q?plan_ing=C3=A9?= =?UTF-8?B?bmlldXIucGRm?="`;
+    expect(headerFilename(header, null)).toBe("plan ingénieur.pdf");
+  });
+
+  it("decodes encoded words folded onto a second header line", () => {
+    const [header] = parseHeaders(
+      crlf(
+        'Content-Disposition: attachment;\n filename="=?UTF-8?Q?b=C3=A9ton?=\n =?UTF-8?Q?.pdf?="',
+      ),
+    );
+    expect(headerFilename(header!.value, null)).toBe("béton.pdf");
+  });
+
+  it("decodes ISO-8859-1 and Windows-1252 encoded words", () => {
+    expect(headerFilename(`attachment; filename="=?ISO-8859-1?Q?caf=E9.txt?="`, null)).toBe(
+      "café.txt",
+    );
+    // 0x80 is € in Windows-1252 and a control character in ISO-8859-1.
+    expect(headerFilename(`attachment; filename="=?windows-1252?Q?100=80.txt?="`, null)).toBe(
+      "100€.txt",
+    );
+  });
+
+  it("prefers filename* over an encoded-word filename", () => {
+    const header = `attachment; filename="=?UTF-8?Q?wrong.pdf?="; filename*=UTF-8''right.pdf`;
+    expect(headerFilename(header, null)).toBe("right.pdf");
+  });
 });
 
 describe("bodies", () => {

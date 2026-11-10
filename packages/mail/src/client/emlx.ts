@@ -16,6 +16,7 @@ import {
   listAttachments,
   parsePart,
   partBytes,
+  sameAttachmentName,
   summaryHeaders,
   type Attachment,
   type MimePart,
@@ -466,13 +467,17 @@ export const extractAttachment = (
   const root = parsePart(splitEmlx(readFileSync(emlxPath)));
 
   let match: MimePart | null = null;
+  const names: string[] = [];
   walkParts(root, (p) => {
-    if (!match && p.filename === filename) match = p;
+    if (p.filename === null) return;
+    names.push(p.filename);
+    if (!match && sameAttachmentName(p.filename, filename)) match = p;
   });
   if (!match) {
-    throw new PreconditionError(
-      `No attachment named "${filename}" in this message. Use apple_mail_list_attachments to see what is there.`,
-    );
+    // The names come from the same parse the list tools report, so what this
+    // offers is always a name this lookup accepts.
+    const listed = names.length > 0 ? `It lists: ${names.join(", ")}.` : "It lists none.";
+    throw new PreconditionError(`No attachment named "${filename}" in this message. ${listed}`);
   }
 
   // The same test listAttachments uses. `length > 0` let the delimiter
@@ -528,7 +533,7 @@ const findNamedFile = (root: string, filename: string, depth: number): string | 
   if (depth > 4) return null;
   for (const entry of safeReaddir(root)) {
     const full = join(root, entry);
-    if (entry === filename) return full;
+    if (sameAttachmentName(entry, filename)) return full;
     try {
       if (statSync(full).isDirectory()) {
         const hit = findNamedFile(full, filename, depth + 1);
