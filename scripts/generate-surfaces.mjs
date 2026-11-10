@@ -472,6 +472,9 @@ target("apps/website/src/data/surfaces.ts", (src) =>
 
 // ─── 10b. The website's app/capability split ─────────────────────────────────
 
+/** An object key: bare when it is an identifier, quoted when it is not (`"voice-memos"`). */
+const tsKey = (id) => (/^[A-Za-z_$][\w$]*$/.test(id) ? id : JSON.stringify(id));
+
 /**
  * The things about a surface the manifest DOES know, so the site cannot file a
  * card under the wrong heading or caption a row with a permission that surface
@@ -488,13 +491,13 @@ target("apps/website/src/data/surfaces.ts", (src) =>
     `// <generated:kind> ${BANNER}\n`,
     `// </generated:kind>`,
     `export const KIND: Record<Surface["id"], "app" | "capability"> = {\n` +
-      surfaces.map((s) => `  ${s.id}: ${swiftString(s.kind)},`).join("\n") +
+      surfaces.map((s) => `  ${tsKey(s.id)}: ${swiftString(s.kind)},`).join("\n") +
       `\n};\n\n` +
       `export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {\n` +
-      surfaces.map((s) => `  ${s.id}: ${s.usesAppleEvents},`).join("\n") +
+      surfaces.map((s) => `  ${tsKey(s.id)}: ${s.usesAppleEvents},`).join("\n") +
       `\n};\n\n` +
       `export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {\n` +
-      surfaces.map((s) => `  ${s.id}: ${s.supportsWrites},`).join("\n") +
+      surfaces.map((s) => `  ${tsKey(s.id)}: ${s.supportsWrites},`).join("\n") +
       `\n};\n`,
     "website surfaces.ts kind",
   ),
