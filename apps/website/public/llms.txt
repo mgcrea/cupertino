@@ -1,12 +1,12 @@
 # Cupertino
 
 > MCP servers for the Apple apps already on your Mac — Mail, Notes, Reminders, Calendar,
-> Contacts, Messages, Safari and Maps — plus the Mac's screen, sound, desktop, Simulator and a
+> Contacts, Messages, Safari, Maps and Voice Memos — plus the Mac's screen, sound, desktop, Simulator and a
 > shell — and the signed menu-bar app that holds their permission grants once instead of handing
 > them to every editor.
 
 Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0, and at
-1.37.0 as of November 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
+1.38.0 as of November 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
 packages are MIT and on npm; the app carries Screen, Sound, Desktop, Simulator and Shell instead,
 which have no npm package because they need permissions and frameworks only the signed app can
 hold.
@@ -25,7 +25,7 @@ hold.
 
 ## Surfaces
 
-Twelve now. The first seven are Apple apps; the last five are the Mac itself, and four of those
+Fourteen now. The first nine are Apple apps; the last five are the Mac itself, and four of those
 ship inside the app because they need a permission or a framework no published npm package can
 hold.
 
@@ -62,6 +62,12 @@ hold.
   needs a developer-menu toggle that is not a TCC grant and whose state cannot be read. Live tabs
   and page contents are the only things in the whole bundle that work with no Full Disk Access at
   all — tabs need an Automation grant, and page contents need the extension.
+- Voice Memos — 6 tools (5 always registered, 1 write-gated). `@mgcrea/mcp-apple-voice-memos`.
+  Recordings with their folders, favourites and Recently Deleted, read from Voice Memos' own store,
+  and the transcript Apple made of each recording, read out of the audio file with every segment's
+  start and end. Recordings from before 2025 have no transcript, because Apple did not backfill.
+  The write tool copies a recording's audio to `~/Downloads`; nothing writes to Voice Memos itself,
+  which has no scripting dictionary. Full Disk Access is mandatory.
 
 The app itself hosts five more surfaces, none of them a separate npm install:
 
