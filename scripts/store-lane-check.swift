@@ -262,11 +262,57 @@ struct StoreLaneCheck {
     throw Failure(why: "\(label) did not throw")
   }
 
+  /// What the writer and the fixture touch. A model without one of these (another macOS's
+  /// Voice Memos) cannot exercise the writer, so the group skips rather than fails.
+  static let voiceMemosNeeds: [String: [String]] = [
+    "CloudRecording": [
+      "uniqueID", "encryptedTitle", "customLabelForSorting", "sharedFlags", "evictionDate",
+      "folder",
+    ],
+    "Folder": ["uuid", "countOfRecordings", "recordings"],
+  ]
+
+  /// `Entity.property` for each needed property `model` lacks, sorted.
+  static func voiceMemosLacks(_ model: NSManagedObjectModel) -> [String] {
+    voiceMemosNeeds.flatMap { entity, names in
+      let properties = model.entitiesByName[entity]?.propertiesByName ?? [:]
+      return names.filter { properties[$0] == nil }.map { "\(entity).\($0)" }
+    }.sorted()
+  }
+
+  /// The `.momd`'s current version name, read the way the opener reads it.
+  static func voiceMemosVersion() -> String {
+    let info = VoiceMemosWriter.modelURL.appendingPathComponent("VersionInfo.plist")
+    guard let data = try? Data(contentsOf: info),
+      let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+        as? [String: Any],
+      let version = plist["NSManagedObjectModel_CurrentVersionName"] as? String
+    else { return "unversioned" }
+    return version
+  }
+
   static func voiceMemosCases() {
     guard FileManager.default.fileExists(atPath: VoiceMemosWriter.modelURL.path) else {
       print("SKIP voice-memos: model not on this machine")
       return
     }
+    let version = voiceMemosVersion()
+    guard let loaded = NSManagedObjectModel(contentsOf: VoiceMemosWriter.modelURL),
+      let unpatchedModel = loaded.copy() as? NSManagedObjectModel,
+      let patchedModel = try? voiceMemosModel()
+    else {
+      print("FAIL voice-memos: the model (\(version)) is on this machine but did not load")
+      failures += 1
+      return
+    }
+    let lacks = voiceMemosLacks(patchedModel)
+    guard lacks.isEmpty else {
+      print("SKIP voice-memos: model \(version) lacks \(lacks.joined(separator: ", "))")
+      return
+    }
+    let patchChangesHash =
+      unpatchedModel.entitiesByName["CloudRecording"]?.versionHash
+      != patchedModel.entitiesByName["CloudRecording"]?.versionHash
 
     check("renameSetsTitleAndSortKey") {
       let (writer, storeURL) = try voiceMemosFixture("rename")
@@ -393,6 +439,13 @@ struct StoreLaneCheck {
       try expectRefusal("notFound", "R-NONE") { _ = try writer.rename(id: "R-NONE", title: "x") }
     }
 
+    // Only a patch that moves the hash makes an unpatched opener refuse the store.
+    guard patchChangesHash else {
+      print(
+        "SKIP unpatchedModelIsRefused: the patch does not change this model's CloudRecording "
+          + "hash (\(version))")
+      return
+    }
     check("unpatchedModelIsRefused") {
       let (_, storeURL) = try voiceMemosFixture("unpatched")
       let unpatched = VoiceMemosWriter(
