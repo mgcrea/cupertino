@@ -83,17 +83,24 @@ the cooldown, the runs in flight, and the time. `make unit` ("Shell policy") pin
 every case below, and `make shell-check` ("ShellServer") pins the server acting on it.
 
 - **"Before running"** is one of three choices in the Shell pane:
-  - **Ask every time**, the default. Every run shows the window, and the window has no session
-    button.
-  - **Ask once per session**. The window adds "Run, and stop asking this session", which approves
-    later runs on the same connection for 30 min or until the connection closes. It never crosses
-    to another connection (`make shell-check`, "ShellServer: once per session"). Any change to
-    "Before running" withdraws every session approval at once, so moving to "Ask every time" and
-    back within the 30 min does not bring one back ("switching away from once per session and
-    back asks again"). The app reports each change as its defaults change, and every request
-    reports the setting it was decided under ("a change seen first by a request withdraws it
-    too"). The app's half, the defaults watcher in `CupertinoApp.swift`, is not pinned by a
-    check.
+  - **Ask every time**. Every run shows the window, and the window has no session button.
+  - **Ask once per session**, the default. The window adds "Run, and stop asking this session",
+    which approves later runs on the same connection for 30 min or until the connection closes.
+    It never crosses to another connection (`make shell-check`, "ShellServer: once per
+    session"). Any change to "Before running" withdraws every session approval at once, so
+    moving to "Ask every time" and back within the 30 min does not bring one back ("switching
+    away from once per session and back asks again"). The app reports each change as its
+    defaults change, and every request reports the setting it was decided under ("a change seen
+    first by a request withdraws it too"). The app's half, the defaults watcher in
+    `CupertinoApp.swift`, is not pinned by a check.
+
+    The setting alone approves nothing: every first run on a connection still shows the window,
+    with **Don't run** as its default button. It is the default because under "Ask every time"
+    the session button sat behind a picker few people open, and someone tired of **Run once**
+    would go looking for **Don't ask** instead. A missing or unknown value reads as this one
+    (`make shell-check`, "fresh: off and once per session", "an unknown value reads as once per
+    session").
+
   - **Don't ask**. No window. Choosing it shows a warning sheet that names the injection risk,
     and only that sheet's confirming button, pressed by hand, sets it.
 - **Cooldown.** After "Don't run" or no answer, the same connection, and every connection whose
@@ -321,10 +328,10 @@ ask", and turn "has a shell" into "has Full Disk Access" with no window. So thos
 the two that lower the bar, count only with a seal Cupertino made.
 
 - **The seal.** Beside each value, a hex HMAC-SHA256 over `<app identifier>|<key>|<value>`, keyed
-  by 32 random bytes. A missing, unreadable or invalid seal reads as Shell **off** and as **Ask
-  every time**, so deleting the key or the preference fails safe. "Ask every time" and "Ask once
-  per session" need no seal, since both still put a window in front of a person. `make shell-check`,
-  "ShellSeal", pins each of these.
+  by 32 random bytes. A missing, unreadable or invalid seal reads as Shell **off**, and a "Don't
+  ask" without a valid one as **Ask every time**, the strictest, so deleting the key or the
+  preference fails safe. "Ask every time" and "Ask once per session" need no seal, since both
+  still put a window in front of a person. `make shell-check`, "ShellSeal", pins each of these.
 - **Where the key lives.** In the data protection keychain, under the keychain access group named
   by the app's own signed application identifier, `<prefix>.io.mgcrea.cupertino` for the release.
   A process can only name an access group its own signature is entitled to, and that entitlement
@@ -355,10 +362,10 @@ the two that lower the bar, count only with a seal Cupertino made.
   validate if written back after the person turned it off. So whenever a protected setting goes
   down, the key is replaced and every seal made under the old one, copies included, stops
   validating (`make shell-check`, "a seal copied before turn-off does not validate after").
-- **Turning Shell off also resets "Before running" to Ask every time**, so turning it on again
-  never brings "Don't ask" back with it (`make shell-check`, "on with \"Don't ask\", turned off
-  and on again, reads ask"). Lowering "Don't ask" alone leaves Shell on, re-sealed under the new
-  key.
+- **Turning Shell off also resets "Before running" to its default, Ask once per session**, so
+  turning it on again never brings "Don't ask" back with it (`make shell-check`, "on with \"Don't
+  ask\", turned off and on again, reads once per session"). Lowering "Don't ask" alone leaves
+  Shell on, re-sealed under the new key.
 - **Seals are written from the Shell pane only**, after a hand-pressed click on a confirming sheet.
   Every switch for Shell, the pane's heading and the sidebar's context menu among them, goes
   through `ShellPane.switchStep`: off happens at once, on opens the Shell pane with the sheet up.

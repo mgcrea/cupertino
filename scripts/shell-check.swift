@@ -107,7 +107,8 @@ struct ShellCheck {
     let enabled = "surfaceEnabled.shell"
 
     check(
-      "fresh: off and ask", !ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
+      "fresh: off and once per session",
+      !ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .session)
     store.set(true, forKey: enabled)
     store.set("none", forKey: ShellPolicy.key)
     check(
@@ -150,8 +151,9 @@ struct ShellCheck {
       "turning off removes the value and its seal",
       store.object(forKey: enabled) == nil && store.object(forKey: ShellSeal.enabledSealKey) == nil)
     check(
-      "and puts \"Before running\" back to ask, unsealed",
-      ShellSeal.effectiveBefore(store) == .ask && store.string(forKey: ShellPolicy.key) == "ask"
+      "and puts \"Before running\" back to once per session, unsealed",
+      ShellSeal.effectiveBefore(store) == .session
+        && store.string(forKey: ShellPolicy.key) == "session"
         && store.object(forKey: ShellSeal.beforeSealKey) == nil)
     store.set(true, forKey: enabled)
     store.set(copied, forKey: ShellSeal.enabledSealKey)
@@ -162,8 +164,8 @@ struct ShellCheck {
     ShellSeal.setEnabled(false, store)
     ShellSeal.setEnabled(true, store)
     check(
-      "on with \"Don't ask\", turned off and on again, reads ask",
-      ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .ask)
+      "on with \"Don't ask\", turned off and on again, reads once per session",
+      ShellSeal.isEnabled(store) && ShellSeal.effectiveBefore(store) == .session)
 
     ShellSeal.setBefore(.none, store)
     let copiedNone = store.string(forKey: ShellSeal.beforeSealKey)
@@ -181,7 +183,8 @@ struct ShellCheck {
     ShellSeal.setBefore(.ask, store)
     check("ask needs no seal", ShellSeal.effectiveBefore(store) == .ask)
     store.set("bogus", forKey: ShellPolicy.key)
-    check("an unknown value reads as ask", ShellSeal.effectiveBefore(store) == .ask)
+    check(
+      "an unknown value reads as once per session", ShellSeal.effectiveBefore(store) == .session)
 
     store.set("garbage", forKey: ShellSeal.enabledSealKey)
     check("bad seal reads off", !ShellSeal.isEnabled(store))

@@ -29,6 +29,17 @@ nonisolated enum ShellPolicy {
     case session
     /// Run straight away, with the card shown while it runs.
     case none
+
+    /// What "Before running" is until the person picks something else, and after Shell is
+    /// turned off.
+    ///
+    /// `.session` rather than `.ask`: the setting alone approves nothing, it only adds the
+    /// window's third button, and every first run on a connection still shows the whole script
+    /// with "Don't run" as the default button. Under `.ask` the button is behind a picker few
+    /// people open, and someone tired of "Run once" goes looking for `.none`, which removes the
+    /// window altogether. A forged "Don't ask" still reads as `.ask`, the strictest, in
+    /// `ShellSeal.effectiveBefore`.
+    static let initial = Before.session
   }
 
   enum Decision: Equatable {
