@@ -14,8 +14,11 @@ import { z } from "zod";
  * Configuration is environment-only: this server holds no secret. Its access is the macOS
  * permission the user granted.
  *
- * `allowWrites` gates one tool, `save_recording`, which copies a recording's audio into
- * `exportDir`. Nothing on this surface writes to Voice Memos' own store.
+ * `allowWrites` gates `save_recording`, which copies a recording's audio into `exportDir`,
+ * and, when Cupertino hosts this server, the store tools (rename, move, favourite, delete,
+ * restore). Those reach Voice Memos' store only through the app's store lane, which saves
+ * with Voice Memos' own data model so iCloud uploads the change; this server never writes
+ * the store itself.
  */
 const ConfigSchema = BaseConfigSchema.extend({
   /** Explicit store path. Bypasses discovery: for tests and forensic copies. */

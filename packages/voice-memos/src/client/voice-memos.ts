@@ -17,6 +17,7 @@ import {
   VOICE_MEMOS_SURFACE,
   VoiceMemosStoreUnavailableError,
 } from "./errors.js";
+import { VoiceMemosLane } from "./lane.js";
 import { FDA_HINT, type LocateResult, locateStore } from "./locate.js";
 import {
   type FolderRow,
@@ -111,6 +112,8 @@ export type CreateClientOptions = {
   logger?: Logger | undefined;
   /** Injected by tests so discovery never reaches anyone's real home. */
   home?: string | undefined;
+  /** Where the store lane's env is read from. `process.env` by default; tests pass their own. */
+  env?: NodeJS.ProcessEnv | undefined;
 };
 
 /**
@@ -122,6 +125,15 @@ export class VoiceMemosClient {
   readonly #config: Config;
   readonly #logger: Logger | undefined;
   readonly #home: string | undefined;
+  /**
+   * The store lane, when Cupertino hosts this server: renames, moves, favourites and deletes,
+   * saved by the app with Voice Memos' own model.
+   *
+   * Null when it does not, which is the supported case rather than a fault: the npm package
+   * has to work with no app on the machine. `tools/index.ts` skips registering the tools that
+   * need it. Opening it connects nothing.
+   */
+  readonly lane: VoiceMemosLane | null;
 
   #located: LocateResult | null = null;
   #store: VoiceMemosStore | null = null;
@@ -133,6 +145,7 @@ export class VoiceMemosClient {
     this.#config = opts.config;
     this.#logger = opts.logger;
     this.#home = opts.home;
+    this.lane = VoiceMemosLane.open(opts.env ?? process.env);
   }
 
   get config(): Config {

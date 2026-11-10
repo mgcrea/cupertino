@@ -6,9 +6,10 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
+import type { LaneStatus } from "../client/lane.js";
 import { type AudioScan, scanAudioFile } from "../client/mp4.js";
 import type { VoiceMemosClient } from "../client/voice-memos.js";
-import { WRITE_TOOLS } from "./names.js";
+import { STORE_WRITE_TOOLS, WRITE_TOOLS } from "./names.js";
 import { wrap } from "./util.js";
 
 type Format = AudioScan["format"];
@@ -70,6 +71,22 @@ const transcriptCoverage = (client: VoiceMemosClient): TranscriptCoverage => {
   return coverage;
 };
 
+/**
+ * The store lane's own answer, asked only when Cupertino hosts this server. A lane that cannot
+ * answer is reported as `{ error }`, never as a failed diagnostics call: this report is where
+ * a person looks when the lane is the thing that broke.
+ */
+const writeLaneStatus = async (
+  client: VoiceMemosClient,
+): Promise<LaneStatus | { error: string } | null> => {
+  if (!client.lane) return null;
+  try {
+    return await client.lane.status();
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+};
+
 /** The report, shared by the tool and the `cupertino://voice-memos/diagnostics` resource. */
 export const buildDiagnostics = async (
   client: VoiceMemosClient,
@@ -88,15 +105,19 @@ export const buildDiagnostics = async (
       transcripts = null;
     }
   }
+  const writeLane = await writeLaneStatus(client);
+  const hosted = client.lane !== null;
   return {
     ...base,
     settings: { ...base.settings, exportDir: client.config.exportDir },
     lanes: {
       summary:
-        "Voice Memos has ONE lane. VoiceMemos.app ships no scripting dictionary, and its App " +
-        "Intents can only be run from Shortcuts, so everything comes from CloudRecordings.db " +
-        "and the audio files beside it, under Full Disk Access. Without the grant this server " +
-        "reads nothing and says so rather than returning empty lists.",
+        "Voice Memos has ONE read lane. VoiceMemos.app ships no scripting dictionary, and its " +
+        "App Intents can only be run from Shortcuts, so every read comes from " +
+        "CloudRecordings.db and the audio files beside it, under Full Disk Access. Without the " +
+        "grant this server reads nothing and says so rather than returning empty lists. When " +
+        "Cupertino hosts this server, renames, moves, favourites and deletes go through the " +
+        "app's store lane, which saves them with Voice Memos' own data model.",
       fileLane: {
         needs: "Full Disk Access",
         answers: "recordings, folders, favourites, Recently Deleted, Apple's transcripts",
@@ -106,10 +127,19 @@ export const buildDiagnostics = async (
       writes: {
         enabled: client.config.allowWrites,
         lane:
-          "A copy of a recording's audio into exportDir. Nothing writes to Voice Memos' store, " +
-          "which is CloudKit-mirrored.",
+          "save_recording copies a recording's audio into exportDir. The store tools write " +
+          "Voice Memos' store only through Cupertino, which saves with Voice Memos' own model " +
+          "so iCloud uploads the change; this server never writes the store itself.",
         tools: client.config.allowWrites ? [...WRITE_TOOLS] : [],
+        storeTools: client.config.allowWrites && hosted ? [...STORE_WRITE_TOOLS] : [],
       },
+      writeLane,
+      ...(hosted
+        ? {}
+        : {
+            writeLaneNote:
+              "not hosted by Cupertino: rename, move, favourite and delete need the app",
+          }),
     },
     store: status.store,
     schema: {
