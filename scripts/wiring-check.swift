@@ -39,6 +39,7 @@ struct WiringCheck {
     (id: "messages", label: "Messages"),
     (id: "safari", label: "Safari"),
     (id: "maps", label: "Maps"),
+    (id: "voice-memos", label: "Voice Memos"),
     (id: "screen", label: "Screen"),
     (id: "sound", label: "Sound"),
     (id: "desktop", label: "Desktop"),

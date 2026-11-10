@@ -32,22 +32,23 @@ off cannot see that they exist.
 
 ## Surfaces
 
-| Surface   | Package                                    | Status                                                                                               |
-| --------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| Mail      | [`packages/mail`](packages/mail)           | implemented — 24 tools, search/read/attachments + gated writes and watches                           |
-| Notes     | [`packages/notes`](packages/notes)         | implemented — 13 tools, search/read/attachments + gated writes                                       |
-| Reminders | [`packages/reminders`](packages/reminders) | implemented — 11 tools, lists/search/dates + gated writes                                            |
-| Calendar  | [`packages/calendar`](packages/calendar)   | implemented — 10 tools, ranges/search/free-time + gated writes                                       |
-| Contacts  | [`packages/contacts`](packages/contacts)   | implemented — 7 tools, resolves handles to names + gated writes                                      |
-| Messages  | [`packages/messages`](packages/messages)   | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches             |
-| Safari    | [`packages/safari`](packages/safari)       | implemented — 21 tools, history/tabs/reading list/page reads + gated writes, codes, network, cookies |
-| Maps      | [`packages/maps`](packages/maps)           | implemented — 13 tools, favourites/Guides/recents + gated writes                                     |
-| Screen    | —                                          | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on        |
-| Sound     | —                                          | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on       |
-| Desktop   | —                                          | implemented — 27 tools, AXUIElement natively; in-app, no npm package; off until switched on          |
-| Simulator | —                                          | implemented — 12 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on       |
-| Shell     | —                                          | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on               |
-| —         | [`packages/core`](packages/core)           | shared: the osascript boundary, TCC-aware errors, ro SQLite                                          |
+| Surface     | Package                                        | Status                                                                                               |
+| ----------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Mail        | [`packages/mail`](packages/mail)               | implemented — 24 tools, search/read/attachments + gated writes and watches                           |
+| Notes       | [`packages/notes`](packages/notes)             | implemented — 13 tools, search/read/attachments + gated writes                                       |
+| Reminders   | [`packages/reminders`](packages/reminders)     | implemented — 11 tools, lists/search/dates + gated writes                                            |
+| Calendar    | [`packages/calendar`](packages/calendar)       | implemented — 10 tools, ranges/search/free-time + gated writes                                       |
+| Contacts    | [`packages/contacts`](packages/contacts)       | implemented — 7 tools, resolves handles to names + gated writes                                      |
+| Messages    | [`packages/messages`](packages/messages)       | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches             |
+| Safari      | [`packages/safari`](packages/safari)           | implemented — 21 tools, history/tabs/reading list/page reads + gated writes, codes, network, cookies |
+| Maps        | [`packages/maps`](packages/maps)               | implemented — 13 tools, favourites/Guides/recents + gated writes                                     |
+| Voice Memos | [`packages/voice-memos`](packages/voice-memos) | in progress — 1 tool, diagnostics; reads and the gated export land next                              |
+| Screen      | —                                              | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on        |
+| Sound       | —                                              | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on       |
+| Desktop     | —                                              | implemented — 27 tools, AXUIElement natively; in-app, no npm package; off until switched on          |
+| Simulator   | —                                              | implemented — 12 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on       |
+| Shell       | —                                              | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on               |
+| —           | [`packages/core`](packages/core)               | shared: the osascript boundary, TCC-aware errors, ro SQLite                                          |
 
 **Screen, Sound, Desktop, Simulator and Shell arrive switched off.** Every other surface that brokers
 an Apple app is on when Cupertino is installed. The first four are not, because Screen Recording,
@@ -206,16 +207,17 @@ Granting it to Mail.app does nothing; the reader needs the permission, not Mail.
 
 **What works without Full Disk Access:**
 
-| Surface   | Without the grant                                                                                                                                                                                                                                                                                                               |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Mail      | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                                                                                                                                                                                                                                                |
-| Notes     | **fully usable** below roughly 5k notes; only attachment bytes need the grant                                                                                                                                                                                                                                                   |
-| Reminders | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it                                                                                                                                                                                                                          |
-| Calendar  | **nothing.** The only surface with no Apple Events read path fast enough to be a fallback — one 90-day range query costs 3.4 s — so every read needs the grant. Writes still work.                                                                                                                                              |
-| Contacts  | **nothing** — but it does not want Full Disk Access. Its store sits behind the separate Contacts permission, which macOS _prompts_ for rather than making you find a settings pane. Writes need Automation on top.                                                                                                              |
-| Messages  | **nothing at all.** No Apple Events read path exists — Messages answers "Application isn't running" even while running — so there is no second lane and no degraded mode. A send can still be attempted, but with no store to pick the target from or reconcile against, it usually cannot be addressed at all.                 |
-| Safari    | **live tabs, and only those.** The one surface whose lanes are not fallbacks for each other: Apple Events sees what is open now, the file lane sees everything else. History, bookmarks and the Reading List all need the grant.                                                                                                |
-| Maps      | **nothing at all.** The only surface with no second lane by construction: Maps ships no scripting dictionary, so there is no Apple Events fallback to degrade to. Without the grant this server returns an error rather than an empty list, because an empty list of favourites reads exactly like a person who has saved none. |
+| Surface     | Without the grant                                                                                                                                                                                                                                                                                                               |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mail        | accounts, mailboxes and writes only — search falls back to Apple Events at ~74 s                                                                                                                                                                                                                                                |
+| Notes       | **fully usable** below roughly 5k notes; only attachment bytes need the grant                                                                                                                                                                                                                                                   |
+| Reminders   | usable, but all-day dates and subtasks need the store — the container cannot even be listed without it                                                                                                                                                                                                                          |
+| Calendar    | **nothing.** The only surface with no Apple Events read path fast enough to be a fallback — one 90-day range query costs 3.4 s — so every read needs the grant. Writes still work.                                                                                                                                              |
+| Contacts    | **nothing** — but it does not want Full Disk Access. Its store sits behind the separate Contacts permission, which macOS _prompts_ for rather than making you find a settings pane. Writes need Automation on top.                                                                                                              |
+| Messages    | **nothing at all.** No Apple Events read path exists — Messages answers "Application isn't running" even while running — so there is no second lane and no degraded mode. A send can still be attempted, but with no store to pick the target from or reconcile against, it usually cannot be addressed at all.                 |
+| Safari      | **live tabs, and only those.** The one surface whose lanes are not fallbacks for each other: Apple Events sees what is open now, the file lane sees everything else. History, bookmarks and the Reading List all need the grant.                                                                                                |
+| Maps        | **nothing at all.** The only surface with no second lane by construction: Maps ships no scripting dictionary, so there is no Apple Events fallback to degrade to. Without the grant this server returns an error rather than an empty list, because an empty list of favourites reads exactly like a person who has saved none. |
+| Voice Memos | **nothing at all**, like Maps: no scripting dictionary, and the App Intents it registers can only be run from Shortcuts. The store's directory is `EPERM` without the grant, not empty.                                                                                                                                         |
 
 Tools that need the index don't disappear when it's missing — the tool list is a pure function of
 `allowWrites` and nothing else, because MCP clients cache it. They return a structured `degraded`
@@ -412,8 +414,22 @@ it sits in the one directory of Maps' container that Full Disk Access gates, and
 `group.com.apple.Maps` is a decoy that is `EPERM` rather than empty. See
 [docs/maps.md](docs/maps.md).
 
+### Voice Memos
+
+| Always available                                 | Write-gated      |
+| ------------------------------------------------ | ---------------- |
+| `list_folders` `list_recordings` `get_recording` | `save_recording` |
+| `search_recordings` `diagnostics`                |                  |
+
+Recordings, folders, favourites and Recently Deleted from `CloudRecordings.db`, and the transcript
+**Apple made on-device and embedded in each audio file**, read box by box without touching the
+audio. Every segment carries its start and end, so a quote can be found again by listening.
+Recordings from before 2025 have no transcript (Apple did not backfill), and this server says so
+rather than transcribing; `save_recording` copies the audio to `~/Downloads`, where Cadence can
+pick it up. Nothing writes to the store. See [docs/voice-memos.md](docs/voice-memos.md).
+
 All names are prefixed `apple_mail_` / `apple_notes_` / `apple_reminders_` / `apple_calendar_` /
-`apple_contacts_` / `apple_messages_` / `apple_safari_` / `apple_maps_` — and `apple_screen_` /
+`apple_contacts_` / `apple_messages_` / `apple_safari_` / `apple_maps_` / `apple_voice_memos_` — and `apple_screen_` /
 `apple_sound_` / `apple_desktop_` / `apple_simulator_` for the surfaces the app serves itself.
 
 ## Prompts and resources

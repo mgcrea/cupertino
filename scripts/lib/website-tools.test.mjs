@@ -75,11 +75,22 @@ const SWIFT_SERVERS = [
   ["shell", join(ROOT, "apps", "apple", "Cupertino", "ShellServer.swift")],
 ];
 
-/** Every tool name passed to `server.registerTool`, across every package. */
-const registeredTools = () => {
+/**
+ * Packages whose tools are deliberately NOT on the website yet.
+ *
+ * The site deploys on every push to main, so a card would go live at merge, before the
+ * package is on npm, and a card is a promise the install line has to keep. A surface waits
+ * here until its release adds the card. The last test below fails once a card exists, so
+ * an entry cannot outlive the reason for it.
+ */
+const UNLISTED = new Set(["voice-memos"]);
+
+/** Every tool name passed to `server.registerTool`, across every listed package. */
+const registeredTools = ({ unlisted = false } = {}) => {
   const found = new Map();
   const packages = join(ROOT, "packages");
   for (const pkg of readdirSync(packages)) {
+    if (UNLISTED.has(pkg) !== unlisted) continue;
     const dir = join(packages, pkg, "src", "tools");
     if (!existsSync(dir)) continue;
     for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
@@ -90,6 +101,7 @@ const registeredTools = () => {
     }
   }
   for (const [surface, file] of SWIFT_SERVERS) {
+    if (UNLISTED.has(surface) !== unlisted) continue;
     const src = readFileSync(file, "utf8");
     for (const m of src.matchAll(/"name":\s*"(apple_[a-z0-9_]+)"/g)) found.set(m[1], surface);
   }
@@ -137,6 +149,18 @@ test("the two lists are the same size, so a rename cannot hide in the totals", (
     registeredTools().size,
     siteTools().size,
     "the site and the servers agree on names but not on how many — check for a duplicate",
+  );
+});
+
+test("an unlisted surface has no tool on the site, so UNLISTED cannot outlive its card", () => {
+  const unlisted = registeredTools({ unlisted: true });
+  assert.ok(unlisted.size > 0 || UNLISTED.size === 0, "UNLISTED names a package with no tools");
+  const site = siteTools();
+  const listed = [...unlisted.keys()].filter((t) => site.has(t)).toSorted();
+  assert.deepEqual(
+    listed,
+    [],
+    `the site now lists ${listed.join(", ")}: drop that surface from UNLISTED in this file`,
   );
 });
 

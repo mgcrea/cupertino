@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -70,4 +71,37 @@ export const insertFolder = (
     `INSERT INTO ZFOLDER (Z_PK, Z_ENT, Z_OPT, ZUUID, ZENCRYPTEDNAME, ZRANK, ZCOUNTOFRECORDINGS)
      VALUES (?, 2, 1, ?, ?, ?, ?)`,
   ).run(f.pk, f.uuid, f.name, f.rank, f.count);
+};
+
+/**
+ * A library on disk: the fixture schema as `CloudRecordings.db` in a temp Recordings
+ * directory, for tests that go through `locateStore` and `openReadOnly` as the server does.
+ */
+export type Library = {
+  dir: string;
+  storePath: string;
+  db: DatabaseSync;
+  /** Writes a synthetic audio file into the Recordings directory and returns its ZPATH. */
+  addAudio: (name: string, bytes: Uint8Array) => string;
+  cleanup: () => void;
+};
+
+export const makeLibrary = (sql: string = FIXTURE): Library => {
+  const dir = mkdtempSync(join(tmpdir(), "vm-library-"));
+  const storePath = join(dir, "CloudRecordings.db");
+  const db = new DatabaseSync(storePath);
+  db.exec(sql);
+  return {
+    dir,
+    storePath,
+    db,
+    addAudio: (name, bytes) => {
+      writeFileSync(join(dir, name), bytes);
+      return name;
+    },
+    cleanup: () => {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
 };

@@ -27,8 +27,8 @@ SPARKLE_TOOLS    := apps/apple/.build/sparkle-cache/bin
 # The surfaces the app brokers. GENERATED from surfaces.json — run `make surfaces`
 # after editing the manifest, never this line. `make surfaces-check` is what CI runs.
 # <generated:surfaces> generated from surfaces.json by `make surfaces` — do not edit by hand
-SURFACES     := mail notes reminders calendar contacts messages safari maps screen sound desktop simulator shell
-NODE_SURFACES := mail notes reminders calendar contacts messages safari maps
+SURFACES     := mail notes reminders calendar contacts messages safari maps voice-memos screen sound desktop simulator shell
+NODE_SURFACES := mail notes reminders calendar contacts messages safari maps voice-memos
 SWIFT_SURFACES := screen sound desktop simulator shell
 # </generated:surfaces>
 # Extra build settings forwarded to xcodebuild. CI sets MARKETING_VERSION from
@@ -1307,8 +1307,8 @@ SHOT_SCREENS := surface prompt activity connections settings writes chat shell s
 # inside a backslash continuation — putting the generated region in the middle of
 # SHOT_ARGS is a `missing separator` error, which is how this was found.
 # <generated:surfaces-shot> generated from surfaces.json by `make surfaces` — do not edit by hand
-SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO -allowWrites.sound NO -allowWrites.desktop NO -allowWrites.simulator NO
-SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES -surfaceEnabled.simulator YES -surfaceEnabled.shell YES
+SHOT_WRITES  := -allowWrites.mail YES -allowWrites.notes NO -allowWrites.reminders NO -allowWrites.calendar NO -allowWrites.contacts NO -allowWrites.messages NO -allowWrites.safari NO -allowWrites.maps NO -allowWrites.voice-memos NO -allowWrites.sound NO -allowWrites.desktop NO -allowWrites.simulator NO
+SHOT_ENABLED := -surfaceEnabled.mail YES -surfaceEnabled.notes YES -surfaceEnabled.reminders YES -surfaceEnabled.calendar YES -surfaceEnabled.contacts YES -surfaceEnabled.messages YES -surfaceEnabled.safari NO -surfaceEnabled.maps YES -surfaceEnabled.voice-memos YES -surfaceEnabled.screen YES -surfaceEnabled.sound YES -surfaceEnabled.desktop YES -surfaceEnabled.simulator YES -surfaceEnabled.shell YES
 # </generated:surfaces-shot>
 
 SHOT_ARGS := -ScreenshotMode YES \

@@ -34,6 +34,7 @@
     "probe:stickies": "node scripts/probe-stickies.mjs",
     "probe:maps": "node scripts/probe-maps.mjs",
     "probe:maps-write": "node scripts/probe-maps-write.mjs",
+    "probe:voice-memos": "node scripts/probe-voice-memos.mjs",
     "probe:home": "node scripts/probe-home.mjs",
     "probe:passwords": "node scripts/probe-passwords.mjs",
     "probe:screen": "swift scripts/probe-screen.swift",
