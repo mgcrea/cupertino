@@ -120,6 +120,20 @@
       "website": "shell-prompt",
       "title": "Scripts run only when you click.",
       "subtitle": "The whole script and the agent's reason, before anything runs. Don't run is the default, and only a click by hand on Run once runs it."
+    },
+    {
+      "//": "Appended with `voice-memos-chat` in 1.38.0, for the release video. Writes are off as SHOT_WRITES pins them, so the pane shows the five read tools. No `website`: the site lists Voice Memos as a surface card, not a capture.",
+      "id": "voice-memos",
+      "title": "Your voice memos, read in place.",
+      "subtitle": "Recordings, folders, favourites and Recently Deleted, read through the one Full Disk Access grant. Voice Memos is not scriptable, so there is no other way in.",
+      "store": false
+    },
+    {
+      "//": "DemoSeed.voiceMemosChatSession: the five read tools under their real names, and a search whose hits carry segment start times, as search_recordings returns them. The recording and the contractor are invented; no real memo is read.",
+      "id": "voice-memos-chat",
+      "title": "Quote what was said, to the second.",
+      "subtitle": "Search reads the transcript macOS made of each recording, and every hit comes with its time, so it can be found again by listening.",
+      "store": false
     }
   ],
   "//videos": "appshot compose video --from-stills, from the same captures as the plates; rect values are capture pixels, and every plate but shell-prompt is 2240x1104. `intro` is the social cut: an opening line, an end card, square and 16:9. `tour` is the website's loop, built by `make site-video` into apps/website/public/video: no opening line and no card, because the page around it already says both, and it ends back on its first screen so the loop does not jump. A recorded take needs a cue handler in DemoSeed first. card-icon.png is design/cupertino-icon.svg at 512px, because appshot does not read SVG.",
@@ -357,6 +371,85 @@
           "at": 18.8,
           "screen": "surface",
           "focus": "home"
+        }
+      ]
+    },
+    {
+      "//": "The 1.38.0 announcement for X: Voice Memos, from the `voice-memos-chat` and `voice-memos` captures (both 2240x1104, so rects are capture pixels). Same shape as release-1-33: 16 s, square first, kinetic. The chat leads because a quote with its time is the claim; the pane closes on the one fact a viewer would ask next, that Voice Memos itself is never written.",
+      "id": "release-1-38",
+      "stage": "voice-memos-chat",
+      "duration": 16,
+      "poster": 4.2,
+      "outputs": {
+        "preview": false,
+        "promo": [
+          [1200, 1200],
+          [1920, 1080]
+        ],
+        "website": false
+      },
+      "motion": "kinetic",
+      "hook": "Ask your *voice memos.*",
+      "card": {
+        "title": "Cupertino 1.38",
+        "subtitle": "Voice Memos: your recordings and Apple’s transcripts",
+        "icon": "card-icon.png",
+        "cta": "cupertino.mgcrea.io"
+      },
+      "beats": [
+        {
+          "at": 0,
+          "screen": "voice-memos-chat"
+        },
+        {
+          "at": 1.6,
+          "focus": {
+            "rect": [420, 170, 1000, 360]
+          }
+        },
+        {
+          "at": 3,
+          "caption": "Search the transcripts *macOS already made*",
+          "pop": {
+            "rect": [445, 445, 840, 62],
+            "until": 5.9
+          }
+        },
+        {
+          "at": 6.2,
+          "caption": "Every quote, *to the second*",
+          "spotlight": {
+            "rect": [468, 452, 78, 50],
+            "until": 9
+          }
+        },
+        {
+          "at": 7.2,
+          "spotlight": {
+            "rect": [868, 524, 108, 40],
+            "until": 9
+          }
+        },
+        {
+          "at": 9.4,
+          "screen": "voice-memos",
+          "caption": "Read in place, *never written*",
+          "focus": "home",
+          "spotlight": {
+            "rect": [16, 630, 388, 74],
+            "until": 10.8
+          }
+        },
+        {
+          "at": 11,
+          "pop": {
+            "rect": [460, 608, 1738, 129],
+            "until": 12.8
+          }
+        },
+        {
+          "at": 13,
+          "endCard": true
         }
       ]
     }

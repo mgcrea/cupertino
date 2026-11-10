@@ -82,6 +82,10 @@ nonisolated enum DemoSeed {
     case shell
     /// Shell's approval window on its own, which no other stage opens.
     case shellPrompt = "shell-prompt"
+    /// Voice Memos' surface pane, for the 1.38.0 announcement video.
+    case voiceMemos = "voice-memos"
+    /// The Chat pane after one Voice Memos question, answered from a transcript.
+    case voiceMemosChat = "voice-memos-chat"
 
     /// Which window the shutter is aimed at.
     ///
@@ -106,7 +110,9 @@ nonisolated enum DemoSeed {
     /// out — and the next pane that outgrows a form will want it back.
     var subject: Subject {
       switch self {
-      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat, .shell: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat, .shell,
+        .voiceMemos, .voiceMemosChat:
+        .main
       case .shellPrompt: .shellPrompt
       }
     }
@@ -131,7 +137,7 @@ nonisolated enum DemoSeed {
       // Kept rather than deleted because the next long pane will want it, and
       // the retry loop it drove is the non-obvious part.
       case .settings, .writes, .surface, .prompt, .activity, .connections, .chat, .shell,
-        .shellPrompt:
+        .shellPrompt, .voiceMemos, .voiceMemosChat:
         .top
       }
     }
@@ -153,7 +159,9 @@ nonisolated enum DemoSeed {
     /// Which view's `.task` is allowed to report readiness for this stage.
     var readySource: ReadySource {
       switch self {
-      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat, .shell: .main
+      case .settings, .surface, .writes, .prompt, .activity, .connections, .chat, .shell,
+        .voiceMemos, .voiceMemosChat:
+        .main
       case .shellPrompt: .shellPrompt
       }
     }
@@ -186,6 +194,8 @@ nonisolated enum DemoSeed {
       // `shellPrompt` never opens the main window; the pane is named only because
       // the switch is exhaustive.
       case .shell, .shellPrompt: .surface(ShellPane.surfaceID)
+      case .voiceMemos: .surface("voice-memos")
+      case .voiceMemosChat: .chat
       }
     }
 
@@ -202,7 +212,9 @@ nonisolated enum DemoSeed {
       // disagreed with the Chat pane beside it would be a picture of the one
       // claim this feature makes — that these are real calls — being false.
       case .chat: DemoSeed.chatTurnLogLines
-      case .surface, .activity, .connections, .settings, .writes, .shell, .shellPrompt:
+      case .voiceMemosChat: DemoSeed.voiceMemosChatTurnLogLines
+      case .surface, .activity, .connections, .settings, .writes, .shell, .shellPrompt,
+        .voiceMemos:
         DemoSeed.logLines
       }
     }
@@ -443,6 +455,18 @@ nonisolated enum DemoSeed {
     ("mail", .call, "apple_mail_search_messages"),
   ]
 
+  /// The calls the Voice Memos chat plate shows, in the log beside it.
+  nonisolated private static let voiceMemosChatTurnLogLines: [(String, LogStore.Level, String)] = [
+    (
+      "cupertino", .info, "listening at ~/Library/Application Support/io.mgcrea.cupertino/host.sock"
+    ),
+    ("voice-memos", .info, "server started"),
+    ("voice-memos", .info, "allowWrites=false"),
+    ("voice-memos", .info, "initialize"),
+    ("voice-memos", .info, "tools/list"),
+    ("voice-memos", .call, "apple_voice_memos_search_recordings"),
+  ]
+
   /// A conversation with one completed exchange in it.
   ///
   /// ## What is fixed and what is computed
@@ -477,6 +501,11 @@ nonisolated enum DemoSeed {
         "annotations": ["readOnlyHint": readOnly],
         "inputSchema": ["type": "object", "properties": schema, "required": required],
       ])
+    }
+
+    if stage == .voiceMemosChat {
+      voiceMemosChatSession(chat)
+      return
     }
 
     // Properties that recur across the listing, written once.
@@ -649,6 +678,97 @@ nonisolated enum DemoSeed {
           calls: [call]),
       ],
       allowsWrites: true)
+  }
+
+  /// Voice Memos' turn on the Chat pane, for the 1.38.0 announcement.
+  ///
+  /// The five read tools carry the real servers' names and required arguments,
+  /// with writes off as `SHOT_WRITES` pins them, so `save_recording` is not
+  /// listed. The question is the one the surface exists for: what was said, and
+  /// where in the recording, so the answer can be found again by listening. The
+  /// segment times are what `search_recordings` returns per hit.
+  @MainActor private static func voiceMemosChatSession(_ chat: ChatConversation) {
+    func tool(
+      _ name: String, _ summary: String, _ properties: [(String, String, String)] = [],
+      required: [String] = []
+    ) -> ChatTool? {
+      var schema: [String: Any] = [:]
+      for (key, type, detail) in properties {
+        schema[key] = ["type": type, "description": detail]
+      }
+      return ChatTool(json: [
+        "name": name, "description": summary,
+        "annotations": ["readOnlyHint": true],
+        "inputSchema": ["type": "object", "properties": schema, "required": required],
+      ])
+    }
+
+    let id = ("id", "string", "The recording's id, from list_recordings or search_recordings.")
+    let tools = [
+      tool(
+        "apple_voice_memos_diagnostics",
+        "Report whether Voice Memos' store can be read, how many recordings, folders and "
+          + "favourites it holds, how many carry Apple's transcript, and what this server "
+          + "cannot do."),
+      tool(
+        "apple_voice_memos_list_folders",
+        "List Voice Memos' folders in sidebar order, with how many recordings each holds."),
+      tool(
+        "apple_voice_memos_list_recordings",
+        "List recordings, newest first: title, date, duration, folder and favourite. This "
+          + "never reads transcripts; use get_recording for what was said.",
+        [
+          ("folderId", "string", "Only this folder, by id from list_folders."),
+          ("favorite", "boolean", "true for favourites only, false for the rest."),
+          ("since", "string", "Recorded at or after this."),
+          ("until", "string", "Recorded before this."),
+          ("limit", "integer", "How many to return."),
+        ]),
+      tool(
+        "apple_voice_memos_get_recording",
+        "One recording and its transcript, as text or as timed segments with start and end "
+          + "in seconds from the start of the recording.",
+        [
+          id, ("format", "string", "`text` for reading, `segments` for timings."),
+          ("offset", "integer", "Where to resume."),
+        ], required: ["id"]),
+      tool(
+        "apple_voice_memos_search_recordings",
+        "Find recordings whose title or transcript contains the query, ignoring case and "
+          + "accents, newest first. Each hit gives the matching segments with their start "
+          + "time, so the moment can be quoted and found by listening.",
+        [
+          ("query", "string", "Words to find, matched as one phrase."),
+          ("limit", "integer", "How many recordings to return."),
+        ], required: ["query"]),
+    ].compactMap { $0 }
+
+    let call = ChatCall(
+      tool: "apple_voice_memos_search_recordings",
+      arguments: #"{"query":"kitchen","limit":3}"#,
+      output: """
+        1 recording
+        • “Site visit with Marc” — 4 Nov, 12 min
+          02:14  “the kitchen pipes can move, just not before the 18th”
+          05:52  “the kitchen drain needs a new slope, call it half a day”
+        """,
+      failed: false, seconds: 0.212)
+
+    chat.adoptDemo(
+      surface: Surface.named("voice-memos")!,
+      tools: tools,
+      selected: ChatBudget.fill(tools, budget: ChatConversation.budget).selected,
+      unusable: [],
+      messages: [
+        .init(role: .you, text: "what did Marc say about the kitchen?"),
+        .init(
+          role: .model,
+          text: "In “Site visit with Marc” on 4 November, at 2:14, he says the kitchen pipes "
+            + "can move, but not before the 18th. At 5:52 he adds that the drain needs a new "
+            + "slope, about half a day’s work.",
+          calls: [call]),
+      ],
+      allowsWrites: false)
   }
 
   /// Live sessions, as the handshake actually reports them.
