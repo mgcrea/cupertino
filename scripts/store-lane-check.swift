@@ -233,20 +233,83 @@ struct StoreLaneCheck {
     }
   }
 
-  /// The number of history transactions, and the last one's author and changed attribute names
-  /// per change.
+  /// One change in a history transaction: an update of `row` (a recording's `uniqueID`, a
+  /// folder's `uuid`) listing `properties`, sorted.
+  struct HistoryChange: Equatable, CustomStringConvertible {
+    var row: String
+    var properties: [String]
+    var description: String { "\(row) [\(properties.joined(separator: ", "))]" }
+  }
+
+  /// The number of history transactions, and the last one's author, changed attribute names per
+  /// change, and changes by row (sorted by row; a change that is not an update reads
+  /// `"insert"` or `"delete"` as its only property).
   static func history(_ storeURL: URL) throws -> (
-    count: Int, author: String?, changes: [[String]]
+    count: Int, author: String?, changes: [[String]], rows: [HistoryChange]
   ) {
     try voiceMemos(storeURL) { context in
       let request = NSPersistentHistoryChangeRequest.fetchHistory(after: .distantPast)
       request.resultType = .transactionsAndChanges
       let result = try context.execute(request) as? NSPersistentHistoryResult
       let transactions = result?.result as? [NSPersistentHistoryTransaction] ?? []
-      let changes = (transactions.last?.changes ?? []).map {
-        ($0.updatedProperties ?? []).map(\.name).sorted()
-      }
-      return (transactions.count, transactions.last?.author, changes)
+      let last = transactions.last?.changes ?? []
+      let changes = last.map { ($0.updatedProperties ?? []).map(\.name).sorted() }
+      let rows = try last.map { change in
+        let object = try context.existingObject(with: change.changedObjectID)
+        let row =
+          (object.value(forKey: object.entity.name == "Folder" ? "uuid" : "uniqueID") as? String)
+          ?? "?"
+        let properties =
+          change.changeType == .update
+          ? (change.updatedProperties ?? []).map(\.name).sorted()
+          : [change.changeType == .insert ? "insert" : "delete"]
+        return HistoryChange(row: row, properties: properties)
+      }.sorted { $0.row < $1.row }
+      return (transactions.count, transactions.last?.author, changes, rows)
+    }
+  }
+
+  /// Runs `call` and asserts it saved exactly one history transaction, by `cupertino`; returns
+  /// that transaction's changes by row.
+  @discardableResult
+  static func oneTransaction(_ storeURL: URL, _ label: String, _ call: () throws -> Void) throws
+    -> [HistoryChange]
+  {
+    let before = try history(storeURL).count
+    try call()
+    let after = try history(storeURL)
+    try expect(
+      after.count == before + 1, "\(label) saved \(after.count - before) history transactions")
+    try expect(after.author == "cupertino", "\(label) author is \(after.author ?? "nil")")
+    return after.rows
+  }
+
+  /// `call` saved one transaction whose changes are exactly `expected`.
+  static func expectHistory(
+    _ storeURL: URL, _ label: String, _ expected: [HistoryChange], _ call: () throws -> Void
+  ) throws {
+    let rows = try oneTransaction(storeURL, label, call)
+    try expect(rows == expected, "\(label) recorded \(rows), not \(expected)")
+  }
+
+  /// `call` was a move of `id` that saved one transaction: the recording's change lists only
+  /// `folder`, and every other change is one of `folders`, listing only `countOfRecordings`
+  /// and/or `recordings`.
+  static func expectMoveHistory(
+    _ storeURL: URL, _ label: String, id: String, folders: Set<String>,
+    _ call: () throws -> Void
+  ) throws {
+    let rows = try oneTransaction(storeURL, label, call)
+    let own = rows.filter { $0.row == id }
+    try expect(
+      own == [HistoryChange(row: id, properties: ["folder"])],
+      "\(label) recorded \(own) for the recording")
+    for change in rows where change.row != id {
+      try expect(folders.contains(change.row), "\(label) changed \(change), not an affected folder")
+      try expect(
+        !change.properties.isEmpty
+          && Set(change.properties).isSubset(of: ["countOfRecordings", "recordings"]),
+        "\(label) recorded \(change)")
     }
   }
 
@@ -363,7 +426,12 @@ struct StoreLaneCheck {
 
     check("renameSetsTitleAndSortKey") {
       let (writer, storeURL) = try voiceMemosFixture("rename")
-      let result = try writer.rename(id: "R-ONE", title: "  Synthetic renamed ")
+      var result: VoiceMemosWriter.Result?
+      try expectHistory(
+        storeURL, "rename",
+        [HistoryChange(row: "R-ONE", properties: ["customLabelForSorting", "encryptedTitle"])]
+      ) { result = try writer.rename(id: "R-ONE", title: "  Synthetic renamed ") }
+      guard let result else { throw Failure(why: "rename returned nothing") }
       try expect(result.id == "R-ONE", "id is \(result.id)")
       try expect(
         result.changed == ["customLabelForSorting", "encryptedTitle"],
@@ -398,16 +466,23 @@ struct StoreLaneCheck {
     check("favoriteSetsAndClearsBitZero") {
       let (writer, storeURL) = try voiceMemosFixture("favorite")
       try expect(try recording(storeURL, "R-ONE", "sharedFlags") == nil, "sharedFlags is not nil")
-      let on = try writer.setFavorite(id: "R-ONE", favorite: true)
-      try expect(on.changed == ["sharedFlags"], "on changed \(on.changed)")
+      let flags = [HistoryChange(row: "R-ONE", properties: ["sharedFlags"])]
+      var on: VoiceMemosWriter.Result?
+      try expectHistory(storeURL, "favourite on", flags) {
+        on = try writer.setFavorite(id: "R-ONE", favorite: true)
+      }
+      try expect(on?.changed == ["sharedFlags"], "on changed \(on?.changed ?? [])")
       let set = try recording(storeURL, "R-ONE", "sharedFlags") as? Int64
       try expect(set == 1, "on gives \(set.map(String.init) ?? "nil"), not 1")
       try voiceMemos(storeURL) {
         try row("CloudRecording", "uniqueID", "R-ONE", in: $0).setValue(
           Int64(5), forKey: "sharedFlags")
       }
-      let off = try writer.setFavorite(id: "R-ONE", favorite: false)
-      try expect(off.changed == ["sharedFlags"], "off changed \(off.changed)")
+      var off: VoiceMemosWriter.Result?
+      try expectHistory(storeURL, "favourite off", flags) {
+        off = try writer.setFavorite(id: "R-ONE", favorite: false)
+      }
+      try expect(off?.changed == ["sharedFlags"], "off changed \(off?.changed ?? [])")
       let cleared = try recording(storeURL, "R-ONE", "sharedFlags") as? Int64
       try expect(cleared == 4, "off from 5 gives \(cleared.map(String.init) ?? "nil"), not 4")
       // Clearing a favourite that was never set is a no-op, not a 0.
@@ -419,14 +494,20 @@ struct StoreLaneCheck {
 
     check("moveKeepsBothCounts") {
       let (writer, storeURL) = try voiceMemosFixture("move")
-      let moved = try writer.move(id: "R-ONE", folderId: "F-TWO")
-      try expect(moved.changed == ["folder"], "changed is \(moved.changed)")
+      var moved: VoiceMemosWriter.Result?
+      try expectMoveHistory(storeURL, "the move", id: "R-ONE", folders: ["F-ONE", "F-TWO"]) {
+        moved = try writer.move(id: "R-ONE", folderId: "F-TWO")
+      }
+      try expect(moved?.changed == ["folder"], "changed is \(moved?.changed ?? [])")
       let (one, two) = (try folderCount(storeURL, "F-ONE"), try folderCount(storeURL, "F-TWO"))
       try expect(one == 0 && two == 1, "counts are F-ONE \(one ?? -1), F-TWO \(two ?? -1)")
       _ = try writer.delete(id: "R-ONE")
       try expect(try folderCount(storeURL, "F-TWO") == 1, "the delete changed F-TWO's count")
-      let out = try writer.move(id: "R-ONE", folderId: nil)
-      try expect(out.changed == ["folder"], "out changed \(out.changed)")
+      var out: VoiceMemosWriter.Result?
+      try expectMoveHistory(storeURL, "the move out", id: "R-ONE", folders: ["F-TWO"]) {
+        out = try writer.move(id: "R-ONE", folderId: nil)
+      }
+      try expect(out?.changed == ["folder"], "out changed \(out?.changed ?? [])")
       let after = try folderCount(storeURL, "F-TWO")
       try expect(after == 0, "F-TWO counts \(after ?? -1) after the move out, not 0")
       let folder = try recording(storeURL, "R-ONE", "folder")
@@ -447,14 +528,17 @@ struct StoreLaneCheck {
         ("delete", { try writer.delete(id: "R-ONE") }),
         ("restore", { try writer.restore(id: "R-ONE") }),
       ] as [(String, () throws -> VoiceMemosWriter.Result)] {
-        let result = try call()
-        try expect(result.changed == ["evictionDate"], "\(label) changed \(result.changed)")
+        var result: VoiceMemosWriter.Result?
+        try expectHistory(
+          storeURL, label, [HistoryChange(row: "R-ONE", properties: ["evictionDate"])]
+        ) { result = try call() }
+        try expect(
+          result?.changed == ["evictionDate"], "\(label) changed \(result?.changed ?? [])")
         let evicted = try recording(storeURL, "R-ONE", "evictionDate") as? Date
         try expect(
           (evicted != nil) == (label == "delete"),
           "after \(label) evictionDate is \(evicted.map { "\($0)" } ?? "nil")")
         let last = try history(storeURL)
-        try expect(last.author == "cupertino", "\(label) author is \(last.author ?? "nil")")
         try expect(
           last.changes == [["evictionDate"]], "\(label) history changes are \(last.changes)")
       }
