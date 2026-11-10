@@ -6,11 +6,47 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.37.1`,
-`notes-v1.37.1`, `reminders-v1.37.1`, `core-v1.37.1` for the npm packages, and `app-v1.37.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.37.2`,
+`notes-v1.37.2`, `reminders-v1.37.2`, `core-v1.37.2` for the npm packages, and `app-v1.37.2` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.37.2] - 2026-11-10
+
+**A Safari tab no longer stops answering for good.** One lost message to the extension silenced a
+page until it was reloaded; it now carries on within ten seconds. Shell asks once per session by
+default.
+
+### Added
+
+- **Claude Code's pane says when its allowlist hides a surface.** Claude Code silently drops a
+  server its `allowedMcpServers` or `deniedMcpServers` refuses, so a surface Cupertino had wired
+  correctly could be missing from every session. The pane now reads `~/.claude/settings.json` and
+  managed settings, applies Claude Code's own matching rules, badges each refused entry and says
+  what to do: Update in Bastion for Bastion's list, the entries to paste for a hand-written one,
+  the Mac's admin for managed settings.
+
+### Changed
+
+- **Shell asks once per session by default.** "Before running" now starts at Ask once per
+  session, and turning Shell off puts it back there. If you never changed it, this update moves
+  you to it. The setting alone approves nothing: the first run on each connection still shows the
+  whole script, with Don't run as the default button, and only "Run, and stop asking this
+  session" approves the rest of that connection, for 30 minutes at most. Under Ask every time that
+  button sat behind a picker few people open. Ask every time is still there, and a "Don't ask"
+  Cupertino did not seal itself still reads as Ask every time.
+
+### Fixed
+
+- **A Safari tab no longer stops answering after one lost message.** Safari can drop a page's
+  message to the extension's background when the worker is stopped or still starting, and the
+  page then waited for an answer that never came: that tab stopped polling, so every click, fill
+  and `page_elements` on it timed out, while other sites kept answering, until the page was
+  reloaded. Each message now gets ten seconds and a lost one counts as a failed poll, so the tab
+  polls again at its usual interval. A reply that turns up after its wait is dropped with its
+  commands rather than run late, and a result that cannot be filed no longer abandons the rest of
+  its batch. Pages need one reload after this update to pick up the new script.
 
 ## [1.37.1] - 2026-11-07
 
@@ -3387,7 +3423,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.37.2...HEAD
+[1.37.2]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...app-v1.37.2
 [1.37.1]: https://github.com/mgcrea/cupertino/compare/app-v1.37.0...app-v1.37.1
 [1.37.0]: https://github.com/mgcrea/cupertino/compare/app-v1.36.2...app-v1.37.0
 [1.36.2]: https://github.com/mgcrea/cupertino/compare/app-v1.36.1...app-v1.36.2

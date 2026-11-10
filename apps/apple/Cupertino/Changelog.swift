@@ -220,7 +220,47 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_37_1, v1_37_0, v1_36_2, v1_36_1, v1_36_0]
+  static let releases: [Release] = [v1_37_2, v1_37_1, v1_37_0, v1_36_2, v1_36_1]
+
+  // swift-format-ignore
+  private static let v1_37_2: Release = Release(
+    version: "1.37.2",
+    date: "2026-11-10",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Claude Code's pane says when its allowlist hides a surface.",
+            body: [
+              "Claude Code silently drops a server its `allowedMcpServers` or `deniedMcpServers` refuses, so a surface Cupertino had wired correctly could be missing from every session. The pane now reads `~/.claude/settings.json` and managed settings, applies Claude Code's own matching rules, badges each refused entry and says what to do: Update in Bastion for Bastion's list, the entries to paste for a hand-written one, the Mac's admin for managed settings.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Shell asks once per session by default.",
+            body: [
+              "\"Before running\" now starts at Ask once per session, and turning Shell off puts it back there. If you never changed it, this update moves you to it. The setting alone approves nothing: the first run on each connection still shows the whole script, with Don't run as the default button, and only \"Run, and stop asking this session\" approves the rest of that connection, for 30 minutes at most. Under Ask every time that button sat behind a picker few people open. Ask every time is still there, and a \"Don't ask\" Cupertino did not seal itself still reads as Ask every time.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "A Safari tab no longer stops answering after one lost message.",
+            body: [
+              "Safari can drop a page's message to the extension's background when the worker is stopped or still starting, and the page then waited for an answer that never came: that tab stopped polling, so every click, fill and `page_elements` on it timed out, while other sites kept answering, until the page was reloaded. Each message now gets ten seconds and a lost one counts as a failed poll, so the tab polls again at its usual interval. A reply that turns up after its wait is dropped with its commands rather than run late, and a result that cannot be filed no longer abandons the rest of its batch. Pages need one reload after this update to pick up the new script.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_37_1: Release = Release(
@@ -420,59 +460,6 @@ nonisolated enum Changelog {
             headline: "The Activity log shows a watch update that no one was listening for.",
             body: [
               "When matching mail or a message arrived and the host had not subscribed to the watch, the update went nowhere and the Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and Messages now log `push dropped (no listener): cupertino://mail/watch/…` with the reason: no open `subscriptions/listen` names the watch (2026-07-28 protocol), or it was not subscribed with `resources/subscribe` (2025). In Claude Code every watch update is such a line, since it never subscribes to a watch; its agents read the watch instead.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_36_0: Release = Release(
-    version: "1.36.0",
-    date: "2026-10-30",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Desktop can start an application that is not running.",
-            body: [
-              "`apple_desktop_launch` opens it behind whatever is in front and waits until it answers, up to 10 s, so its controls can be read and pressed while the person keeps their keyboard. It takes a bundle identifier and nothing else, is write-gated and scoped like the other driving tools, and shows the \"Cupertino opened\" notice. An application already running is left alone, one that takes the front anyway is sent back behind, and one never opened on this Mac is refused rather than stopping at a Gatekeeper dialog. With \"Reach any application\" on, any installed application can be started. A verb refused because an application is not running now says so and names the tool.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Desktop can wait for a change instead of polling for it.",
-            body: [
-              "`apple_desktop_wait_for` blocks until an element matching `id`, `role`, `name` or `value` appears, or with `state: \"absent\"` until it is gone, for up to a minute, and answers with the matches and their handles. It re-reads the tree every quarter second and sooner when the app posts a change. A timeout is an error saying what the last read saw, so a `run` stops there, and Esc in Claude Code ends it. It replaces chains of `wait` steps and `find_elements` calls.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A `run` step can name its element instead of passing a handle.",
-            body: [
-              "A step that takes a `handle` can take `match` and `bundleId` instead, and the element is found when the step runs, waiting up to two seconds by default for it to appear. A step can now press an item in a context menu the step before it opened, which a handle read before the run could never reach. A match that finds several elements fails the step unless `index` picks one.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "`find_elements` matches on `value`.",
-            body: [
-              "A static text keeps its text in its value rather than its name, so it could only be found by reading the whole tree.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 4,
-            headline: "`set_value` reaches SwiftUI text fields.",
-            body: [
-              "Written while the field was not focused, the text showed in the field and read back as written, but the app's own state never received it, so a prompt typed into Drakar and sent went out empty. `set_value` now focuses a text field before writing, without bringing the app forward, and says `focused` in its answer.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "Desktop says an app quit rather than calling it busy.",
-            body: [
-              "A handle into an app that had crashed answered \"did not answer in time. The app may be busy; retry\". It now says the app quit, with its pid and the crash report when there is one.",
             ]),
         ]),
     ])
