@@ -3,7 +3,9 @@
 Phase 0 for a `voice-memos` surface. Measured on 2026-11-10, macOS 27.2, with
 [`scripts/probe-voice-memos.mjs`](../scripts/probe-voice-memos.mjs), run through `apple_shell_run`
 because the agent's own shell holds no Full Disk Access. That library held 87 recordings from
-2019 to 2026. The verdict is **GO, file lane only, read-only**.
+2019 to 2026. The verdict is **GO, file lane only, read-only**. That was phase 0's verdict: the
+reads still take the file lane, and writes later shipped through Cupertino's store lane (see
+[Writing](#writing-sql-stays-on-this-mac-core-data-reaches-icloud)).
 
 ## Lanes
 
@@ -149,3 +151,93 @@ refuse to write whenever the model and the store still disagree: a macOS update 
 The syncing process is `voicememod`, in the framework's `Support/`. It holds the CloudKit
 entitlements, including `com.apple.private.cloudkit.masquerade` and `com.apple.private.cloudkit.spi`,
 so nothing outside Apple's signature can talk to the container directly. It does not need to.
+
+The store lane is how this Core Data route shipped: Cupertino.app makes the save, and the node
+server never writes the store. The sections below say what it changes and how a call runs. The
+design is [the store lane spec](superpowers/specs/2026-11-10-swift-write-lane-design.md).
+
+## What the app changes, watched 2026-11-10
+
+Each edit but the rename was made once in Voice Memos itself, on a throwaway memo, and the store
+read after each step, one transaction per step. The rename row comes from the Core Data rename
+above. The lane sets what the app set and nothing else. Names are Core
+Data's; the column is the same name upper-cased with a `Z` in front (`encryptedTitle` is
+`ZENCRYPTEDTITLE`).
+
+| Method        | Attributes it sets                                                                                              | As the app did it                                                   |
+| ------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
+| `rename`      | `encryptedTitle`, `customLabelForSorting`                                                                       | measured by the Core Data rename that reached the iPhone            |
+| `setFavorite` | `sharedFlags`: bit 0 set (`(old ?? 0) \| 1`) or cleared (`(old ?? 0) & ~1`)                                     | favourite went `null` → `1`, nothing else                           |
+| `move`        | the recording's `folder`; `countOfRecordings` on the old and the new folder, each set to its `recordings.count` | the move set `folder` and the destination's count 0 → 1 in one save |
+| `delete`      | `evictionDate = Date()`                                                                                         | nothing else; the folder count kept the deleted memo                |
+| `restore`     | `evictionDate = nil`                                                                                            | nothing else                                                        |
+
+Four more facts came out of the same watch:
+
+- **Folder counts are maintained, and include Recently Deleted.** The app keeps
+  `countOfRecordings` up to date on a move, and a memo in Recently Deleted still counts in the
+  folder it was in. The lane follows the same rule: a moved memo's old and new folders are each
+  set to their `recordings.count`, deleted members included.
+- **`EntityRevision` is empty.** The entity held no rows before or after any edit, so there is
+  nothing there to keep in step.
+- **The app's history rows carry no author.** Its persistent-history transactions have a null
+  `author`. The lane's carry `cupertino`, so its saves can be told apart from the app's.
+- **`ZFLAGS` is never touched.** No edit moved it, and its meaning is still unknown, so the lane
+  never writes `flags`.
+
+The lane adds its own rules on top. A title is trimmed, then must be 1 to 500 characters with no
+line break inside, or the call is refused as `invalid`. A call that would change nothing (the same
+title, a favourite already in that state, the folder it is already in, a memo already deleted or
+not deleted) makes no save and returns `changed: []`. Clearing a favourite on a null
+`sharedFlags` is one of those. A folder id that matches no folder is `notFound`.
+
+## The store lane's tools
+
+| Tool                                  | Method        | What it does                                                      |
+| ------------------------------------- | ------------- | ----------------------------------------------------------------- |
+| `apple_voice_memos_rename_recording`  | `rename`      | sets the title                                                    |
+| `apple_voice_memos_move_recording`    | `move`        | files the recording in a folder, or in none with `folderId: null` |
+| `apple_voice_memos_set_favorite`      | `setFavorite` | marks it a favourite, or clears it                                |
+| `apple_voice_memos_delete_recording`  | `delete`      | moves it to Recently Deleted                                      |
+| `apple_voice_memos_restore_recording` | `restore`     | brings it back from Recently Deleted                              |
+
+**They exist only when Cupertino hosts the server and writes are on.** Run from npm, the server
+has no lane and registers none of them, so a host is never told about a capability it lacks.
+Without writes on, none is registered either, as for `save_recording`. If writes are switched off
+in Cupertino while a session runs, the next call is refused with `writesOff`.
+
+**Rename, move and favourite refuse a recording in Recently Deleted** with `invalid` ("the
+recording is in Recently Deleted: restore it first"), since the app offers none of them there and
+a state it never makes would sync to every device; delete and restore take it as it is.
+
+**How one call runs.** The server sends one JSON-RPC request over Cupertino's socket, and the app
+admits it only from the Voice Memos server it spawned itself. The app then:
+
+1. copies Voice Memos' model, `VoiceMemos.momd` from
+   `/System/iOSSupport/System/Library/PrivateFrameworks/VoiceMemos.framework/Versions/A/Resources/`,
+   and sets `allowsExternalBinaryDataStorage` on `CloudRecording.audioFuture`, as the app does at
+   runtime;
+2. refuses with `incompatible` unless the store's metadata matches that model, and never migrates
+   the store;
+3. opens a coordinator for this call alone, with history tracking and remote-change notifications
+   on and migration off;
+4. fetches the recording by the `id` the read tools return (`uniqueID`), and a folder by its
+   `uuid`, refusing with `notFound` unless exactly one matches;
+5. sets only the attributes in the table above, saves once with the author `cupertino`, and drops
+   the coordinator.
+
+**The answer** carries `id`, `changed` (the recording's own attributes it set, sorted; a move's
+folder counts are bookkeeping and are not listed), `modelVersion`, `syncMeasured`, and a `sync`
+sentence. A refusal's reason (`invalid`, `notFound`, `incompatible`, `writesOff`, `failed`, or
+one from the connection) is in the tool error's `details.reason`.
+
+**Sync.** A write syncs when Voice Memos next runs. The lane launches nothing: until Voice Memos
+runs, the change is saved on this Mac and waiting in persistent history. Sync was measured on
+macOS 27.2, model version `VoiceMemos14`, on a Mac and an iPhone. The model version is read from
+the `.momd`'s `VersionInfo.plist` (`NSManagedObjectModel_CurrentVersionName`). On any other
+version the save still happens, `syncMeasured` is false, and the `sync` sentence says sync is not
+yet measured on this macOS and to check the recording on another device.
+
+**Diagnostics** reports the lane when Cupertino hosts the server: `lanes.writeLane` holds
+`compatible`, `modelVersion`, `syncMeasured` and the `refusal` a write would meet, and
+`lanes.writes.storeTools` lists the five tools when they are registered.

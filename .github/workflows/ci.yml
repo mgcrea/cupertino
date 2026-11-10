@@ -199,6 +199,10 @@ jobs:
       # not run is a check that rots.
       - name: Unit checks 🔍
         run: make unit
+      # The store lane's Core Data opener, against stores built in a temporary
+      # folder from a model made in code: no app, no Apple store, no FDA.
+      - name: Store lane checks 🔍
+        run: make store-lane-check
       # The screen surface's equivalent of the MCP handshake below, which cannot
       # cover it: that step runs `node packages/<id>/dist/cli.js`, and this
       # surface has no package. Needs no app, no socket, no licence and no TCC

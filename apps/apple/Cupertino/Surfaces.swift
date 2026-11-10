@@ -622,9 +622,12 @@ nonisolated struct Surface: Identifiable, Hashable {
       // in moov/trak/meta in .qta, whose meta is a plain box while the ISO one is a
       // FullBox. Only box headers and the payload are read; mdat never is.
       //
-      // supportsWrites is TRUE for one tool, save_recording, which copies the audio
-      // into a confined folder, as Messages' save_attachment does. Nothing writes
-      // to the store: it is CloudKit-mirrored and nobody has asked for that.
+      // supportsWrites is TRUE. save_recording copies the audio into a confined
+      // folder, as Messages' save_attachment does. Rename, move, favourite, delete
+      // and restore write the store, but never from node: the server asks this app's
+      // store lane (StoreLane/), which saves through Core Data with Voice Memos' own
+      // model so iCloud uploads the change. A SQL write to this CloudKit-mirrored
+      // store stays on the Mac for good; see docs/voice-memos.md, "Writing".
       bundleID: "com.apple.VoiceMemos",
       kind: .app,
       iconPath: nil,

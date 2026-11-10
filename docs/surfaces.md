@@ -10,8 +10,12 @@ now generalise across surfaces.
 ## The question is which lane can reach an app, not which apps exist
 
 `Surfaces.swift` fixes a closed table, each entry a bundle ID (Apple Events lane) and an optional
-store path (file lane). The app links no data frameworks — it is a pure broker. That leaves three
-ways to reach anything:
+store path (file lane). For reads the app links no data frameworks: it brokers, and the servers
+read. Voice Memos' writes are the exception. The app saves them itself, through Core Data with
+Voice Memos' own model, because only a Core Data save reaches iCloud; the reads stay with the
+server. See [the store lane design](superpowers/specs/2026-11-10-swift-write-lane-design.md) and
+[voice-memos.md](voice-memos.md). Whichever side does the work, an app can be reached in three
+ways:
 
 | Lane                                       | Cost                                                             | Ceiling                                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -19,8 +23,10 @@ ways to reach anything:
 | **File lane** (read-only SQLite under FDA) | grant already held; schema must be reverse-engineered by a probe | fast, read-only, drifts across macOS releases                                               |
 | **Neither**                                | link EventKit / Contacts / PhotoKit in the app; new TCC grants   | complete and fast, but moves logic from TypeScript into Swift and forks the two-lane design |
 
-No surface has needed the third lane. Calendar looked like it would and did not — see
-[calendar.md](calendar.md).
+No surface reads through the third lane. Calendar looked like it would and did not — see
+[calendar.md](calendar.md). Voice Memos' writes are its one use, a narrow and write-only one: the
+app saves through Core Data with Voice Memos' own model, under the Full Disk Access the file lane
+already holds, so it asks for no new grant.
 
 ## Scriptability, measured on macOS 26.6
 
@@ -52,7 +58,7 @@ rather than about capability.
 | Calendar    | **file lane mandatory** — 3.4 s range query             | implemented                                            |
 | Safari      | two lanes see disjoint things                           | implemented                                            |
 | Maps        | **file lane only** — no `.sdef` exists                  | implemented, and writes without an Apple Event         |
-| Voice Memos | **file lane only**, no `.sdef`; App Intents unreachable | implemented, read-only plus export                     |
+| Voice Memos | **file lane only**, no `.sdef`; App Intents unreachable | implemented; edits saved by the app through Core Data  |
 | Contacts    | file-lane reads, 0 ms; store is plural                  | implemented                                            |
 | Screen      | **capture lane** — ScreenCaptureKit, ~30 ms             | implemented, in the app: the first with no npm package |
 | Sound       | CoreAudio — 4 devices in 28 ms                          | implemented, in the app; two independent gates         |

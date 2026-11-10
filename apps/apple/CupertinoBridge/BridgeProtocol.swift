@@ -71,6 +71,21 @@ nonisolated enum BridgeProtocol {
 
   static let onBehalfOfPrefix = "for="
 
+  /// The store lane's verb: `cupertino/1 store for=voice-memos\n`.
+  ///
+  /// A node server this app spawned asking to save into its OWN application's
+  /// store, which Cupertino does in Swift because only Core Data writes the
+  /// history that app's sync reads. In the second field where a surface goes,
+  /// and `ServerHost` reads it before the surface table, so it is never an
+  /// unknown server. Admitted like the lend above: the peer pid must be the
+  /// surface's own server, and the line is only a claim. `cupertino-bridge`
+  /// never sends it.
+  static let storeLane = "store"
+
+  static func storeHandshake(onBehalfOf id: String) -> String {
+    "\(version) \(storeLane) \(onBehalfOfPrefix)\(id)\n"
+  }
+
   /// The internal channel the app uses on itself: `cupertino/1 mail self\n`.
   ///
   /// The Chat pane reaching a surface the same way any editor reaches it. A
