@@ -114,3 +114,38 @@ The diagnostics call, which walks the boxes of all 86 files, took 31 ms; decodin
 took 45 ms in all.
 The newest `.m4a` and `.qta` were exported with `save_recording`, and Cadence imported and
 transcribed both. A `.qta` needs no conversion.
+
+## Writing: SQL stays on this Mac, Core Data reaches iCloud
+
+Measured on 2026-11-10 on one throwaway memo. Olivier checked the Mac and an iPhone at each step.
+
+**A rename by SQL never syncs.** An `UPDATE` of `ZENCRYPTEDTITLE` and `ZCUSTOMLABELFORSORTING`,
+with `Z_OPT` bumped, showed on the Mac after a relaunch. The iPhone kept the old title. It kept it
+even after a favourite toggle on another memo made the app save and sync: that toggle wrote two
+`ATRANSACTION`/`ACHANGE` rows for the other memo, and `voicememod` uploaded only that one. The
+test memo's `ANSCKRECORDMETADATA.ZLASTEXPORTEDTRANSACTIONNUMBER` stayed at 144. The exporter uploads
+what persistent history lists, and an out-of-band write adds nothing to it. Maps' SQL inserts
+reach iCloud because Core Data reconciles a brand-new object; an update to a mirrored row gets no
+such treatment.
+
+**A rename through Core Data syncs in seconds.** A Swift helper opened the store with
+`NSPersistentStoreCoordinator` and Voice Memos' own model, then saved the new title. The model was
+`VoiceMemos.momd`, current version `VoiceMemos14`, from
+`/System/iOSSupport/System/Library/PrivateFrameworks/VoiceMemos.framework/Versions/A/Resources/`.
+The store options were history tracking and remote-change notifications on, migration off.
+Core Data wrote transaction 148, one `ACHANGE` for the memo covering exactly the two changed
+columns. Within 15 s `voicememod` had uploaded it, with `ZLASTEXPORTEDTRANSACTIONNUMBER` going
+144 → 148. The Mac app showed the new title without a relaunch, and the iPhone had it within a
+minute. No private API was used.
+
+**Voice Memos changes its model in code.** As shipped, the model's `CloudRecording` version hash
+does not match the store's, so with migration off Core Data refuses to open the store. Every other
+entity matches. Trying one property change at a time on a copy of the model, the store's hash comes
+back when `audioFuture` has `allowsExternalBinaryDataStorage` set, as the app evidently sets it at
+runtime; `preservesValueInHistoryOnDeletion` on the same attribute gives the same hash, and neither
+matters to a write that leaves `audioFuture` alone. A writer must make that change, and must
+refuse to write whenever the model and the store still disagree: a macOS update can move either.
+
+The syncing process is `voicememod`, in the framework's `Support/`. It holds the CloudKit
+entitlements, including `com.apple.private.cloudkit.masquerade` and `com.apple.private.cloudkit.spi`,
+so nothing outside Apple's signature can talk to the container directly. It does not need to.
