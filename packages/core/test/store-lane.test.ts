@@ -271,21 +271,31 @@ describe("openStoreLane", () => {
 
   it("times out a call that is never answered", async () => {
     let calls = 0;
+    let secondArrived: (() => void) | undefined;
+    const second = new Promise<void>((resolve) => {
+      secondArrived = resolve;
+    });
     const { path } = await hostStub({
-      // The first answer lands at ~300 ms, past its 200 ms budget and while the
-      // second call (started at ~200 ms, answered at ~350 ms) is waiting.
+      // The first call is answered only once the second has reached the host:
+      // past its 200 ms budget, so after the lane dropped its connection. The
+      // second is answered ~20 ms later, well inside its own 200 ms.
       reply: async (message) => {
         calls += 1;
         const late = calls === 1;
-        await new Promise((resolve) => setTimeout(resolve, late ? 300 : 150));
+        if (late) await second;
+        else {
+          secondArrived?.();
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
         return okReply(message.id, { late });
       },
     });
     const lane = openStoreLane(SURFACE, envFor(path), { timeoutMs: 200 });
     const error = await rejection(lane?.call("voiceMemos.rename", {}));
     expect(error.reason).toBe("timeout");
-    // The timed-out call's answer still arrives, mid-way through the next call,
-    // which must get its own answer and not that one.
+    // The timed-out call's answer is written to the dropped connection, so it
+    // never reaches the second one, whose call gets its own answer. Were the
+    // connection kept, that late line would arrive while the second call waits.
     await expect(lane?.call("voiceMemos.rename", {})).resolves.toEqual({ late: false });
     lane?.close();
   });
