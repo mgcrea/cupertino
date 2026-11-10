@@ -102,3 +102,15 @@ for a cache.
 
 The bin's retention period (Voice Memos › Settings › Clear Deleted) is not in this store. A tool
 can say when a memo was deleted, but not when it will be purged.
+
+## Shipped
+
+`packages/voice-memos` reads all of the above. On 2026-11-10, `scripts/check-voice-memos-live.mjs`
+ran the built server against the probed library under Full Disk Access. It found 87 recordings,
+schema `fb804d4a4d59` verified, 2 folders, 4 favourites, and 0 in Recently Deleted (the memo
+deleted for the diff had been restored). All 28 recordings from 2025 on read as `ok` (25) or
+`empty` (3). The 58 older ones read `none`, and the 2019 row with no `ZPATH` reads `no-audio`.
+The diagnostics call, which walks the boxes of all 86 files, took 31 ms; decoding every transcript
+took 45 ms in all.
+The newest `.m4a` and `.qta` were exported with `save_recording`, and Cadence imported and
+transcribed both. A `.qta` needs no conversion.

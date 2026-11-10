@@ -43,21 +43,22 @@ rather than about capability.
 
 ## State of play
 
-| Surface   | Lane verdict                                     | Status                                                 |
-| --------- | ------------------------------------------------ | ------------------------------------------------------ |
-| Mail      | file lane required — 74 s search                 | implemented                                            |
-| Notes     | Apple Events usable below ~5k notes              | implemented                                            |
-| Reminders | dictionary complete for the core model           | implemented                                            |
-| Messages  | **file lane mandatory** — no read API exists     | implemented                                            |
-| Calendar  | **file lane mandatory** — 3.4 s range query      | implemented                                            |
-| Safari    | two lanes see disjoint things                    | implemented                                            |
-| Maps      | **file lane only** — no `.sdef` exists           | implemented, and writes without an Apple Event         |
-| Contacts  | file-lane reads, 0 ms; store is plural           | implemented                                            |
-| Screen    | **capture lane** — ScreenCaptureKit, ~30 ms      | implemented, in the app: the first with no npm package |
-| Sound     | CoreAudio — 4 devices in 28 ms                   | implemented, in the app; two independent gates         |
-| Desktop   | **sixth lane** — native AX, 1.24 ms a round trip | implemented, in the app; reaches any running app       |
-| Simulator | the AX lane into Simulator.app, in iOS points    | implemented, in the app; one bundle id, no scope gate  |
-| Shell     | **a child of the app**, with all of its grants   | implemented, in the app; sealed off, a window per run  |
+| Surface     | Lane verdict                                            | Status                                                 |
+| ----------- | ------------------------------------------------------- | ------------------------------------------------------ |
+| Mail        | file lane required — 74 s search                        | implemented                                            |
+| Notes       | Apple Events usable below ~5k notes                     | implemented                                            |
+| Reminders   | dictionary complete for the core model                  | implemented                                            |
+| Messages    | **file lane mandatory** — no read API exists            | implemented                                            |
+| Calendar    | **file lane mandatory** — 3.4 s range query             | implemented                                            |
+| Safari      | two lanes see disjoint things                           | implemented                                            |
+| Maps        | **file lane only** — no `.sdef` exists                  | implemented, and writes without an Apple Event         |
+| Voice Memos | **file lane only**, no `.sdef`; App Intents unreachable | implemented, read-only plus export                     |
+| Contacts    | file-lane reads, 0 ms; store is plural                  | implemented                                            |
+| Screen      | **capture lane** — ScreenCaptureKit, ~30 ms             | implemented, in the app: the first with no npm package |
+| Sound       | CoreAudio — 4 devices in 28 ms                          | implemented, in the app; two independent gates         |
+| Desktop     | **sixth lane** — native AX, 1.24 ms a round trip        | implemented, in the app; reaches any running app       |
+| Simulator   | the AX lane into Simulator.app, in iOS points           | implemented, in the app; one bundle id, no scope gate  |
+| Shell       | **a child of the app**, with all of its grants          | implemented, in the app; sealed off, a window per run  |
 
 Every probed surface now has a server, though **Screen no longer means a package** — it is served
 in-process by the app, because ScreenCaptureKit is unreachable from node and a server's `PATH`
