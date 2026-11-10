@@ -1,8 +1,10 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
+import { qtaWithTranscript } from "./helpers/audio.js";
+import { insertFolder, insertRecording, type Library, makeLibrary } from "./helpers/store.js";
 
 /**
  * The tool contract, over a real client and a real transport. `home` points discovery at a
@@ -19,7 +21,13 @@ const connect = async (env: NodeJS.ProcessEnv = {}) => {
 
 const toolNames = async (c: Client) => (await c.listTools()).tools.map((t) => t.name).toSorted();
 
-const EXPECTED = ["apple_voice_memos_diagnostics"];
+const EXPECTED = [
+  "apple_voice_memos_diagnostics",
+  "apple_voice_memos_get_recording",
+  "apple_voice_memos_list_folders",
+  "apple_voice_memos_list_recordings",
+  "apple_voice_memos_search_recordings",
+];
 
 describe("voice-memos tools", () => {
   it("registers exactly the read tools", async () => {
@@ -40,5 +48,69 @@ describe("voice-memos tools", () => {
     for (const t of (await (await connect()).listTools()).tools) {
       expect(t.annotations?.readOnlyHint).toBe(true);
     }
+  });
+});
+
+describe("with no readable store", () => {
+  it("fails a listing rather than returning an empty list, naming the grant", async () => {
+    const res = await (
+      await connect()
+    ).callTool({ name: "apple_voice_memos_list_recordings", arguments: {} });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/Full Disk Access/);
+  });
+});
+
+describe("over a library", () => {
+  let lib: Library;
+  beforeEach(() => {
+    lib = makeLibrary();
+    insertFolder(lib.db, { pk: 1, uuid: "F-1", name: "Work", rank: 0, count: 1 });
+    const path = lib.addAudio(
+      "a.qta",
+      qtaWithTranscript({
+        attributedString: { runs: ["Budget review.", 0], attributeTable: [{ timeRange: [2, 4] }] },
+      }),
+    );
+    insertRecording(lib.db, { pk: 1, id: "R-1", title: "Monday", date: 1, folder: 1, path });
+  });
+  afterEach(() => lib.cleanup());
+
+  const libraryEnv = (): NodeJS.ProcessEnv => ({
+    APPLE_VOICE_MEMOS_STORE: lib.storePath,
+    APPLE_VOICE_MEMOS_INDEX_MODE: "auto",
+  });
+
+  const call = async (name: string, args: Record<string, unknown>) => {
+    const res = (await (await connect(libraryEnv())).callTool({ name, arguments: args })) as {
+      content: { text: string }[];
+      isError?: boolean;
+    };
+    expect(res.isError, res.content[0]?.text).toBeFalsy();
+    return JSON.parse(res.content.map((c) => c.text).join("")) as Record<string, unknown>;
+  };
+
+  it("answers each read tool", async () => {
+    expect(await call("apple_voice_memos_list_folders", {})).toMatchObject({
+      folders: [{ id: "F-1", name: "Work" }],
+    });
+    expect(await call("apple_voice_memos_list_recordings", { folderId: "F-1" })).toMatchObject({
+      recordings: [{ id: "R-1", title: "Monday" }],
+      total: 1,
+    });
+    expect(
+      await call("apple_voice_memos_get_recording", { id: "R-1", format: "segments" }),
+    ).toMatchObject({ transcript: { status: "ok", segments: [{ start: 2, end: 4 }] } });
+    expect(await call("apple_voice_memos_search_recordings", { query: "budget" })).toMatchObject({
+      hits: [{ recording: { id: "R-1" }, segments: [{ start: 2 }] }],
+    });
+  });
+
+  it("rejects a since that is not a date, rather than matching nothing", async () => {
+    const res = await (
+      await connect(libraryEnv())
+    ).callTool({ name: "apple_voice_memos_list_recordings", arguments: { since: "soon" } });
+    expect(res.isError).toBe(true);
+    expect(JSON.stringify(res.content)).toMatch(/since/);
   });
 });

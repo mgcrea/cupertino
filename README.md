@@ -32,23 +32,23 @@ off cannot see that they exist.
 
 ## Surfaces
 
-| Surface     | Package                                        | Status                                                                                               |
-| ----------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Mail        | [`packages/mail`](packages/mail)               | implemented — 24 tools, search/read/attachments + gated writes and watches                           |
-| Notes       | [`packages/notes`](packages/notes)             | implemented — 13 tools, search/read/attachments + gated writes                                       |
-| Reminders   | [`packages/reminders`](packages/reminders)     | implemented — 11 tools, lists/search/dates + gated writes                                            |
-| Calendar    | [`packages/calendar`](packages/calendar)       | implemented — 10 tools, ranges/search/free-time + gated writes                                       |
-| Contacts    | [`packages/contacts`](packages/contacts)       | implemented — 7 tools, resolves handles to names + gated writes                                      |
-| Messages    | [`packages/messages`](packages/messages)       | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches             |
-| Safari      | [`packages/safari`](packages/safari)           | implemented — 21 tools, history/tabs/reading list/page reads + gated writes, codes, network, cookies |
-| Maps        | [`packages/maps`](packages/maps)               | implemented — 13 tools, favourites/Guides/recents + gated writes                                     |
-| Voice Memos | [`packages/voice-memos`](packages/voice-memos) | in progress — 1 tool, diagnostics; reads and the gated export land next                              |
-| Screen      | —                                              | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on        |
-| Sound       | —                                              | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on       |
-| Desktop     | —                                              | implemented — 27 tools, AXUIElement natively; in-app, no npm package; off until switched on          |
-| Simulator   | —                                              | implemented — 12 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on       |
-| Shell       | —                                              | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on               |
-| —           | [`packages/core`](packages/core)               | shared: the osascript boundary, TCC-aware errors, ro SQLite                                          |
+| Surface     | Package                                        | Status                                                                                                 |
+| ----------- | ---------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Mail        | [`packages/mail`](packages/mail)               | implemented — 24 tools, search/read/attachments + gated writes and watches                             |
+| Notes       | [`packages/notes`](packages/notes)             | implemented — 13 tools, search/read/attachments + gated writes                                         |
+| Reminders   | [`packages/reminders`](packages/reminders)     | implemented — 11 tools, lists/search/dates + gated writes                                              |
+| Calendar    | [`packages/calendar`](packages/calendar)       | implemented — 10 tools, ranges/search/free-time + gated writes                                         |
+| Contacts    | [`packages/contacts`](packages/contacts)       | implemented — 7 tools, resolves handles to names + gated writes                                        |
+| Messages    | [`packages/messages`](packages/messages)       | implemented — 11 tools, chats/search/counts/decoded text + gated send, codes and watches               |
+| Safari      | [`packages/safari`](packages/safari)           | implemented — 21 tools, history/tabs/reading list/page reads + gated writes, codes, network, cookies   |
+| Maps        | [`packages/maps`](packages/maps)               | implemented — 13 tools, favourites/Guides/recents + gated writes                                       |
+| Voice Memos | [`packages/voice-memos`](packages/voice-memos) | in progress — 5 tools, recordings/folders/search over Apple's transcripts; the gated export lands next |
+| Screen      | —                                              | implemented — 3 tools, ScreenCaptureKit; served in-app, no npm package; off until switched on          |
+| Sound       | —                                              | implemented — 10 tools, volume/routing/speech + gated recording; in-app; off until switched on         |
+| Desktop     | —                                              | implemented — 27 tools, AXUIElement natively; in-app, no npm package; off until switched on            |
+| Simulator   | —                                              | implemented — 12 tools, an iOS Simulator's screen in iOS points; in-app; off until switched on         |
+| Shell       | —                                              | implemented — 2 tools, approved scripts under Cupertino's grants; in-app; off until on                 |
+| —           | [`packages/core`](packages/core)               | shared: the osascript boundary, TCC-aware errors, ro SQLite                                            |
 
 **Screen, Sound, Desktop, Simulator and Shell arrive switched off.** Every other surface that brokers
 an Apple app is on when Cupertino is installed. The first four are not, because Screen Recording,

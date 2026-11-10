@@ -34,9 +34,18 @@ export {
   type Segment,
   type Transcript,
 } from "./client/transcript.js";
+export { TranscriptCache } from "./client/transcript-cache.js";
 export {
+  fold,
   VoiceMemosClient,
+  type AudioFormat,
   type CreateClientOptions,
+  type GetOptions,
+  type ListQuery,
+  type RecordingView,
+  type SearchHit,
+  type SearchQuery,
+  type TranscriptPage,
   type VoiceMemosStatus,
 } from "./client/voice-memos.js";
 export { loadConfig, type Config } from "./config.js";

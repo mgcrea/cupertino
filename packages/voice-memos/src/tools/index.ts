@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 
 import type { VoiceMemosClient } from "../client/voice-memos.js";
 import { registerDiagnosticsTools } from "./diagnostics.js";
+import { registerRecordingTools } from "./recordings.js";
 
 export type ToolContext = {
   /** Gates `save_recording`, which is NOT registered when this is false. */
@@ -21,5 +22,6 @@ export const registerTools = (
   ctx: ToolContext,
 ): void => {
   registerDiagnosticsTools(server, client);
+  registerRecordingTools(server, client);
   if (!ctx.allowWrites) return;
 };
