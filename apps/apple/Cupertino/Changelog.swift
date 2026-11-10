@@ -220,11 +220,11 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_37_2, v1_37_1, v1_37_0, v1_36_2, v1_36_1]
+  static let releases: [Release] = [v1_38_0, v1_37_1, v1_37_0, v1_36_2, v1_36_1]
 
   // swift-format-ignore
-  private static let v1_37_2: Release = Release(
-    version: "1.37.2",
+  private static let v1_38_0: Release = Release(
+    version: "1.38.0",
     date: "2026-11-10",
     sections: [
       Section(
@@ -233,6 +233,12 @@ nonisolated enum Changelog {
         entries: [
           Entry(
             ordinal: 0,
+            headline: "Voice Memos, a new surface: `@mgcrea/mcp-apple-voice-memos`.",
+            body: [
+              "Lists your recordings with their folders, favourites and Recently Deleted, and reads **the transcript Apple made of each one**, which macOS embeds in the audio file. Every segment carries its start and end, so a quote can be found again by listening. Search ignores case and accents, so \"cafe\" finds \"Café\". Recordings from before 2025 have no transcript, because Apple did not backfill, and the server says so rather than making one up. With writes on, `save_recording` copies a recording's audio to `~/Downloads`, where Cadence can pick it up. Nothing writes to Voice Memos itself: the app ships no scripting dictionary, and its App Intents can only be run from Shortcuts. Full Disk Access is required. Checked against a real library of 87 recordings: all 28 from 2025 on read, and an exported `.m4a` and `.qta` both transcribed in Cadence.",
+            ]),
+          Entry(
+            ordinal: 1,
             headline: "Claude Code's pane says when its allowlist hides a surface.",
             body: [
               "Claude Code silently drops a server its `allowedMcpServers` or `deniedMcpServers` refuses, so a surface Cupertino had wired correctly could be missing from every session. The pane now reads `~/.claude/settings.json` and managed settings, applies Claude Code's own matching rules, badges each refused entry and says what to do: Update in Bastion for Bastion's list, the entries to paste for a hand-written one, the Mac's admin for managed settings.",
@@ -243,7 +249,7 @@ nonisolated enum Changelog {
         lead: [],
         entries: [
           Entry(
-            ordinal: 1,
+            ordinal: 2,
             headline: "Shell asks once per session by default.",
             body: [
               "\"Before running\" now starts at Ask once per session, and turning Shell off puts it back there. If you never changed it, this update moves you to it. The setting alone approves nothing: the first run on each connection still shows the whole script, with Don't run as the default button, and only \"Run, and stop asking this session\" approves the rest of that connection, for 30 minutes at most. Under Ask every time that button sat behind a picker few people open. Ask every time is still there, and a \"Don't ask\" Cupertino did not seal itself still reads as Ask every time.",
@@ -254,10 +260,16 @@ nonisolated enum Changelog {
         lead: [],
         entries: [
           Entry(
-            ordinal: 2,
+            ordinal: 3,
             headline: "A Safari tab no longer stops answering after one lost message.",
             body: [
               "Safari can drop a page's message to the extension's background when the worker is stopped or still starting, and the page then waited for an answer that never came: that tab stopped polling, so every click, fill and `page_elements` on it timed out, while other sites kept answering, until the page was reloaded. Each message now gets ten seconds and a lost one counts as a failed poll, so the tab polls again at its usual interval. A reply that turns up after its wait is dropped with its commands rather than run late, and a result that cannot be filed no longer abandons the rest of its batch. Pages need one reload after this update to pick up the new script.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "A Mail attachment whose accented name is split across header lines keeps its real name.",
+            body: [
+              "Some servers, Open-Xchange among them, cut an encoded filename such as `=?UTF-8?Q?...?=` across several `filename*0`, `filename*1` parameters. Those pieces were joined but never decoded, so `list_attachments` and `get_message` showed the raw encoded text and `save_attachment` could not find the attachment under either name. They are now decoded once joined. `save_attachment` also matches names whatever their Unicode normalization, still accepts the raw spelling earlier versions listed, and says which names the message has when none matches.",
             ]),
         ]),
     ])

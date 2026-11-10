@@ -6,13 +6,17 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.37.2`,
-`notes-v1.37.2`, `reminders-v1.37.2`, `core-v1.37.2` for the npm packages, and `app-v1.37.2` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.38.0`,
+`notes-v1.38.0`, `reminders-v1.38.0`, `core-v1.38.0` for the npm packages, and `app-v1.38.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.38.0] - 2026-11-10
+
+**Voice Memos, with Apple's own transcripts.** Agents can list, read and search your recordings
+and the transcripts macOS made of them. A Safari tab no longer stops answering after one lost
+message, and Shell asks once per session by default.
 
 ### Added
 
@@ -26,15 +30,6 @@ summary.
   no scripting dictionary, and its App Intents can only be run from Shortcuts. Full Disk Access is
   required. Checked against a real library of 87 recordings: all 28 from 2025 on read, and an
   exported `.m4a` and `.qta` both transcribed in Cadence.
-
-## [1.37.2] - 2026-11-10
-
-**A Safari tab no longer stops answering for good.** One lost message to the extension silenced a
-page until it was reloaded; it now carries on within ten seconds. Shell asks once per session by
-default.
-
-### Added
-
 - **Claude Code's pane says when its allowlist hides a surface.** Claude Code silently drops a
   server its `allowedMcpServers` or `deniedMcpServers` refuses, so a surface Cupertino had wired
   correctly could be missing from every session. The pane now reads `~/.claude/settings.json` and
@@ -62,6 +57,13 @@ default.
   polls again at its usual interval. A reply that turns up after its wait is dropped with its
   commands rather than run late, and a result that cannot be filed no longer abandons the rest of
   its batch. Pages need one reload after this update to pick up the new script.
+- **A Mail attachment whose accented name is split across header lines keeps its real name.**
+  Some servers, Open-Xchange among them, cut an encoded filename such as `=?UTF-8?Q?...?=` across
+  several `filename*0`, `filename*1` parameters. Those pieces were joined but never decoded, so
+  `list_attachments` and `get_message` showed the raw encoded text and `save_attachment` could
+  not find the attachment under either name. They are now decoded once joined. `save_attachment`
+  also matches names whatever their Unicode normalization, still accepts the raw spelling earlier
+  versions listed, and says which names the message has when none matches.
 
 ## [1.37.1] - 2026-11-07
 
@@ -3438,8 +3440,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.37.2...HEAD
-[1.37.2]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...app-v1.37.2
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.38.0...HEAD
+[1.38.0]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...app-v1.38.0
 [1.37.1]: https://github.com/mgcrea/cupertino/compare/app-v1.37.0...app-v1.37.1
 [1.37.0]: https://github.com/mgcrea/cupertino/compare/app-v1.36.2...app-v1.37.0
 [1.36.2]: https://github.com/mgcrea/cupertino/compare/app-v1.36.1...app-v1.36.2
