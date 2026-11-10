@@ -139,6 +139,278 @@ struct StoreLaneCheck {
     }
   }
 
+  // MARK: - Voice Memos
+
+  /// The real Voice Memos model, copied and patched exactly as the writer does it.
+  static func voiceMemosModel() throws -> NSManagedObjectModel {
+    guard let loaded = NSManagedObjectModel(contentsOf: VoiceMemosWriter.modelURL),
+      let model = loaded.copy() as? NSManagedObjectModel
+    else { throw Failure(why: "the Voice Memos model did not load") }
+    VoiceMemosWriter.patch(model)
+    return model
+  }
+
+  /// A Voice Memos store built from the real model, holding synthetic rows only: folders `F-ONE`
+  /// (rank 0, count 1) and `F-TWO` (rank 1, count 0), recordings `R-ONE` ("Synthetic one", in
+  /// `F-ONE`) and `R-TWO` ("Synthetic two", in no folder).
+  static func makeVoiceMemosStore(at url: URL, model: NSManagedObjectModel) throws {
+    let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+    let store = try coordinator.addPersistentStore(type: .sqlite, at: url, options: storeOptions)
+    let context = NSManagedObjectContext(.privateQueue)
+    context.persistentStoreCoordinator = coordinator
+    try withExtendedLifetime(model) {
+      try context.performAndWait {
+        var folders: [String: NSManagedObject] = [:]
+        for (uuid, name, rank, count) in [
+          ("F-ONE", "Synthetic folder one", 0, 1), ("F-TWO", "Synthetic folder two", 1, 0),
+        ] {
+          let folder = NSEntityDescription.insertNewObject(forEntityName: "Folder", into: context)
+          folder.setValue(uuid, forKey: "uuid")
+          folder.setValue(name, forKey: "encryptedName")
+          folder.setValue(Int64(rank), forKey: "rank")
+          folder.setValue(Int64(count), forKey: "countOfRecordings")
+          folders[uuid] = folder
+        }
+        for (id, title, folder) in [
+          ("R-ONE", "Synthetic one", folders["F-ONE"]), ("R-TWO", "Synthetic two", nil),
+        ] {
+          let recording = NSEntityDescription.insertNewObject(
+            forEntityName: "CloudRecording", into: context)
+          recording.setValue(id, forKey: "uniqueID")
+          recording.setValue(title, forKey: "encryptedTitle")
+          recording.setValue(title, forKey: "customLabelForSorting")
+          recording.setValue(folder, forKey: "folder")
+        }
+        try context.save()
+      }
+    }
+    try coordinator.remove(store)
+  }
+
+  /// A fresh fixture per case, and the writer over it with the production patch.
+  static func voiceMemosFixture(_ name: String) throws -> (VoiceMemosWriter, URL) {
+    let storeURL = try folder("voice-memos-\(name)").appendingPathComponent("CloudRecordings.db")
+    try makeVoiceMemosStore(at: storeURL, model: voiceMemosModel())
+    return (VoiceMemosWriter(store: VoiceMemosWriter.store(at: storeURL)), storeURL)
+  }
+
+  /// Runs `body` against the fixture on an independent coordinator, saving if it changed
+  /// anything.
+  static func voiceMemos<T>(_ storeURL: URL, _ body: (NSManagedObjectContext) throws -> T) throws
+    -> T
+  {
+    try reading(storeURL, model: voiceMemosModel()) { context in
+      let result = try body(context)
+      if context.hasChanges { try context.save() }
+      return result
+    }
+  }
+
+  static func row(
+    _ entity: String, _ key: String, _ value: String, in context: NSManagedObjectContext
+  )
+    throws -> NSManagedObject
+  {
+    let request = NSFetchRequest<NSManagedObject>(entityName: entity)
+    request.predicate = NSPredicate(format: "%K == %@", key, value)
+    guard let row = try context.fetch(request).first else {
+      throw Failure(why: "no \(entity) \(value) in the fixture")
+    }
+    return row
+  }
+
+  static func recording(_ storeURL: URL, _ id: String, _ key: String) throws -> Any? {
+    try voiceMemos(storeURL) {
+      try row("CloudRecording", "uniqueID", id, in: $0).value(forKey: key)
+    }
+  }
+
+  static func folderCount(_ storeURL: URL, _ uuid: String) throws -> Int64? {
+    try voiceMemos(storeURL) {
+      try row("Folder", "uuid", uuid, in: $0).value(forKey: "countOfRecordings") as? Int64
+    }
+  }
+
+  /// The number of history transactions, and the last one's author and changed attribute names
+  /// per change.
+  static func history(_ storeURL: URL) throws -> (
+    count: Int, author: String?, changes: [[String]]
+  ) {
+    try voiceMemos(storeURL) { context in
+      let request = NSPersistentHistoryChangeRequest.fetchHistory(after: .distantPast)
+      request.resultType = .transactionsAndChanges
+      let result = try context.execute(request) as? NSPersistentHistoryResult
+      let transactions = result?.result as? [NSPersistentHistoryTransaction] ?? []
+      let changes = (transactions.last?.changes ?? []).map {
+        ($0.updatedProperties ?? []).map(\.name).sorted()
+      }
+      return (transactions.count, transactions.last?.author, changes)
+    }
+  }
+
+  /// `body` throws a `StoreLaneError` whose reason is `reason`; returns its message.
+  @discardableResult
+  static func expectRefusal(_ reason: String, _ label: String, _ body: () throws -> Void) throws
+    -> String
+  {
+    do {
+      try body()
+    } catch let error as StoreLaneError {
+      try expect(error.reason == reason, "\(label) threw \(error.reason), not \(reason)")
+      return error.message
+    }
+    throw Failure(why: "\(label) did not throw")
+  }
+
+  static func voiceMemosCases() {
+    guard FileManager.default.fileExists(atPath: VoiceMemosWriter.modelURL.path) else {
+      print("SKIP voice-memos: model not on this machine")
+      return
+    }
+
+    check("renameSetsTitleAndSortKey") {
+      let (writer, storeURL) = try voiceMemosFixture("rename")
+      let result = try writer.rename(id: "R-ONE", title: "  Synthetic renamed ")
+      try expect(result.id == "R-ONE", "id is \(result.id)")
+      try expect(
+        result.changed == ["customLabelForSorting", "encryptedTitle"],
+        "changed is \(result.changed)")
+      try expect(result.modelVersion != nil, "no model version")
+      try expect(
+        result.syncMeasured == (result.modelVersion == "VoiceMemos14"),
+        "syncMeasured \(result.syncMeasured) for \(result.modelVersion ?? "nil")")
+      for key in ["encryptedTitle", "customLabelForSorting"] {
+        let value = try recording(storeURL, "R-ONE", key) as? String
+        try expect(value == "Synthetic renamed", "\(key) reads back as \(value ?? "nil")")
+      }
+      let other = try recording(storeURL, "R-TWO", "encryptedTitle") as? String
+      try expect(other == "Synthetic two", "R-TWO's title changed to \(other ?? "nil")")
+    }
+
+    check("renameRefusesBadTitles") {
+      let (writer, storeURL) = try voiceMemosFixture("rename-bad")
+      for (title, label) in [
+        ("", "empty"), ("   ", "blank"), ("a\nb", "newline"),
+        (String(repeating: "a", count: 501), "501 characters"),
+      ] {
+        try expectRefusal("invalid", label) { _ = try writer.rename(id: "R-ONE", title: title) }
+      }
+      let title = try recording(storeURL, "R-ONE", "encryptedTitle") as? String
+      try expect(title == "Synthetic one", "the title changed to \(title ?? "nil")")
+      // 500 is the limit, not past it.
+      let result = try writer.rename(id: "R-ONE", title: String(repeating: "a", count: 500))
+      try expect(!result.changed.isEmpty, "500 characters changed nothing")
+    }
+
+    check("favoriteSetsAndClearsBitZero") {
+      let (writer, storeURL) = try voiceMemosFixture("favorite")
+      try expect(try recording(storeURL, "R-ONE", "sharedFlags") == nil, "sharedFlags is not nil")
+      let on = try writer.setFavorite(id: "R-ONE", favorite: true)
+      try expect(on.changed == ["sharedFlags"], "on changed \(on.changed)")
+      let set = try recording(storeURL, "R-ONE", "sharedFlags") as? Int64
+      try expect(set == 1, "on gives \(set.map(String.init) ?? "nil"), not 1")
+      try voiceMemos(storeURL) {
+        try row("CloudRecording", "uniqueID", "R-ONE", in: $0).setValue(
+          Int64(5), forKey: "sharedFlags")
+      }
+      let off = try writer.setFavorite(id: "R-ONE", favorite: false)
+      try expect(off.changed == ["sharedFlags"], "off changed \(off.changed)")
+      let cleared = try recording(storeURL, "R-ONE", "sharedFlags") as? Int64
+      try expect(cleared == 4, "off from 5 gives \(cleared.map(String.init) ?? "nil"), not 4")
+      // Clearing a favourite that was never set is a no-op, not a 0.
+      let never = try writer.setFavorite(id: "R-TWO", favorite: false)
+      try expect(never.changed.isEmpty, "clearing nil changed \(never.changed)")
+      try expect(
+        try recording(storeURL, "R-TWO", "sharedFlags") == nil, "clearing nil wrote a value")
+    }
+
+    check("moveKeepsBothCounts") {
+      let (writer, storeURL) = try voiceMemosFixture("move")
+      let moved = try writer.move(id: "R-ONE", folderId: "F-TWO")
+      try expect(moved.changed == ["folder"], "changed is \(moved.changed)")
+      let (one, two) = (try folderCount(storeURL, "F-ONE"), try folderCount(storeURL, "F-TWO"))
+      try expect(one == 0 && two == 1, "counts are F-ONE \(one ?? -1), F-TWO \(two ?? -1)")
+      _ = try writer.delete(id: "R-ONE")
+      try expect(try folderCount(storeURL, "F-TWO") == 1, "the delete changed F-TWO's count")
+      let out = try writer.move(id: "R-ONE", folderId: nil)
+      try expect(out.changed == ["folder"], "out changed \(out.changed)")
+      let after = try folderCount(storeURL, "F-TWO")
+      try expect(after == 0, "F-TWO counts \(after ?? -1) after the move out, not 0")
+      let folder = try recording(storeURL, "R-ONE", "folder")
+      try expect(folder == nil, "R-ONE is still in a folder")
+    }
+
+    check("moveRefusesUnknownFolder") {
+      let (writer, storeURL) = try voiceMemosFixture("move-unknown")
+      try expectRefusal("notFound", "F-NONE") {
+        _ = try writer.move(id: "R-ONE", folderId: "F-NONE")
+      }
+      try expect(try folderCount(storeURL, "F-ONE") == 1, "F-ONE's count changed")
+    }
+
+    check("deleteAndRestoreTouchOnlyEvictionDate") {
+      let (writer, storeURL) = try voiceMemosFixture("delete")
+      for (label, call) in [
+        ("delete", { try writer.delete(id: "R-ONE") }),
+        ("restore", { try writer.restore(id: "R-ONE") }),
+      ] as [(String, () throws -> VoiceMemosWriter.Result)] {
+        let result = try call()
+        try expect(result.changed == ["evictionDate"], "\(label) changed \(result.changed)")
+        let evicted = try recording(storeURL, "R-ONE", "evictionDate") as? Date
+        try expect(
+          (evicted != nil) == (label == "delete"),
+          "after \(label) evictionDate is \(evicted.map { "\($0)" } ?? "nil")")
+        let last = try history(storeURL)
+        try expect(last.author == "cupertino", "\(label) author is \(last.author ?? "nil")")
+        try expect(
+          last.changes == [["evictionDate"]], "\(label) history changes are \(last.changes)")
+      }
+    }
+
+    check("noOpWritesNoHistory") {
+      let (writer, storeURL) = try voiceMemosFixture("no-op")
+      _ = try writer.delete(id: "R-ONE")
+      _ = try writer.setFavorite(id: "R-ONE", favorite: true)
+      let before = try history(storeURL).count
+      let noOps: [(String, () throws -> VoiceMemosWriter.Result)] = [
+        ("a second delete", { try writer.delete(id: "R-ONE") }),
+        ("a repeated favourite", { try writer.setFavorite(id: "R-ONE", favorite: true) }),
+        ("a move to the current folder", { try writer.move(id: "R-ONE", folderId: "F-ONE") }),
+        ("a move out of no folder", { try writer.move(id: "R-TWO", folderId: nil) }),
+        ("the same title", { try writer.rename(id: "R-TWO", title: "Synthetic two ") }),
+        ("restoring a memo not deleted", { try writer.restore(id: "R-TWO") }),
+      ]
+      for (label, call) in noOps {
+        let result = try call()
+        try expect(result.changed.isEmpty, "\(label) changed \(result.changed)")
+      }
+      let after = try history(storeURL).count
+      try expect(after == before, "the no-ops wrote \(after - before) history transactions")
+    }
+
+    check("unknownRecordingIsNotFound") {
+      let (writer, _) = try voiceMemosFixture("unknown")
+      try expectRefusal("notFound", "R-NONE") { _ = try writer.rename(id: "R-NONE", title: "x") }
+    }
+
+    check("unpatchedModelIsRefused") {
+      let (_, storeURL) = try voiceMemosFixture("unpatched")
+      let unpatched = VoiceMemosWriter(
+        store: CoreDataStore(
+          modelURL: VoiceMemosWriter.modelURL, storeURL: storeURL, patch: { _ in },
+          measuredVersions: VoiceMemosWriter.measuredVersions))
+      let message = try expectRefusal("incompatible", "the unpatched model") {
+        _ = try unpatched.rename(id: "R-ONE", title: "Synthetic renamed")
+      }
+      try expect(message.contains("CloudRecording"), "the refusal does not name CloudRecording")
+      let status = unpatched.status()
+      try expect(!status.compatible, "status() calls the unpatched model compatible")
+      try expect(
+        VoiceMemosWriter(store: VoiceMemosWriter.store(at: storeURL)).status().compatible,
+        "status() calls the patched model incompatible")
+    }
+  }
+
   static func main() {
     let modelA = thingModel()
 
@@ -245,6 +517,8 @@ struct StoreLaneCheck {
         }
       }
     }
+
+    voiceMemosCases()
 
     // Not a `defer`: `exit` never returns, so a deferred removal would never run.
     try? FileManager.default.removeItem(at: scratch)
