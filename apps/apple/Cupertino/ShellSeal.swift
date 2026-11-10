@@ -13,8 +13,9 @@ import Security
 /// carries, beside it, a hex HMAC-SHA256 over `"<app identifier>|<preference key>|<value>"`,
 /// keyed by 32 random bytes that only Cupertino's own signed code can create, read or replace.
 ///
-/// A missing, unreadable or invalid seal reads as Shell **off** and as **Ask every time**, so
-/// deleting the key or the preference fails safe. "Ask every time" and "Ask once per session"
+/// A missing, unreadable or invalid seal reads as Shell **off** and, for a "Don't ask", as **Ask
+/// every time**, so deleting the key or the preference fails safe. A missing "Before running"
+/// reads as its default, **Ask once per session**. "Ask every time" and "Ask once per session"
 /// need no seal: both still put a window in front of a person.
 ///
 /// ## Why the key is in the data protection keychain
@@ -46,8 +47,8 @@ import Security
 /// Shell was on could write it back after the person turned Shell off, and the copy would still
 /// validate. So whenever a protected setting goes down, the key is replaced, and every seal made
 /// under the old key, copies included, stops validating. Turning Shell off also puts "Before
-/// running" back to "Ask every time", so turning it on again never brings "Don't ask" back with
-/// it. Lowering "Don't ask" leaves Shell on: its seal is made again under the new key.
+/// running" back to its default, "Ask once per session", so turning it on again never brings
+/// "Don't ask" back with it. Lowering "Don't ask" leaves Shell on: its seal is made again under the new key.
 ///
 /// ## The Debug build
 ///
@@ -235,12 +236,12 @@ nonisolated enum ShellSeal {
     return isSealed(values, enabledKey, value: "true", sealKey: enabledSealKey)
   }
 
-  /// The "Before running" setting in force. `.none` only with a valid seal, `.ask` for anything
-  /// missing or unknown.
+  /// The "Before running" setting in force. `Before.initial` for anything missing or unknown;
+  /// `.none` only with a valid seal, and `.ask`, the strictest, for a "Don't ask" without one.
   static func effectiveBefore(_ store: UserDefaults) -> ShellPolicy.Before {
     let values = persistent(store)
     let raw = values[ShellPolicy.key] as? String
-    let before = raw.flatMap(ShellPolicy.Before.init(rawValue:)) ?? ShellPolicy.Before.ask
+    let before = raw.flatMap(ShellPolicy.Before.init(rawValue:)) ?? ShellPolicy.Before.initial
     guard before == ShellPolicy.Before.none else { return before }
     let sealed = isSealed(
       values, ShellPolicy.key, value: ShellPolicy.Before.none.rawValue, sealKey: beforeSealKey)
@@ -248,7 +249,7 @@ nonisolated enum ShellSeal {
   }
 
   /// On writes the value and its seal. Off removes both and puts "Before running" back to
-  /// "Ask every time" through `setBefore(.ask)`, which rotates the key.
+  /// `Before.initial` through `setBefore`, which rotates the key.
   static func setEnabled(_ on: Bool, _ store: UserDefaults) {
     if on {
       store.set(true, forKey: enabledKey)
@@ -256,7 +257,7 @@ nonisolated enum ShellSeal {
     } else {
       store.removeObject(forKey: enabledKey)
       store.removeObject(forKey: enabledSealKey)
-      setBefore(.ask, store)
+      setBefore(ShellPolicy.Before.initial, store)
     }
   }
 
