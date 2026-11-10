@@ -10,7 +10,9 @@ import Foundation
 ///
 /// The things worth holding still, all silent when they go wrong: a store the model does not
 /// match being migrated rather than refused, a write that lands without the persistent history
-/// an app's iCloud exporter reads, and a fetch by id that quietly picks one of two rows.
+/// an app's iCloud exporter reads, and a fetch by id that quietly picks one of two rows. And at
+/// the lane's door: a connection admitted to a surface's lane that is not that surface's own
+/// server, and a write answered while the surface's writes are off.
 ///
 /// Run with `make store-lane-check`.
 @main
@@ -262,6 +264,51 @@ struct StoreLaneCheck {
     throw Failure(why: "\(label) did not throw")
   }
 
+  // MARK: - The lane's dispatch
+
+  /// One request line, as the node client sends it.
+  static func request(_ id: Int, _ method: String, _ params: [String: Any]? = nil) throws
+    -> String
+  {
+    var object: [String: Any] = ["jsonrpc": "2.0", "id": id, "method": method]
+    if let params { object["params"] = params }
+    let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+    return String(decoding: data, as: UTF8.self)
+  }
+
+  /// `line` through the lane, parsed: one JSON object on one line, no trailing newline.
+  static func reply(
+    _ line: String, borrower: String = "voice-memos", allowWrites: Bool = true,
+    _ writer: VoiceMemosWriter
+  ) throws -> [String: Any] {
+    try parse(
+      StoreLane.handle(line, borrower: borrower, allowWrites: allowWrites, voiceMemos: writer))
+  }
+
+  static func parse(_ text: String) throws -> [String: Any] {
+    try expect(!text.contains("\n"), "the reply has a line break: \(text)")
+    guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+    else { throw Failure(why: "the reply is not a JSON object: \(text)") }
+    try expect(object["jsonrpc"] as? String == "2.0", "the reply's jsonrpc is not 2.0: \(text)")
+    return object
+  }
+
+  /// The reply's error code, `data.reason` and message; fails if the reply is a result.
+  static func failure(_ reply: [String: Any]) throws -> (
+    code: Int, reason: String?, message: String
+  ) {
+    guard let error = reply["error"] as? [String: Any], reply["result"] == nil,
+      let code = error["code"] as? Int, let message = error["message"] as? String
+    else { throw Failure(why: "not an error reply: \(reply)") }
+    return (code, (error["data"] as? [String: Any])?["reason"] as? String, message)
+  }
+
+  /// A writer over a store that is not there: a case that reaches it fails with `notFound`.
+  static func absentWriter() -> VoiceMemosWriter {
+    VoiceMemosWriter(
+      store: VoiceMemosWriter.store(at: scratch.appendingPathComponent("absent/none.db")))
+  }
+
   /// What the writer and the fixture touch. A model without one of these (another macOS's
   /// Voice Memos) cannot exercise the writer, so the group skips rather than fails.
   static let voiceMemosNeeds: [String: [String]] = [
@@ -439,6 +486,137 @@ struct StoreLaneCheck {
       try expectRefusal("notFound", "R-NONE") { _ = try writer.rename(id: "R-NONE", title: "x") }
     }
 
+    check("renameRoundTrip") {
+      let (writer, storeURL) = try voiceMemosFixture("lane-rename")
+      let line = try request(
+        41, "voiceMemos.rename", ["id": "R-ONE", "title": "Synthetic renamed"])
+      let text = StoreLane.handle(
+        line, borrower: "voice-memos", allowWrites: true, voiceMemos: writer)
+      // As given: 41, not 41.0 or "41".
+      try expect(
+        text.range(of: #""id":41[,}]"#, options: .regularExpression) != nil,
+        "id 41 is not echoed as given: \(text)")
+      let answer = try parse(text)
+      guard let result = answer["result"] as? [String: Any], answer["error"] == nil else {
+        throw Failure(why: "not a result: \(answer)")
+      }
+      try expect(answer["id"] as? Int == 41, "id is \(answer["id"] ?? "absent")")
+      try expect(
+        Set(result.keys) == ["id", "changed", "modelVersion", "syncMeasured"],
+        "result keys are \(result.keys.sorted())")
+      try expect(result["id"] as? String == "R-ONE", "result id is \(result["id"] ?? "absent")")
+      try expect(
+        result["changed"] as? [String] == ["customLabelForSorting", "encryptedTitle"],
+        "changed is \(result["changed"] ?? "absent")")
+      let measured = VoiceMemosWriter.measuredVersions.contains(voiceMemosVersion())
+      try expect(result["modelVersion"] as? String == voiceMemosVersion(), "modelVersion differs")
+      try expect(result["syncMeasured"] as? Bool == measured, "syncMeasured differs")
+      let title = try recording(storeURL, "R-ONE", "encryptedTitle") as? String
+      try expect(title == "Synthetic renamed", "the title reads back as \(title ?? "nil")")
+
+      // Every other write method, in one pass, with the params the node client sends.
+      for (method, params, changed) in [
+        ("voiceMemos.setFavorite", ["id": "R-ONE", "favorite": true], ["sharedFlags"]),
+        ("voiceMemos.move", ["id": "R-ONE", "folderId": NSNull()], ["folder"]),
+        ("voiceMemos.move", ["id": "R-ONE", "folderId": "F-TWO"], ["folder"]),
+        ("voiceMemos.delete", ["id": "R-ONE"], ["evictionDate"]),
+        ("voiceMemos.restore", ["id": "R-ONE"], ["evictionDate"]),
+      ] as [(String, [String: Any], [String])] {
+        let answer = try reply(request(2, method, params), writer)
+        let result = answer["result"] as? [String: Any]
+        try expect(
+          result?["changed"] as? [String] == changed, "\(method) answered \(answer)")
+      }
+      try expect(try folderCount(storeURL, "F-TWO") == 1, "F-TWO's count is not 1 after the move")
+    }
+
+    check("writesOffRefusedStatusAnswers") {
+      let (writer, storeURL) = try voiceMemosFixture("lane-writes-off")
+      let before = try history(storeURL).count
+      for (method, params) in [
+        ("voiceMemos.rename", ["id": "R-ONE", "title": "Synthetic renamed"]),
+        ("voiceMemos.setFavorite", ["id": "R-ONE", "favorite": true]),
+        ("voiceMemos.move", ["id": "R-ONE", "folderId": "F-TWO"]),
+        ("voiceMemos.delete", ["id": "R-ONE"]),
+        ("voiceMemos.restore", ["id": "R-ONE"]),
+        // Refused before its params are read: a malformed write is still a write.
+        ("voiceMemos.rename", [:]),
+      ] as [(String, [String: Any])] {
+        let answer = try reply(request(3, method, params), allowWrites: false, writer)
+        let (code, reason, message) = try failure(answer)
+        try expect(code == -32000, "\(method) code is \(code)")
+        try expect(reason == "writesOff", "\(method) reason is \(reason ?? "nil")")
+        try expect(
+          message == "writes are off for Voice Memos in Cupertino", "\(method) says \(message)")
+        try expect(answer["id"] as? Int == 3, "\(method) id is \(answer["id"] ?? "absent")")
+      }
+      let after = try history(storeURL).count
+      try expect(after == before, "writes-off calls wrote \(after - before) transactions")
+      let title = try recording(storeURL, "R-ONE", "encryptedTitle") as? String
+      try expect(title == "Synthetic one", "the title changed to \(title ?? "nil")")
+
+      for params in [nil, [:]] as [[String: Any]?] {
+        let answer = try reply(request(4, "voiceMemos.status", params), allowWrites: false, writer)
+        guard let result = answer["result"] as? [String: Any] else {
+          throw Failure(why: "status is not a result: \(answer)")
+        }
+        try expect(
+          Set(result.keys) == ["compatible", "modelVersion", "syncMeasured", "refusal"],
+          "status keys are \(result.keys.sorted())")
+        try expect(result["compatible"] as? Bool == true, "status is not compatible: \(result)")
+        try expect(
+          result["refusal"] is NSNull, "status refusal is \(result["refusal"] ?? "absent")")
+        try expect(
+          result["modelVersion"] as? String == voiceMemosVersion(), "status version differs")
+      }
+    }
+
+    check("missingParamsIsInvalid") {
+      let (writer, storeURL) = try voiceMemosFixture("lane-invalid")
+      let before = try history(storeURL).count
+      let secret = "Synthetic secret title"
+      for (label, line) in [
+        ("rename {id}", try request(5, "voiceMemos.rename", ["id": "R-ONE"])),
+        ("rename, no params", try request(5, "voiceMemos.rename")),
+        ("rename, numeric id", try request(5, "voiceMemos.rename", ["id": 7, "title": secret])),
+        (
+          "rename, numeric title", try request(5, "voiceMemos.rename", ["id": "R-ONE", "title": 7])
+        ),
+        (
+          "rename, blank title", try request(5, "voiceMemos.rename", ["id": "R-ONE", "title": " "])
+        ),
+        (
+          "setFavorite 1, not true",
+          try request(5, "voiceMemos.setFavorite", ["id": "R-ONE", "favorite": 1])
+        ),
+        ("move {id}", try request(5, "voiceMemos.move", ["id": "R-ONE"])),
+        (
+          "move, numeric folder", try request(5, "voiceMemos.move", ["id": "R-ONE", "folderId": 5])
+        ),
+        ("delete {}", try request(5, "voiceMemos.delete", [:])),
+        (
+          "params an array",
+          #"{"jsonrpc":"2.0","id":5,"method":"voiceMemos.restore","params":["R-ONE"]}"#
+        ),
+      ] {
+        let (code, reason, message) = try failure(reply(line, writer))
+        try expect(code == -32000, "\(label): code \(code)")
+        try expect(reason == "invalid", "\(label): reason \(reason ?? "nil")")
+        for value in ["R-ONE", secret] {
+          try expect(!message.contains(value), "\(label): the message repeats a value: \(message)")
+        }
+      }
+      // An unknown recording names no value either.
+      let line = try request(6, "voiceMemos.rename", ["id": "R-SECRET", "title": secret])
+      let (_, reason, message) = try failure(reply(line, writer))
+      try expect(reason == "notFound", "an unknown recording is \(reason ?? "nil")")
+      try expect(
+        !message.contains("R-SECRET") && !message.contains(secret),
+        "the notFound message repeats a value: \(message)")
+      let after = try history(storeURL).count
+      try expect(after == before, "invalid calls wrote \(after - before) transactions")
+    }
+
     // Only a patch that moves the hash makes an unpatched opener refuse the store.
     guard patchChangesHash else {
       print(
@@ -569,6 +747,62 @@ struct StoreLaneCheck {
           }
         }
       }
+    }
+
+    check("admitsOnlyItsOwnServer") {
+      try expect(
+        StoreLane.admit(borrowerId: "voice-memos", peerSurface: "voice-memos") == nil,
+        "the voice-memos server is refused its own lane")
+      for peer in ["mail", nil] as [String?] {
+        let refusal = StoreLane.admit(borrowerId: "voice-memos", peerSurface: peer)
+        try expect(
+          refusal == "this connection is not a voice-memos server",
+          "peer \(peer ?? "nil") gets \(refusal ?? "admitted")")
+      }
+      let mail = StoreLane.admit(borrowerId: "mail", peerSurface: "mail")
+      try expect(mail == "'mail' has no store lane", "mail gets \(mail ?? "admitted")")
+      try expect(StoreLane.surfaces == ["voice-memos"], "surfaces is \(StoreLane.surfaces)")
+    }
+
+    check("garbageIsParseError") {
+      for line in ["", "not json", #"{"jsonrpc":"2.0","id":1,"#, #"{"id":1}}"#] {
+        let answer = try reply(line, absentWriter())
+        let (code, reason, _) = try failure(answer)
+        try expect(code == -32700, "\(line.debugDescription): code \(code)")
+        try expect(answer["id"] is NSNull, "\(line.debugDescription): id is not null")
+        try expect(reason == "invalid", "\(line.debugDescription): reason \(reason ?? "nil")")
+      }
+      // JSON, but not a request: a batch, no method, another protocol version, a bad id.
+      for line in [
+        #"[{"jsonrpc":"2.0","id":1,"method":"voiceMemos.status"}]"#,
+        #"{"jsonrpc":"2.0","id":1}"#,
+        #"{"jsonrpc":"1.0","id":1,"method":"voiceMemos.status"}"#,
+        #"{"jsonrpc":"2.0","id":true,"method":"voiceMemos.status"}"#,
+        #"{"jsonrpc":"2.0","id":{"a":1},"method":"voiceMemos.status"}"#,
+      ] {
+        let (code, reason, _) = try failure(reply(line, absentWriter()))
+        try expect(code == -32600, "\(line): code \(code)")
+        try expect(reason == "invalid", "\(line): reason \(reason ?? "nil")")
+      }
+    }
+
+    check("foreignNamespaceIsUnknownMethod") {
+      for (borrower, method) in [
+        ("voice-memos", "maps.add"), ("voice-memos", "voiceMemos.nope"),
+        ("voice-memos", "voiceMemos."), ("voice-memos", "voicememos.status"),
+        ("mail", "voiceMemos.status"), ("mail", "voiceMemos.rename"),
+      ] {
+        let answer = try reply(
+          request(7, method, ["id": "R-ONE", "title": "Synthetic"]), borrower: borrower,
+          absentWriter())
+        let (code, _, _) = try failure(answer)
+        try expect(code == -32601, "\(method) from \(borrower): code \(code)")
+        try expect(answer["id"] as? Int == 7, "\(method) from \(borrower): id not echoed")
+      }
+      // A string id is echoed too.
+      let line = #"{"jsonrpc":"2.0","id":"q-1","method":"maps.add"}"#
+      let answer = try reply(line, absentWriter())
+      try expect(answer["id"] as? String == "q-1", "a string id is not echoed: \(answer)")
     }
 
     voiceMemosCases()
