@@ -413,7 +413,8 @@ export const withLazyTools = (
     writeNames = new Set(all.filter((d) => !readNames.has(d.name)).map((d) => d.name));
   }
 
-  const prefix = `apple_${opts.surface}`;
+  // Tool names spell a hyphenated surface id with underscores (`voice-memos` → `apple_voice_memos_`).
+  const prefix = `apple_${opts.surface.replaceAll("-", "_")}`;
 
   /*
    * Diagnostics stays eagerly listed. It is the tool every surface guide points

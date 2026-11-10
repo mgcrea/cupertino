@@ -152,6 +152,42 @@ describe("withLazyTools, switched on", () => {
     ]);
   });
 
+  /*
+   * A hyphenated surface id (`voice-memos`) names its tools with underscores
+   * (`apple_voice_memos_*`). Built from the raw id, the facade's own tools came
+   * out as `apple_voice-memos_call_tool`, and diagnostics fell out of the eager
+   * listing because `apple_voice-memos_diagnostics` matched nothing.
+   */
+  it("names a hyphenated surface's facade with underscores and keeps its diagnostics eager", async () => {
+    const renamed = (target: McpServer, allowWrites: boolean): void =>
+      register(
+        {
+          registerTool: (name: string, ...rest: unknown[]) =>
+            (target.registerTool as (...args: unknown[]) => unknown)(
+              name.replace(/^apple_widget_/, "apple_gadget_shop_"),
+              ...rest,
+            ),
+        } as unknown as McpServer,
+        allowWrites,
+      );
+    const server = new McpServer({ name: "test", version: "0.0.0" });
+    withLazyTools(
+      server,
+      { surface: "gadget-shop", displayName: "Gadget Shop", lazy: true, allowWrites: true },
+      renamed,
+    );
+    const [ct, st] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await Promise.all([server.connect(st), client.connect(ct)]);
+    expect(await names(client)).toEqual([
+      "apple_gadget_shop_call_tool",
+      "apple_gadget_shop_call_write_tool",
+      "apple_gadget_shop_describe_tool",
+      "apple_gadget_shop_diagnostics",
+      "apple_gadget_shop_search_tools",
+    ]);
+  });
+
   it("keeps diagnostics eagerly callable, not behind the index", async () => {
     const client = await connect({ lazy: true, allowWrites: false });
     expect(textOf(await client.callTool({ name: "apple_widget_diagnostics", arguments: {} }))).toBe(
