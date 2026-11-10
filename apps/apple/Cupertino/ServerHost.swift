@@ -561,9 +561,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // any process running as this user could rename or delete somebody's
     // recordings through the app's Full Disk Access grant.
     //
-    // Past admission the borrower is the surface for every gate that follows,
-    // so a store connection is refused exactly when its own server would be:
-    // switched off, or no licence and no trial. No gate of its own.
+    // Past admission the borrower is the surface for the enablement gate that
+    // follows, so a store connection is refused when its own surface is
+    // switched off. The licence gate is skipped: the server's own connection
+    // already answered it — see the gate. No gate of its own.
     var storeFor: Surface?
     if parts[1] == BridgeProtocol.storeLane {
       guard parts.count == 3, parts[2].hasPrefix(BridgeProtocol.onBehalfOfPrefix) else {
@@ -769,8 +770,18 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // that could reach a switched-off surface would break the one promise the
     // sidebar makes, and enablement is a fact about configuration rather than
     // about payment — which is the argument that comment already makes.
+    //
+    // A store connection skips it, and its trial bookkeeping with it. By
+    // admission the peer is a server this host spawned, and that server's own
+    // connection has already answered the licence question — or was the Chat
+    // pane's licence-exempt `self` connection. Asking again would invert the
+    // rule above: the pane would read Voice Memos and have every write refused,
+    // and on a trial the lane would be shut at the window's end while the
+    // pane's server, which is not in `trialPIDs`, went on reading. A trial still
+    // ends the writes it admitted: that server is in `trialPIDs`, and
+    // `endTrialSessions` signals it, which hangs up its store connection.
     var onTrial = false
-    if !isSelf {
+    if !isSelf && storeFor == nil {
       switch Entitlement.current {
       case .licensed:
         break
@@ -791,7 +802,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // is served here is its lane, not the surface.
     if let borrower = storeFor {
       reply(client, BridgeProtocol.ok)
-      serveStoreLane(borrower: borrower, client: client, onTrial: onTrial)
+      serveStoreLane(borrower: borrower, client: client)
       return
     }
 
@@ -1109,16 +1120,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// Nothing goes to the observer or to `Sessions`: the lane is how one tool
   /// call on the borrower's own connection does its work, and that call and
   /// that session are already recorded there, as for a lend.
-  private func serveStoreLane(borrower: Surface, client: Int32, onTrial: Bool) {
-    let session = UUID()
-    // The borrower's server is in `trialPIDs` and is signalled when the trial
-    // ends, which ends this too. Registered anyway, as every in-process
-    // connection is, so the lane never outlives the window on the strength of
-    // a child that did not exit.
-    if onTrial { trialClients.withLock { $0[session] = (borrower.id, client) } }
-    // Before `serve` closes the descriptor: see `trialClients`.
-    defer { if onTrial { _ = trialClients.withLock { $0.removeValue(forKey: session) } } }
-
+  ///
+  /// Not in `trialClients`: the lane answers to its server's own admission, and
+  /// a trial ends it by signalling that server — see the licence gate in `serve`.
+  private func serveStoreLane(borrower: Surface, client: Int32) {
     while let line = InProcessRPC.nextLine(client) {
       if line.trimmingCharacters(in: .whitespaces).isEmpty { continue }
       // Per line, as in `serveInProcess`: switching the surface off has to
