@@ -189,6 +189,16 @@ export const headerFilename = (
 };
 
 /**
+ * Whether two spellings name the same attachment.
+ *
+ * The message file, the sidecar tree on disk and Mail can each hold an accented
+ * name in NFC or NFD, so a byte comparison sends a name the list tools gave out
+ * back as "no attachment named". Mail's own download script compares NFC too.
+ */
+export const sameAttachmentName = (a: string, b: string): boolean =>
+  a.normalize("NFC") === b.normalize("NFC");
+
+/**
  * The RFC 2231 form, including the numbered continuations long names use.
  *
  * A continuation is only percent-decoded when its own segment is starred —
@@ -210,6 +220,15 @@ const extendedParam = (value: string, param: string): string | null => {
   }
   if (segments.length === 0) return null;
   segments.sort((a, b) => a.index - b.index);
+
+  // No segment starred means no RFC 2231 encoding at all: this is a plain value
+  // cut into pieces, and mailers (Open-Xchange, for one) put an RFC 2047
+  // encoded word in it, split across the cut. Joined and returned as it was,
+  // that word reached every tool raw, and Mail, which decodes it, then knew no
+  // attachment by that name.
+  if (segments.every((s) => !s.encoded)) {
+    return decodeEncodedWords(segments.map((s) => s.text).join(""));
+  }
 
   // The charset prefix rides on the first segment only.
   let charset: string | null = null;
