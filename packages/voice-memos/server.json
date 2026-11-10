@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.mgcrea/mcp-apple-voice-memos",
+  "title": "Apple Voice Memos",
+  "description": "Read and search Apple Voice Memos recordings and their on-device transcripts, export off by default",
+  "version": "1.37.2",
+  "websiteUrl": "https://cupertino.mgcrea.io",
+  "repository": {
+    "url": "https://github.com/mgcrea/cupertino",
+    "source": "github",
+    "subfolder": "packages/voice-memos"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@mgcrea/mcp-apple-voice-memos",
+      "version": "1.37.2",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "APPLE_VOICE_MEMOS_ALLOW_WRITES",
+          "description": "Register save_recording, which copies a recording's audio into the export folder. Off by default, and the gate decides whether the tool exists at all rather than merely refusing.",
+          "isRequired": false,
+          "isSecret": false
+        },
+        {
+          "name": "APPLE_VOICE_MEMOS_EXPORT_DIR",
+          "description": "Where save_recording copies audio. Defaults to ~/Downloads, one of the folders Cadence imports from. Nothing is written outside it.",
+          "isRequired": false,
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

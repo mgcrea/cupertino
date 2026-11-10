@@ -1,0 +1,13 @@
+{
+  "git": {
+    "tagName": "voice-memos-v${version}",
+    "commitMessage": "release(voice-memos): cut the v${version} release",
+    "tagAnnotation": "@mgcrea/mcp-apple-voice-memos v${version}"
+  },
+  "github": {
+    "release": false
+  },
+  "npm": {
+    "publish": false
+  }
+}

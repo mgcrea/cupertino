@@ -600,6 +600,46 @@ nonisolated struct Surface: Identifiable, Hashable {
       gates: []
     ),
     Surface(
+      id: "voice-memos",
+      displayName: "Voice Memos",
+      // usesAppleEvents is FALSE: VoiceMemos.app ships no .sdef and no
+      // NSAppleScriptEnabled. It does register App Intents (DeleteRecording,
+      // CreateFolder, RecordVoiceMemoIntent and more), and nothing outside
+      // Shortcuts can invoke one. The first surface with a write vocabulary and no
+      // way to reach it. docs/voice-memos.md lists them for a future Shortcuts lane.
+      //
+      // The file lane is MANDATORY, as for Maps and Messages: without Full Disk
+      // Access group.com.apple.VoiceMemos.shared is EPERM, not empty, and there is
+      // no second lane. The store sits in the same directory as the audio, so that
+      // directory is also the root every ZPATH is confined to.
+      //
+      // ZENCRYPTEDTITLE holds the title IN PLAINTEXT despite its name, and
+      // ZCUSTOMLABEL is not a title but the date-shaped default label. Reading the
+      // label as the title makes every unnamed memo look named.
+      //
+      // Apple's transcript is embedded in the audio file, in two containers: a tsrp
+      // box at moov/trak/udta in .m4a, and the keyed item com.apple.VoiceMemos.tsrp
+      // in moov/trak/meta in .qta, whose meta is a plain box while the ISO one is a
+      // FullBox. Only box headers and the payload are read; mdat never is.
+      //
+      // supportsWrites is TRUE for one tool, save_recording, which copies the audio
+      // into a confined folder, as Messages' save_attachment does. Nothing writes
+      // to the store: it is CloudKit-mirrored and nobody has asked for that.
+      bundleID: "com.apple.VoiceMemos",
+      kind: .app,
+      iconPath: nil,
+      symbol: nil,
+      usesAppleEvents: false,
+      appleEventsScope: nil,
+      supportsWrites: true,
+      defaultEnabled: true,
+      storePath: "Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings/CloudRecordings.db",
+      storePermission: .fullDiskAccess,
+      envPrefix: "APPLE_VOICE_MEMOS_",
+      runtime: .node,
+      gates: []
+    ),
+    Surface(
       id: "screen",
       displayName: "Screen",
       // The FIRST surface that is not an app. Every other entry brokers one

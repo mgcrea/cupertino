@@ -84,7 +84,7 @@ const registeredTools = (s) => {
   if (s.runtime === "swift") {
     const dir = join(ROOT, "apps", "apple", "Cupertino");
     if (!existsSync(dir)) return null;
-    const pattern = new RegExp(`"name":\\s*"apple_${s.id}_[a-z_]+"`, "g");
+    const pattern = new RegExp(`"name":\\s*"apple_${s.id.replaceAll("-", "_")}_[a-z_]+"`, "g");
     let n = 0;
     for (const e of readdirSync(dir)) {
       if (!e.endsWith(".swift")) continue;
@@ -108,7 +108,8 @@ for (const line of section.split("\n")) {
   const cells = line.split("|").map((c) => c.trim());
   const name = cells[1];
   if (!name || name === "Surface" || /^-+$/.test(name) || name === "—") continue;
-  rows.set(name.toLowerCase(), { name, status: cells[3] ?? "" });
+  // Keyed as a surface id is spelled: "Voice Memos" is the row for `voice-memos`.
+  rows.set(name.toLowerCase().replaceAll(/\s+/g, "-"), { name, status: cells[3] ?? "" });
 }
 
 const problems = [];
@@ -228,15 +229,15 @@ for (const s of manifest.surfaces) {
     );
   }
 
-  // The table names tools without their `apple_<surface>_` prefix.
-  const named = new Set(
-    [...body.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => `apple_${s.id}_${m[1]}`),
-  );
+  // The table names tools without their `apple_<surface>_` prefix, spelled with
+  // underscores: `voice-memos` tools are `apple_voice_memos_*`.
+  const prefix = `apple_${s.id.replaceAll("-", "_")}_`;
+  const named = new Set([...body.matchAll(/`([a-z][a-z0-9_]*)`/g)].map((m) => prefix + m[1]));
   const missing = [...listed.read, ...listed.write].filter((t) => !named.has(t));
   if (missing.length > 0) {
     problems.push(
       `${s.displayName}: registered but absent from its README table — ` +
-        missing.map((t) => t.replace(`apple_${s.id}_`, "")).join(", "),
+        missing.map((t) => t.replace(prefix, "")).join(", "),
     );
   }
 }

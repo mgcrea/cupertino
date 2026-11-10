@@ -59,6 +59,7 @@ export default defineConfig({
     "messages/dist/cli": here("../../packages/messages/src/cli.ts"),
     "safari/dist/cli": here("../../packages/safari/src/cli.ts"),
     "maps/dist/cli": here("../../packages/maps/src/cli.ts"),
+    "voice-memos/dist/cli": here("../../packages/voice-memos/src/cli.ts"),
     // </generated:surfaces>
   },
   outDir: here("./.build/staged/servers"),

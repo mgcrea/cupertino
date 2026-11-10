@@ -31,6 +31,7 @@ export interface Surface {
     | "messages"
     | "safari"
     | "maps"
+    | "voice-memos"
     | "screen"
     | "sound"
     | "desktop"
@@ -88,6 +89,7 @@ export const KIND: Record<Surface["id"], "app" | "capability"> = {
   messages: "app",
   safari: "app",
   maps: "app",
+  "voice-memos": "app",
   screen: "capability",
   sound: "capability",
   desktop: "capability",
@@ -104,6 +106,7 @@ export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {
   messages: true,
   safari: true,
   maps: false,
+  "voice-memos": false,
   screen: false,
   sound: false,
   desktop: false,
@@ -120,6 +123,7 @@ export const SUPPORTS_WRITES: Record<Surface["id"], boolean> = {
   messages: true,
   safari: true,
   maps: true,
+  "voice-memos": true,
   screen: false,
   sound: true,
   desktop: true,

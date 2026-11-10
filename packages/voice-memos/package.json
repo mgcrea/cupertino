@@ -1,0 +1,72 @@
+{
+  "name": "@mgcrea/mcp-apple-voice-memos",
+  "version": "1.37.2",
+  "description": "Read and search Apple Voice Memos recordings and their on-device transcripts, export off by default",
+  "keywords": [
+    "apple",
+    "apple-voice-memos",
+    "macos",
+    "mcp",
+    "model-context-protocol",
+    "recordings",
+    "transcripts",
+    "voice-memos"
+  ],
+  "homepage": "https://cupertino.mgcrea.io",
+  "bugs": "https://github.com/mgcrea/cupertino/issues",
+  "license": "MIT",
+  "author": "Olivier Louvignes <olivier@mgcrea.io>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mgcrea/cupertino.git",
+    "directory": "packages/voice-memos"
+  },
+  "bin": {
+    "apple-voice-memos-mcp": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "start": "node dist/cli.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "@mgcrea/mcp-apple-core": "workspace:^",
+    "@modelcontextprotocol/server": "^2.4.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "^2.4.0",
+    "@types/node": "^24.10.0",
+    "tsdown": "^0.22.14",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "mcpName": "io.github.mgcrea/mcp-apple-voice-memos"
+}
