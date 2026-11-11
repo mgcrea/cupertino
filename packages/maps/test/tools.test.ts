@@ -44,7 +44,8 @@ describe("maps tools", () => {
    * Maps' writes exist only when Cupertino hosts this server, through its store
    * lane (`store-writes.test.ts`). The SQL route this package once registered
    * was retired on 2026-11-11: its inserts were watched never to mirror to
-   * iCloud, and Maps converted them into saved places (`docs/maps.md`).
+   * iCloud, and Maps was seen converting favourites that look like them into
+   * saved places (`docs/maps.md`).
    */
   const WRITE_TOOLS = [
     "apple_maps_add_favorite",

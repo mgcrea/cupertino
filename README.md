@@ -408,7 +408,8 @@ and the node server never writes the store itself. On macOS 27.2 (Maps model che
 write made while Maps was quit. On another model version the result says sync is not yet measured.
 **Run from npm, the package writes nothing**: there is no SQL route and no Accessibility route,
 whatever `APPLE_MAPS_ALLOW_WRITES` says. Both were retired on 2026-11-11, after the watch found the
-SQL inserts never reached iCloud and Maps turned them into saved places.
+SQL inserts never reached iCloud, and saw Maps convert favourites that look like them (no iCloud
+mirror row, no `shortcutIdentifier`, a small `positionIndex`) into saved places.
 
 The part that cannot be faked is the GEO place record, so it never is: the place is opened through
 the `maps://` URL scheme, **Maps mints the record itself**, and it is copied. The tools state the

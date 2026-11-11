@@ -17,7 +17,9 @@ export type ToolContext = {
    * Run from npm there is no lane, and this server registers no write tool
    * whatever this says. The SQL and Accessibility routes it once had were
    * retired the same day: the watch found the SQL inserts never mirrored to
-   * iCloud, and Maps converted them into saved places. `docs/maps.md` carries
+   * iCloud, and saw Maps convert favourites that look like them (no mirror
+   * row, no `shortcutIdentifier`, a small `positionIndex`) into saved places.
+   * `docs/maps.md` carries
    * the measurements. The rule that outlived them: never fabricate a place
    * record, only copy one Maps wrote itself.
    */

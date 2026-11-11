@@ -805,11 +805,20 @@ struct UnitCheck {
     for tool in ["apple_safari_list_tabs", "apple_mail_list_messages", "apple_notes_get_note"] {
       check("\(tool) is silent", VisibleTools.notice(forTool: tool) == nil)
     }
-    // These already light the card through the desktop driver they borrow, and
-    // the in-process surfaces never pass through this table at all.
-    check(
-      "Maps save_place is left to its presses",
-      VisibleTools.notice(forTool: "apple_maps_save_place") == nil)
+    // Maps' three store-lane tools that can seed open `maps://` with `open -g`,
+    // which puts Maps on screen behind the front app: each says so. The two
+    // removes never seed and change nothing on screen. The in-process surfaces
+    // never pass through this table at all.
+    for tool in [
+      "apple_maps_add_favorite", "apple_maps_save_place", "apple_maps_add_place_to_guide",
+    ] {
+      check(
+        "\(tool) says it opens a place",
+        VisibleTools.notice(forTool: tool) == .showing(.openingPlace))
+    }
+    for tool in ["apple_maps_remove_favorite", "apple_maps_remove_saved_place"] {
+      check("\(tool) is silent", VisibleTools.notice(forTool: tool) == nil)
+    }
     check(
       "a desktop verb is not listed here",
       VisibleTools.notice(forTool: "apple_desktop_press") == nil)

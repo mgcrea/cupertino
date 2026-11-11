@@ -49,7 +49,8 @@ nonisolated struct Surface: Identifiable, Hashable {
   /// Whether this surface ever sends an Apple Event.
   ///
   /// False means no Automation prompt is ever shown for it and none is needed:
-  /// Maps writes SQL into its own store and Screen has no app to script at all.
+  /// Maps' writes are saved by this app's store lane through Maps' own Core Data
+  /// model, and Screen has no app to script at all.
   /// Asking for a permission the code never uses is the opposite of what the
   /// closed table is for.
   let usesAppleEvents: Bool
@@ -591,11 +592,13 @@ nonisolated struct Surface: Identifiable, Hashable {
       // exporting alone; on another model the result says sync is not yet
       // measured. Run from npm the server registers no write tool. Its SQL and
       // Accessibility routes were retired on 2026-11-11, after the watch found
-      // the SQL inserts never mirrored and Maps converting them into saved
-      // places. The place record cannot be synthesised, so it is never fabricated: the
-      // place is opened through the maps:// URL scheme, Maps mints the record
-      // into Recents, and it is copied. That leaves a Recents entry, which the
-      // tools disclose. See docs/maps.md, "The store lane".
+      // the SQL inserts never mirrored and saw Maps convert favourites that look
+      // like them (no mirror row, no shortcutIdentifier, a small positionIndex)
+      // into saved places. The place record cannot be synthesised, so it is
+      // never fabricated: the place is opened through the maps:// URL scheme,
+      // Maps mints the record into Recents, and it is copied. That leaves a
+      // Recents entry, which the tools disclose. See docs/maps.md, "The store
+      // lane".
       bundleID: "com.apple.Maps",
       kind: .app,
       iconPath: nil,

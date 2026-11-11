@@ -56,8 +56,10 @@ nonisolated enum VisibleTools {
 
   /// Safari's page verbs go through the extension, and `open_url` switches the
   /// front window's tab; none of them activates Safari unless asked.
-  /// `close_tabs` takes tabs out of a window's tab bar, which is on screen. Maps opens
-  /// a search with `open -g`, so it moves behind whatever is in front.
+  /// `close_tabs` takes tabs out of a window's tab bar, which is on screen. Maps' three
+  /// store-lane tools that can seed open a search with `open -g`, so Maps moves behind
+  /// whatever is in front. A name is all this table sees, so they are listed even for a
+  /// call that finds its record in the store and opens nothing; the two removes never seed.
   private static let showing: [String: Action] = [
     "apple_safari_open_url": .openingPage,
     "apple_safari_click": .clickingPage,
@@ -66,6 +68,8 @@ nonisolated enum VisibleTools {
     "apple_safari_submit": .submittingPage,
     "apple_safari_close_tabs": .closingTabs,
     "apple_maps_add_favorite": .openingPlace,
+    "apple_maps_save_place": .openingPlace,
+    "apple_maps_add_place_to_guide": .openingPlace,
   ]
 
   /// Writes sent by Apple Event with launching allowed. They open no window and

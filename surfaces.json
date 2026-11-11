@@ -481,11 +481,13 @@
         "exporting alone; on another model the result says sync is not yet",
         "measured. Run from npm the server registers no write tool. Its SQL and",
         "Accessibility routes were retired on 2026-11-11, after the watch found",
-        "the SQL inserts never mirrored and Maps converting them into saved",
-        "places. The place record cannot be synthesised, so it is never fabricated: the",
-        "place is opened through the maps:// URL scheme, Maps mints the record",
-        "into Recents, and it is copied. That leaves a Recents entry, which the",
-        "tools disclose. See docs/maps.md, \"The store lane\"."
+        "the SQL inserts never mirrored and saw Maps convert favourites that look",
+        "like them (no mirror row, no shortcutIdentifier, a small positionIndex)",
+        "into saved places. The place record cannot be synthesised, so it is",
+        "never fabricated: the place is opened through the maps:// URL scheme,",
+        "Maps mints the record into Recents, and it is copied. That leaves a",
+        "Recents entry, which the tools disclose. See docs/maps.md, \"The store",
+        "lane\"."
       ]
     },
     {

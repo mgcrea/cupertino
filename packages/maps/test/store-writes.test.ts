@@ -303,8 +303,9 @@ describe("registration", () => {
 
   /*
    * Run from npm there is no store lane, and since 2026-11-11 no other route:
-   * the SQL inserts were watched never to mirror, and Maps converted them into
-   * saved places. So writes on without the host registers no write tool.
+   * the SQL inserts were watched never to mirror, and Maps was seen converting
+   * favourites that look like them into saved places. So writes on without the
+   * host registers no write tool.
    */
   it("not hosted, writes on: no write tool at all", async () => {
     const tools = (await (await connect({ writes: true, lane: null })).listTools()).tools;
@@ -357,6 +358,21 @@ describe("registration", () => {
       const seeds = !/remove_/.test(name);
       const description = tools.find((t) => t.name === name)?.description ?? "";
       expect(/also appears in the user's Recents/.test(description), name).toBe(seeds);
+    }
+  });
+
+  it("words the removes as removals, and the adds as saves", async () => {
+    const { env } = await hostStub(saves);
+    const tools = (await (await connect({ writes: true, lane: env })).listTools()).tools;
+    for (const name of WRITE_NAMES) {
+      const removes = /remove_/.test(name);
+      const description = tools.find((t) => t.name === name)?.description ?? "";
+      expect(/Removed through Maps' own data model inside Cupertino/.test(description), name).toBe(
+        removes,
+      );
+      expect(/Saved through Maps' own data model inside Cupertino/.test(description), name).toBe(
+        !removes,
+      );
     }
   });
 

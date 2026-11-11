@@ -20,12 +20,12 @@ summary.
   `rename_recording`, `move_recording`, `set_favorite`, `delete_recording` (to Recently Deleted)
   and `restore_recording`, exist only when Cupertino hosts the Voice Memos server and its writes
   are on; from npm they are absent. Cupertino.app saves each one through Core Data with Voice
-  Memos' own model, so iCloud uploads it like a change made in the app. A rename written straight
-  into the database showed on the Mac and never reached the iPhone. Each tool changes only
-  what Voice Memos itself changed for the same edit, watched one step at a time. Every tool's sync
-  was measured on macOS 27.2 on a Mac and an iPhone: there a write reaches iCloud even with Voice
-  Memos closed, as its background service uploads it. On another Voice Memos model version the
-  result says sync is not yet measured.
+  Memos' own model, as a change made in the app is. A rename written straight into the database
+  showed on the Mac and never reached the iPhone. Each tool changes only what Voice Memos itself
+  changed for the same edit, watched one step at a time. Every tool's sync was measured on macOS
+  27.2 on a Mac and an iPhone: there each write reaches iCloud like a change made in the app, even
+  with Voice Memos closed, as its background service uploads it. On another Voice Memos model
+  version the result says sync is not yet measured.
 
 ### Changed
 
@@ -50,13 +50,15 @@ summary.
 
 ### Removed
 
-- **The npm Maps package no longer writes to Maps.** `@mgcrea/mcp-apple-maps` run from npm now
+- **The npm Maps package no longer writes to Maps.** Run from npm, `@mgcrea/mcp-apple-maps` now
   only reads, whatever `APPLE_MAPS_ALLOW_WRITES` says: `add_favorite` and `remove_favorite`, which
-  wrote SQL straight into Maps' store, are gone, and so are `save_place`, `remove_saved_place` and
-  `add_place_to_guide` on the Accessibility route, which pressed buttons on Maps' place card. A
-  favourite written as SQL was watched never to reach iCloud, and Maps itself turned such
-  favourites into saved places. In Cupertino the same five tools remain, saved through Maps' own
-  model by the store lane, the way a change made in the app is.
+  wrote SQL straight into Maps' store, are gone. A favourite written that way was watched never to
+  reach iCloud, and Maps itself was seen converting favourites that look like it into saved
+  places.
+- **Maps no longer presses buttons on its place card, in Cupertino.** The Accessibility route for
+  `save_place`, `remove_saved_place` and `add_place_to_guide` is gone. The same five Maps tools
+  remain in Cupertino, saved through Maps' own model by the store lane, the way a change made in
+  the app is.
 
 ## [1.38.0] - 2026-11-10
 

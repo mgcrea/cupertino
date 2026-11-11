@@ -556,7 +556,7 @@ export const SURFACES: readonly Surface[] = [
     // it changes how far the same twenty-seven tools reach, never which of them
     // exist. Listing it would misdescribe both the gate and the column.
     pitch:
-      "The lane for apps that have no other one. Maps ships no scripting dictionary at all, so Apple Events cannot write to it \u2014 not slowly, not at all \u2014 and the accessibility interface is the only way a place gets saved. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",
+      "The lane for apps that have no other one. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",
     withoutGrant:
       "Which apps are running, and nothing else. Accessibility is the grant that matters here rather than Full Disk Access, and every read past the app list refuses by name until it is given.",
   },
