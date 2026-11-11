@@ -35,6 +35,43 @@ genuinely saved nothing of that kind. Check
 | Find a saved place by name or address | \`apple_maps_search_places\` |
 | One place, in full | \`apple_maps_get_place\` |
 
+## Writing, when Cupertino hosts this server
+
+With writes on and Cupertino hosting this server, five tools save through Maps'
+own data model inside Cupertino, as a change made in the app is:
+
+| Change | Tool |
+| --- | --- |
+| Pin a place (the Pinned list) | \`apple_maps_add_favorite\` |
+| Unpin it | \`apple_maps_remove_favorite\` |
+| Save a place to the library, in no Guide | \`apple_maps_save_place\` |
+| Remove a saved place | \`apple_maps_remove_saved_place\` |
+| File a place in an existing Guide | \`apple_maps_add_place_to_guide\` |
+
+**Unpinning is not removing.** As in Maps, \`apple_maps_remove_favorite\` keeps
+the place in the user's library as a saved place. To take a place out of Maps
+entirely, unpin it and then remove the saved place with
+\`apple_maps_remove_saved_place\`, by a ref from \`apple_maps_list_unfiled_places\`.
+
+**Removes take a ref** from a listing, never a coordinate.
+\`apple_maps_add_place_to_guide\` takes a ref to a saved place, or a \`query\` to
+save a new place and file it in one call.
+
+**A new place lands in Recents.** Only Maps can make a place record, so unless the
+place is already in the store near the coordinate given, Maps resolves it by
+name, and it then also appears in the user's Recents. Give a coordinate when
+you have one. The answer says so in \`recentsNote\`; tell the user.
+
+**Do not say it reached their other devices** unless the answer says so. While
+\`syncMeasured\` is false, as it is on every macOS so far, sync is not yet
+measured: say the change is saved on this Mac and suggest checking another
+device.
+
+A refusal's reason is in \`details.reason\`. A place Maps resolved more than about
+250 m from the coordinate given is refused as \`invalid\`: confirm the place with
+the user rather than retrying without a coordinate. \`incompatible\` and
+\`writesOff\` will not pass on a retry.
+
 ## Four things not to say
 
 **\`linked: false\` is not a broken row.** Some favourites have no place

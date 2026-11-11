@@ -481,6 +481,48 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Rename, move, favourite, delete and restore a voice memo, in Cupertino.",
+            body: [
+              "Five tools, `rename_recording`, `move_recording`, `set_favorite`, `delete_recording` (to Recently Deleted) and `restore_recording`, exist only when Cupertino hosts the Voice Memos server and its writes are on; from npm they are absent. Cupertino.app saves each one through Core Data with Voice Memos' own model, so iCloud uploads it like a change made in the app. A rename written straight into the database showed on the Mac and never reached the iPhone. Each tool changes only what Voice Memos itself changed for the same edit, watched one step at a time. A write reaches iCloud even with Voice Memos closed, as its background service uploads it. Every tool's sync was measured on macOS 27.2 on a Mac and an iPhone; on another Voice Memos model version the result says sync is not yet measured.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Maps' writes save through Maps' own model, in Cupertino.",
+            body: [
+              "When Cupertino hosts the Maps server, `add_favorite`, `remove_favorite`, `save_place`, `remove_saved_place` and `add_place_to_guide` are saved by Cupertino.app through Core Data with Maps' own model, so each is recorded like a change made in the app. Each changes only what Maps itself changed for the same step, watched one step at a time on macOS 27.2. None of them brings Maps' window forward or presses anything any more, and `add_place_to_guide` answers `filed: true` only when reading the Guide back finds the place there. A place not yet in the store is still resolved by Maps from its name, which leaves it in your Recents. Sync to your other devices is not yet measured, and each result says so. Run from npm, the Maps server writes as before.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Unpinning a Maps favourite keeps the place, as Maps does.",
+            body: [
+              "In Maps, unpinning moves a place into your library as a saved place rather than deleting it. In Cupertino, `remove_favorite` now does the same and says so, and `remove_saved_place` is what removes the place entirely.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "`remove_saved_place` takes a ref.",
+            body: [
+              "In Cupertino it takes a ref from `list_unfiled_places` or `list_collection_places`, with `confirm: true`, instead of a place name and coordinate: Maps' coordinate and yours differ by up to a building's width, so a coordinate can match the wrong place. `add_place_to_guide` takes a ref to a saved place, or a name to save a new place and file it in one save.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

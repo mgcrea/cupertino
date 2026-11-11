@@ -27,6 +27,26 @@ summary.
   was measured on macOS 27.2 on a Mac and an iPhone; on another Voice Memos model version the result says sync is
   not yet measured.
 
+### Changed
+
+- **Maps' writes save through Maps' own model, in Cupertino.** When Cupertino hosts the Maps
+  server, `add_favorite`, `remove_favorite`, `save_place`, `remove_saved_place` and
+  `add_place_to_guide` are saved by Cupertino.app through Core Data with Maps' own model, so each
+  is recorded like a change made in the app. Each changes only what Maps itself changed for the
+  same step, watched one step at a time on macOS 27.2. None of them brings Maps' window forward or
+  presses anything any more, and `add_place_to_guide` answers `filed: true` only when reading the
+  Guide back finds the place there. A place not yet in the store is still resolved by Maps from its
+  name, which leaves it in your Recents. Sync to your other devices is not yet measured, and each
+  result says so. Run from npm, the Maps server writes as before.
+- **Unpinning a Maps favourite keeps the place, as Maps does.** In Maps, unpinning moves a place
+  into your library as a saved place rather than deleting it. In Cupertino, `remove_favorite` now
+  does the same and says so, and `remove_saved_place` is what removes the place entirely.
+- **`remove_saved_place` takes a ref.** In Cupertino it takes a ref from `list_unfiled_places` or
+  `list_collection_places`, with `confirm: true`, instead of a place name and coordinate: Maps'
+  coordinate and yours differ by up to a building's width, so a coordinate can match the wrong
+  place. `add_place_to_guide` takes a ref to a saved place, or a name to save a new place and
+  file it in one save.
+
 ## [1.38.0] - 2026-11-10
 
 **Voice Memos, with Apple's own transcripts.** Agents can list, read and search your recordings

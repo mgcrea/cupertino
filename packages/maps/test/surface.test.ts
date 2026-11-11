@@ -59,6 +59,20 @@ describe("maps resources", () => {
     expect(guide).toMatch(/does \*\*not\*\* search Apple's map of the world/);
     expect(guide).toMatch(/directions/);
   });
+
+  /*
+   * The two things a model would otherwise get wrong about the writes: that an
+   * unpin deletes the place (Maps keeps it as a saved place, watched
+   * 2026-11-11), and that a write reached the iPhone (not yet measured).
+   */
+  it("says unpinning keeps a saved place, and claims no sync", async () => {
+    const guide = textOf(
+      (await (await connect()).readResource({ uri: "cupertino://maps/guide" })).contents,
+    );
+    expect(guide).toMatch(/keeps\s+the place in the user's library as a saved place/);
+    expect(guide).toMatch(/sync is not yet\s+measured/);
+    expect(guide).toMatch(/also\s+appears in the user's Recents/);
+  });
 });
 
 describe("maps prompts", () => {
