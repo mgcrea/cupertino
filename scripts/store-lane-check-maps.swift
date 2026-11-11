@@ -28,6 +28,9 @@ extension StoreLaneCheck {
 
   /// Where each fixture item stands. The recent's is the watch's example pin.
   static let recentAt = (48.8553108, 2.3158494)
+  /// The recent's record stands a few metres off the recent itself, so a pin keyed on the record
+  /// (48.85540,2.31580) tells from one keyed on the item (48.85530,2.31580).
+  static let recentRecordAt = (48.85536, 2.31576)
   static let favoriteAt = (41.4036, 2.1744)
   static let savedAt = (51.5007, -0.1246)
 
@@ -75,7 +78,7 @@ extension StoreLaneCheck {
           [
             "identifier": MapsID.recent, "createTime": created, "modificationTime": created,
             "latitude": recentAt.0, "longitude": recentAt.1, "muid": Int64(1001),
-            "mapItem": record(1, recentAt),
+            "mapItem": record(1, recentRecordAt),
           ])
         insert(
           "HistoryPlaceItem",
@@ -168,6 +171,40 @@ extension StoreLaneCheck {
     try maps(storeURL) { context in
       let record = try mapsRow(entity, uuid, in: context).value(forKey: "mapItem")
       return (record as? NSManagedObject)?.value(forKey: "mapItemStorage") as? Data
+    }
+  }
+
+  /// `entity` `uuid`'s record's coordinate.
+  static func mapsRecordAt(_ storeURL: URL, _ entity: String, _ uuid: UUID) throws -> (
+    Double?, Double?
+  ) {
+    try maps(storeURL) { context in
+      let record =
+        try mapsRow(entity, uuid, in: context).value(forKey: "mapItem")
+        as? NSManagedObject
+      return (
+        record?.value(forKey: "latitude") as? Double, record?.value(forKey: "longitude") as? Double
+      )
+    }
+  }
+
+  /// Inserts `entity` with `values` straight into the fixture, and a record with `record`'s
+  /// bytes and coordinate when given; returns nothing the writer saw.
+  static func mapsInsert(
+    _ storeURL: URL, _ entity: String, _ values: [String: Any],
+    record: (seed: Int, at: (Double, Double))? = nil
+  ) throws {
+    try maps(storeURL) { context in
+      let object = NSEntityDescription.insertNewObject(forEntityName: entity, into: context)
+      for (key, value) in values { object.setValue(value, forKey: key) }
+      if let record {
+        let mixin = NSEntityDescription.insertNewObject(
+          forEntityName: "MixinMapItem", into: context)
+        mixin.setValue(syntheticRecord(record.seed), forKey: "mapItemStorage")
+        mixin.setValue(record.at.0, forKey: "latitude")
+        mixin.setValue(record.at.1, forKey: "longitude")
+        object.setValue(mixin, forKey: "mapItem")
+      }
     }
   }
 
@@ -371,13 +408,14 @@ extension StoreLaneCheck {
       try expect(int(values, "source") == 0, "source is \(int(values, "source") ?? -1)")
       try expect(values["hidden"] as? Bool == false, "hidden is \(values["hidden"] ?? "nil")")
       try expect(
-        values["shortcutIdentifier"] as? String == "48.85530,2.31580",
+        values["shortcutIdentifier"] as? String == "48.85540,2.31580",
         "shortcutIdentifier is \(values["shortcutIdentifier"] ?? "nil")")
       try expect(
         int(values, "positionIndex") == favoritePosition + 50_000_000,
         "positionIndex is \(int(values, "positionIndex") ?? -1)")
       try expect(
-        values["latitude"] as? Double == recentAt.0 && values["longitude"] as? Double == recentAt.1,
+        values["latitude"] as? Double == recentRecordAt.0
+          && values["longitude"] as? Double == recentRecordAt.1,
         "the coordinate is \(values["latitude"] ?? "nil"), \(values["longitude"] ?? "nil")")
       let now = Date()
       for key in ["createTime", "modificationTime", "mapItemLastRefreshed"] {
@@ -387,6 +425,10 @@ extension StoreLaneCheck {
       }
       let record = try mapsRecord(storeURL, "FavoriteItem", id)
       try expect(record == syntheticRecord(1), "the record is not the recent's bytes")
+      let recordAt = try mapsRecordAt(storeURL, "FavoriteItem", id)
+      try expect(
+        recordAt.0 == recentRecordAt.0 && recordAt.1 == recentRecordAt.1,
+        "the record's coordinate is \(recordAt)")
       try expect(
         try mapsRecord(storeURL, "HistoryPlaceItem", MapsID.recent) == syntheticRecord(1),
         "the recent's own record changed")
@@ -460,6 +502,11 @@ extension StoreLaneCheck {
 
     check("removeFavoriteUnpinsIntoLibrary") {
       let (writer, storeURL) = try mapsFixture("remove-favorite")
+      // A renamed pin: the name goes into the library with it.
+      try maps(storeURL) {
+        try mapsRow("FavoriteItem", MapsID.favorite, in: $0).setValue(
+          "Synthetic pin name", forKey: "customName")
+      }
       var result: MapsWriter.Result?
       try expectMapsHistory(
         storeURL, "removeFavorite",
@@ -488,12 +535,21 @@ extension StoreLaneCheck {
       }
       let values = try mapsValues(storeURL, "CollectionPlaceItem", placeID)
       let keys = newSavedPlaceKeys.union([
-        "mapItemName", "mapItemAddress", "mapItemCategory", "muid",
+        "customName", "mapItemName", "mapItemAddress", "mapItemCategory", "muid",
       ])
       try expect(Set(values.keys) == keys, "the saved place holds \(values.keys.sorted())")
       try expect(
         values["createTime"] as? Date == favoriteCreated, "createTime is not the pin's")
+      let modified = values["modificationTime"] as? Date
+      try expect(
+        modified.map { abs($0.timeIntervalSinceNow) < 60 } == true,
+        "modificationTime is \(modified as Any), not now")
+      let recordAt = try mapsRecordAt(storeURL, "CollectionPlaceItem", placeID)
+      try expect(
+        recordAt.0 == favoriteAt.0 && recordAt.1 == favoriteAt.1,
+        "the record's coordinate is \(recordAt), not the pin record's")
       for (key, value) in [
+        ("customName", "Synthetic pin name"),
         ("mapItemName", "Synthetic favourite"), ("mapItemAddress", "1 Synthetic Street"),
         ("mapItemCategory", "Synthetic category"),
       ] {
@@ -705,6 +761,116 @@ extension StoreLaneCheck {
       try expect(
         try mapsRecord(storeURL, "CollectionPlaceItem", id) == syntheticRecord(1),
         "the record is not the recent's bytes")
+    }
+
+    check("removeFavoriteRefusesSlots") {
+      let (writer, storeURL) = try mapsFixture("remove-favorite-slot")
+      for type in [Int16(0), Int16(2)] {
+        try maps(storeURL) {
+          try mapsRow("FavoriteItem", MapsID.favorite, in: $0).setValue(type, forKey: "type")
+        }
+        try expectNoMapsHistory(storeURL, "removing a type \(type) favourite") {
+          let message = try expectRefusal("invalid", "type \(type)") {
+            _ = try writer.removeFavorite(id: MapsID.favorite.uuidString)
+          }
+          try expect(
+            !message.lowercased().contains(MapsID.favorite.uuidString.lowercased()),
+            "the refusal repeats the id: \(message)")
+        }
+      }
+      try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "the slot went")
+      try expect(try mapsCount(storeURL, "CollectionPlaceItem") == 1, "a saved place was made")
+    }
+
+    check("addFavoriteNegativeCoordinate") {
+      let (writer, storeURL) = try mapsFixture("add-favorite-west")
+      // West of Greenwich, off the four-decimal grid: -0.12454 rounds to -0.1245, not -0.1246.
+      let west = UUID()
+      try mapsInsert(
+        storeURL, "CollectionPlaceItem", ["identifier": west], record: (7, (51.50072, -0.12454)))
+      let result = try writer.addFavorite(
+        source: .savedPlace, sourceId: west.uuidString, name: "Synthetic", near: nil)
+      let values = try mapsValues(storeURL, "FavoriteItem", try uuid(result))
+      try expect(
+        values["shortcutIdentifier"] as? String == "51.50070,-0.12450",
+        "shortcutIdentifier is \(values["shortcutIdentifier"] ?? "nil")")
+    }
+
+    check("sameSpotLookup") {
+      // A saved place whose coordinate lives only in its record is the one at that spot.
+      let (writer, storeURL) = try mapsFixture("same-spot-record")
+      let recordOnly = UUID()
+      try mapsInsert(
+        storeURL, "CollectionPlaceItem", ["identifier": recordOnly],
+        record: (5, recentRecordAt))
+      var saved: MapsWriter.Result?
+      try expectNoMapsHistory(storeURL, "savePlace onto a record-only saved place") {
+        saved = try writer.savePlace(
+          source: .recent, sourceId: MapsID.recent.uuidString, name: nil, near: nil)
+      }
+      try expect(
+        saved?.id == recordOnly.uuidString.lowercased() && saved?.created == false,
+        "savePlace answers \(String(describing: saved))")
+      // A Home or Work slot at the spot is not a pin: a pin is made beside it.
+      try mapsInsert(
+        storeURL, "FavoriteItem",
+        [
+          "identifier": UUID(), "type": Int16(0), "latitude": recentRecordAt.0,
+          "longitude": recentRecordAt.1,
+        ])
+      let pinned = try writer.addFavorite(
+        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic", near: nil)
+      try expect(pinned.created, "the slot was taken for a pin")
+      // A row with no identifier there cannot be named: failed, not the caller's mistake.
+      let (other, otherURL) = try mapsFixture("same-spot-unnamed")
+      try mapsInsert(
+        otherURL, "CollectionPlaceItem",
+        ["latitude": recentRecordAt.0, "longitude": recentRecordAt.1])
+      try expectNoMapsHistory(otherURL, "savePlace onto an unnamed saved place") {
+        try expectRefusal("failed", "an unnamed saved place") {
+          _ = try other.savePlace(
+            source: .recent, sourceId: MapsID.recent.uuidString, name: nil, near: nil)
+        }
+      }
+    }
+
+    check("zeroRecordIsNoCoordinate") {
+      let (writer, storeURL) = try mapsFixture("zero-record")
+      let zero = UUID()
+      try mapsInsert(storeURL, "HistoryPlaceItem", ["identifier": zero], record: (6, (0, 0)))
+      try expectNoMapsHistory(storeURL, "addFavorite from a (0, 0) record") {
+        try expectRefusal("notFound", "a (0, 0) record") {
+          _ = try writer.addFavorite(
+            source: .recent, sourceId: zero.uuidString, name: "Synthetic", near: nil)
+        }
+      }
+    }
+
+    check("fileInGuideFilesTheSavedPlaceThere") {
+      let (writer, storeURL) = try mapsFixture("file-onto-saved")
+      let saved = try writer.savePlace(
+        source: .favorite, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+      let placeID = try uuid(saved)
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "fileInGuide from a source with a saved place there",
+        extra: [placeID: "place"],
+        [
+          HistoryChange(
+            row: "CollectionPlaceItem place", properties: ["collections", "modificationTime"]),
+          HistoryChange(row: "Collection guide", properties: ["modificationTime", "places"]),
+        ]
+      ) {
+        result = try writer.fileInGuide(
+          guideTitle: "Synthetic guide", placeId: nil, source: .favorite,
+          sourceId: MapsID.favorite.uuidString, name: "Synthetic favourite", near: favoriteAt)
+      }
+      try expect(result?.id == saved.id, "id is \(result?.id ?? "nil"), not the saved place")
+      try expect(result?.created == false, "created is true")
+      try expect(result?.filed == true, "filed is \(String(describing: result?.filed))")
+      try expect(result?.changed == ["collections"], "changed is \(result?.changed ?? [])")
+      try expect(try mapsCount(storeURL, "CollectionPlaceItem") == 2, "a second place was saved")
+      try expect(try guidesOf(storeURL, placeID) == ["guide"], "the place is not in the guide")
     }
 
     check("fileInGuideRefusesAmbiguousTitle") {

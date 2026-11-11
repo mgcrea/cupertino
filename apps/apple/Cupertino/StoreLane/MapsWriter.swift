@@ -9,11 +9,12 @@ import Foundation
 /// "What Maps changes"), one transaction per call:
 ///
 /// - addFavorite (851): a `FavoriteItem` and its own `MixinMapItem` holding a copy of the
-///   source's place record. `type 1`, `version 2`, `source 0`, `hidden 0`, a `shortcutIdentifier`
-///   from the coordinate, and a `positionIndex` above every pin's.
-/// - removeFavorite (856–858): Maps does not delete a pin, it moves it into the library. A
-///   `CollectionPlaceItem` in no Guide copies the pin, then the pin goes, and its record by the
-///   model's cascade. A saved place already at that spot is left as it is, and only the pin goes.
+///   source's place record. `type 1`, `version 2`, `source 0`, `hidden 0`, the record's
+///   coordinate and a `shortcutIdentifier` from it, and a `positionIndex` above every pin's.
+/// - removeFavorite (856–858): pins (`type 1`) only. Maps does not delete a pin, it moves it into
+///   the library. A `CollectionPlaceItem` in no Guide copies the pin, its `customName` included,
+///   then the pin goes, and its record by the model's cascade. A saved place already at that
+///   spot is left as it is, and only the pin goes.
 /// - savePlace (862): a `CollectionPlaceItem` in no Guide and its own `MixinMapItem`.
 /// - removeSavedPlace (867): the `CollectionPlaceItem`; its record goes by cascade, and each
 ///   Guide's side of the relationship by nullify.
@@ -107,8 +108,10 @@ nonisolated struct MapsWriter: Sendable {
     let near = try near.map(Self.validCoordinate)
     let (id, changed, created) = try store.write { context in
       let place = try Place(source, sourceUUID, near: near, in: context)
-      if let existing = try Self.item("FavoriteItem", at: place.coordinate, in: context) {
-        return (try Self.identifier(of: existing), [String](), false)
+      if let existing = try Self.item(
+        "FavoriteItem", at: place.coordinate, pinsOnly: true, in: context)
+      {
+        return (Self.text(try Self.identifier(of: existing)), [String](), false)
       }
       let now = Date()
       let identifier = UUID()
@@ -138,20 +141,27 @@ nonisolated struct MapsWriter: Sendable {
     let uuid = try Self.uuid(id)
     let (changed, created) = try store.write { context in
       let pin = try CoreDataStore.fetchOne("FavoriteItem", uuid: uuid, in: context)
+      // Only a pin (`type 1`): Home, Work and the other slots are not what this removes.
+      guard (pin.value(forKey: "type") as? NSNumber)?.intValue == 1 else {
+        throw StoreLaneError.invalid("that favourite is not a pin, and only pins are removed here")
+      }
       var changed = ["favorite"]
       var created = false
       // Unpinning moves the place into the library, as Maps does, unless one is there already.
       // A pin with no record or no coordinate has nothing to move.
       let record = pin.value(forKey: "mapItem") as? NSManagedObject
       if let record, let storage = record.value(forKey: "mapItemStorage") as? Data,
-        let coordinate = Place.coordinate(of: pin, record: record),
+        let coordinate = Self.ownCoordinate(of: pin) ?? Self.recordCoordinate(of: record),
         try Self.item("CollectionPlaceItem", at: coordinate, in: context) == nil
       {
         let now = Date()
         let place = NSEntityDescription.insertNewObject(
           forEntityName: "CollectionPlaceItem", into: context)
         var values: [String: Any] = [:]
-        for key in ["createTime", "mapItemName", "mapItemAddress", "mapItemCategory", "muid"] {
+        // A renamed pin keeps its name in the library.
+        for key in [
+          "createTime", "customName", "mapItemName", "mapItemAddress", "mapItemCategory", "muid",
+        ] {
           values[key] = pin.value(forKey: key)
         }
         values["identifier"] = UUID()
@@ -187,10 +197,10 @@ nonisolated struct MapsWriter: Sendable {
     let (id, changed, created) = try store.write { context in
       let place = try Place(source, sourceUUID, near: near, in: context)
       if let existing = try Self.item("CollectionPlaceItem", at: place.coordinate, in: context) {
-        return (try Self.identifier(of: existing), [String](), false)
+        return (Self.text(try Self.identifier(of: existing)), [String](), false)
       }
       let (item, changed) = Self.insertSavedPlace(place, name: name, in: context)
-      return (try Self.identifier(of: item), changed, true)
+      return (Self.text(try Self.identifier(of: item)), changed, true)
     }
     return result(id: id, changed: changed, created: created)
   }
@@ -231,7 +241,7 @@ nonisolated struct MapsWriter: Sendable {
     default:
       throw StoreLaneError.invalid("name either a placeId, or a source and its sourceId")
     }
-    let (id, guideID, changed, created) = try store.write { context in
+    let (id, changed, created, filed) = try store.write { context in
       let guide = try Self.guide(titled: guideTitle, in: context)
       let item: NSManagedObject
       var created = false
@@ -247,24 +257,28 @@ nonisolated struct MapsWriter: Sendable {
           created = true
         }
       }
-      let id = try Self.identifier(of: item)
-      let guideID = try Self.identifier(of: guide)
+      let placeUUID = try Self.identifier(of: item)
+      let guideUUID = try Self.identifier(of: guide)
+      var changed: [String] = []
       let collections = item.mutableSetValue(forKey: "collections")
-      if collections.contains(guide) { return (id, guideID, [String](), created) }
-      // Both sides, as Maps' own filing saved them.
-      let now = Date()
-      collections.add(guide)
-      item.setValue(now, forKey: "modificationTime")
-      guide.setValue(now, forKey: "modificationTime")
-      return (id, guideID, ["collections"], created)
-    }
-    // Read back on a fresh coordinator: `filed` says what the store holds, not what was asked.
-    let filed = try store.write { context in
-      guard let placeUUID = UUID(uuidString: id), let guideUUID = UUID(uuidString: guideID)
-      else { return false }
-      let item = try CoreDataStore.fetchOne("CollectionPlaceItem", uuid: placeUUID, in: context)
-      let collections = item.value(forKey: "collections") as? Set<NSManagedObject> ?? []
-      return collections.contains { $0.value(forKey: "identifier") as? UUID == guideUUID }
+      if !collections.contains(guide) {
+        // Both sides, as Maps' own filing saved them.
+        let now = Date()
+        collections.add(guide)
+        item.setValue(now, forKey: "modificationTime")
+        guide.setValue(now, forKey: "modificationTime")
+        changed = ["collections"]
+      }
+      // Saved here rather than by the opener, so `filed` can be read back from the store on
+      // this same coordinator: what the store holds, not what was asked. Nothing is left for
+      // the opener to save.
+      if context.hasChanges { try context.save() }
+      context.stalenessInterval = 0
+      context.refreshAllObjects()
+      let fresh = try CoreDataStore.fetchOne("CollectionPlaceItem", uuid: placeUUID, in: context)
+      let filedIn = fresh.value(forKey: "collections") as? Set<NSManagedObject> ?? []
+      let filed = filedIn.contains { $0.value(forKey: "identifier") as? UUID == guideUUID }
+      return (Self.text(placeUUID), changed, created, filed)
     }
     return result(id: id, changed: changed, created: created, filed: filed)
   }
@@ -282,8 +296,8 @@ nonisolated struct MapsWriter: Sendable {
     let item: NSManagedObject
     let storage: Data
     let record: NSManagedObject
-    /// The item's own coordinate, or its record's where the item has none, as the node side
-    /// reads it.
+    /// The record's coordinate, or the item's own where the record has none: Maps' pin took its
+    /// record's exactly (851).
     let coordinate: Coordinate
 
     init(
@@ -295,7 +309,10 @@ nonisolated struct MapsWriter: Sendable {
       else {
         throw StoreLaneError.notFound("the source has no place record to copy")
       }
-      guard let coordinate = Self.coordinate(of: item, record: record) else {
+      guard
+        let coordinate = MapsWriter.recordCoordinate(of: record)
+          ?? MapsWriter.ownCoordinate(of: item)
+      else {
         throw StoreLaneError.notFound("the source has no coordinate")
       }
       if let near {
@@ -309,14 +326,6 @@ nonisolated struct MapsWriter: Sendable {
       self.record = record
       self.storage = storage
       self.coordinate = coordinate
-    }
-
-    static func coordinate(of item: NSManagedObject, record: NSManagedObject) -> Coordinate? {
-      let latitude = (item.value(forKey: "latitude") ?? record.value(forKey: "latitude")) as? Double
-      let longitude =
-        (item.value(forKey: "longitude") ?? record.value(forKey: "longitude")) as? Double
-      guard let latitude, let longitude else { return nil }
-      return Coordinate(latitude: latitude, longitude: longitude)
     }
 
     /// `key` of the source, nil where its entity has no such attribute: a recent has only
@@ -386,15 +395,48 @@ nonisolated struct MapsWriter: Sendable {
     for (key, value) in values { object.setValue(value, forKey: key) }
   }
 
-  /// An item of `entity` within `sameSpot` of `coordinate` on both axes, if any.
+  /// An item's own coordinate, nil unless it has both halves.
+  private static func ownCoordinate(of item: NSManagedObject) -> Coordinate? {
+    guard let latitude = item.value(forKey: "latitude") as? Double,
+      let longitude = item.value(forKey: "longitude") as? Double
+    else { return nil }
+    return Coordinate(latitude: latitude, longitude: longitude)
+  }
+
+  /// A record's coordinate. Exactly (0, 0) is the model's default, not a place: nil.
+  private static func recordCoordinate(of record: NSManagedObject) -> Coordinate? {
+    guard let latitude = record.value(forKey: "latitude") as? Double,
+      let longitude = record.value(forKey: "longitude") as? Double,
+      latitude != 0 || longitude != 0
+    else { return nil }
+    return Coordinate(latitude: latitude, longitude: longitude)
+  }
+
+  /// An item of `entity` within `sameSpot` of `coordinate` on both axes, if any: by its own
+  /// coordinate, or by its record's when it has none of its own. `pinsOnly` keeps to
+  /// `type 1`, so a Home or Work slot is not taken for a pin.
   private static func item(
-    _ entity: String, at coordinate: Coordinate, in context: NSManagedObjectContext
+    _ entity: String, at coordinate: Coordinate, pinsOnly: Bool = false,
+    in context: NSManagedObjectContext
   ) throws -> NSManagedObject? {
-    let request = NSFetchRequest<NSManagedObject>(entityName: entity)
-    request.predicate = NSPredicate(
-      format: "latitude >= %lf AND latitude <= %lf AND longitude >= %lf AND longitude <= %lf",
+    let bounds: [CVarArg] = [
       coordinate.latitude - sameSpot, coordinate.latitude + sameSpot,
-      coordinate.longitude - sameSpot, coordinate.longitude + sameSpot)
+      coordinate.longitude - sameSpot, coordinate.longitude + sameSpot,
+    ]
+    let own = NSPredicate(
+      format: "latitude >= %lf AND latitude <= %lf AND longitude >= %lf AND longitude <= %lf",
+      argumentArray: bounds)
+    let byRecord = NSPredicate(
+      format: "(latitude == nil OR longitude == nil) AND mapItem.latitude >= %lf "
+        + "AND mapItem.latitude <= %lf AND mapItem.longitude >= %lf AND mapItem.longitude <= %lf",
+      argumentArray: bounds)
+    var predicate: NSPredicate = NSCompoundPredicate(orPredicateWithSubpredicates: [own, byRecord])
+    if pinsOnly {
+      predicate = NSCompoundPredicate(
+        andPredicateWithSubpredicates: [NSPredicate(format: "type == 1"), predicate])
+    }
+    let request = NSFetchRequest<NSManagedObject>(entityName: entity)
+    request.predicate = predicate
     request.fetchLimit = 1
     do {
       return try context.fetch(request).first
@@ -465,11 +507,13 @@ nonisolated struct MapsWriter: Sendable {
     return 6_371_000 * 2 * asin(min(1, h.squareRoot()))
   }
 
-  private static func identifier(of object: NSManagedObject) throws -> String {
+  /// An item with no identifier is not the caller's mistake: the store holds a row the lane
+  /// cannot name.
+  private static func identifier(of object: NSManagedObject) throws -> UUID {
     guard let uuid = object.value(forKey: "identifier") as? UUID else {
-      throw StoreLaneError.invalid("the \(object.entity.name ?? "item") there has no identifier")
+      throw StoreLaneError.failed("the \(object.entity.name ?? "item") there has no identifier")
     }
-    return text(uuid)
+    return uuid
   }
 
   /// Lowercase, as the node side reads every id from the store.
