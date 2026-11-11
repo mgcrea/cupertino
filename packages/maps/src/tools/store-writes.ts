@@ -27,7 +27,8 @@ export const STORE_WRITE_TOOLS: readonly string[] = [
  * (`packages/voice-memos/src/tools/store-writes.ts`).
  *
  * Sync is promised only on a model version whose upload was measured: Maps'
- * DataModel_0_0_1 on macOS 27.2, every write seen on a Mac and an iPhone on
+ * model on macOS 27.2 (checksum `CaxhFk…`, listed in the Swift writer's
+ * `measuredVersions`), every write seen on a Mac and an iPhone on
  * 2026-11-11, one with Maps quit and mapssyncd exporting alone (`docs/maps.md`,
  * "Measured 2026-11-11"). Elsewhere the save still happened, but nobody has
  * watched it reach another device, so the result says so.
@@ -64,11 +65,16 @@ const RECENTS_NOTE =
   "Maps was asked to resolve this place, so it now also appears in the user's Recents. That " +
   "is how the place record is obtained and cannot be avoided.";
 
-/** Every lane tool says this after what it does. */
-const SAVED_LIKE =
-  "Saved through Maps' own data model inside Cupertino, as a change made in the app is; the " +
-  "result's `sync` says whether that is measured to reach the user's other Apple devices on " +
-  "this macOS. Only available when Cupertino hosts this server.";
+/** What follows, in every lane tool's description, what the tool does. */
+const LANE_TAIL =
+  "the result's `sync` says whether that is measured to reach the user's other Apple devices " +
+  "on this macOS. Only available when Cupertino hosts this server.";
+
+/** The three tools that add something say this. */
+const SAVED_LIKE = `Saved through Maps' own data model inside Cupertino, as a change made in the app is; ${LANE_TAIL}`;
+
+/** The two removes say this: what they take away goes the way the app takes it away. */
+const REMOVED_LIKE = `Removed through Maps' own data model inside Cupertino, as a removal made in the app is; ${LANE_TAIL}`;
 
 /** The three tools that may need a place record Maps has not minted yet. */
 const SEEDS =
@@ -209,9 +215,9 @@ const identifierFor = (
 };
 
 /**
- * The store lane's Maps tools. Registered only when writes are on and
- * Cupertino hosts this server; see `tools/index.ts`, which then registers
- * neither the SQL tools (`writes.ts`) nor the interface ones (`ax-writes.ts`).
+ * The store lane's Maps tools, and Maps' only writes. Registered only when
+ * writes are on and Cupertino hosts this server (`tools/index.ts`): run from
+ * npm, this server registers no write tool at all.
  *
  * This side keeps what only it can do: de-duplicate on the caller's coordinate
  * and name before anything else, find a place record Maps minted (seeding when
@@ -293,7 +299,7 @@ export const registerStoreWriteTools = (
         "at that spot, or the pin carries no place record. " +
         "apple_maps_remove_saved_place removes it entirely. Only pins: the Home, Work and " +
         "School slots are refused. It does not touch Guides or Recents. " +
-        `${SAVED_LIKE} Needs Full Disk Access, and an explicit confirm: the unpin is not ` +
+        `${REMOVED_LIKE} Needs Full Disk Access, and an explicit confirm: the unpin is not ` +
         "undoable from here.",
       inputSchema: z.object({ ref: placeRefArg, confirm: confirmArg }),
       annotations: REMOVE,
@@ -369,7 +375,7 @@ export const registerStoreWriteTools = (
         "Remove a place from Maps' Places library, by a ref from " +
         "apple_maps_list_unfiled_places or apple_maps_list_collection_places. That takes it " +
         "out of every Guide it is filed in. This does NOT touch favourites: use " +
-        `apple_maps_remove_favorite for those. ${SAVED_LIKE} Needs Full Disk Access, and an ` +
+        `apple_maps_remove_favorite for those. ${REMOVED_LIKE} Needs Full Disk Access, and an ` +
         "explicit confirm: the removal is not undoable from here.",
       inputSchema: z.object({ ref: placeRefArg, confirm: confirmArg }),
       annotations: REMOVE,

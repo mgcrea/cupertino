@@ -1,21 +1,23 @@
 import { DatabaseSync } from "node:sqlite";
 
+import { MapsWriteError } from "./errors.js";
+import { defaultOpenUrl, type OpenUrl } from "./open-url.js";
 import type { EntityKey } from "./store.js";
-import { defaultOpenUrl, MapsWriteError, type OpenUrl } from "./write.js";
 
 /**
  * Finding a place record for the store lane, without writing anything.
  *
  * The store lane saves through Maps' own Core Data model, and it can only COPY
- * a place record (`ZMIXINMAPITEM.ZMAPITEMSTORAGE`) that Maps minted — the same
- * rule `write.ts` explains at length: the record is a GEO protobuf nobody here
- * can generate, and the lane's saves reach the account's other devices, a
- * fabricated record with them.
+ * a place record (`ZMIXINMAPITEM.ZMAPITEMSTORAGE`) that Maps minted: the record
+ * is a GEO protobuf of one to four kilobytes that nobody here can generate, and
+ * on the measured model the lane's saves reach the account's other devices, so
+ * a fabricated record would go with them. `docs/maps.md` has the measurements.
  * So before the lane is asked to write, this finds a record to copy and names
  * the item that OWNS it, by that item's `ZIDENTIFIER`, because the lane fetches
  * through the model by uuid, not by row id.
  *
- * Two ways to get one, in order, both lifted from `MapsWriter.addFavorite`:
+ * Two ways to get one, in order, both kept from the SQL route this package ran
+ * until 2026-11-11:
  *
  *   1. A record already in the store within about a metre of the coordinate,
  *      owned by a favourite, a saved place or a recent. Costs nothing.
@@ -27,7 +29,7 @@ import { defaultOpenUrl, MapsWriteError, type OpenUrl } from "./write.js";
  * being asked to write the very row being waited for.
  */
 
-/** The owning item's kind, as the Swift lane's `MapsWriter.SourceKind` spells it. */
+/** The owning item's kind, as the app's Maps writer spells its `SourceKind`. */
 export type SourceKind = "favorite" | "savedPlace" | "recent";
 
 export type PlaceSource = {
@@ -49,7 +51,10 @@ const sleep = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-/** Progress, on stderr: stdout carries the MCP protocol. See `write.ts`. */
+/**
+ * Progress, on stderr: stdout carries the MCP protocol. Seeding can take tens
+ * of seconds, and a long call that says nothing reads as a hang.
+ */
 const progress = (message: string): void => {
   process.stderr.write(`[apple-maps-mcp] ${message}\n`);
 };
@@ -82,7 +87,7 @@ const haversineMetres = (aLat: number, aLon: number, bLat: number, bLon: number)
   return 6_371_000 * 2 * Math.asin(Math.sqrt(h));
 };
 
-/** `HEX(ZIDENTIFIER)` to the dashed lowercase form `write.ts`'s `uuidOf` produces. */
+/** `HEX(ZIDENTIFIER)` to the dashed lowercase form refs and the lane use. */
 const uuidOfHex = (hex: unknown): string | null => {
   if (typeof hex !== "string") return null;
   const h = hex.toLowerCase();
@@ -159,8 +164,8 @@ export class PlaceSourceFinder {
   }
 
   /**
-   * An existing item in `table` for this place, matched as `write.ts` matches
-   * favourites: a TIGHT coordinate (~1 m) when both numbers came from Maps, or
+   * An existing item in `table` for this place, matched as the SQL route
+   * matched favourites: a TIGHT coordinate (~1 m) when both numbers came from Maps, or
    * the NAME plus a LOOSE coordinate (~250 m) for a caller's own coordinate.
    * The name is what makes the loose radius safe: it only merges rows the
    * caller already calls the same thing.
@@ -331,7 +336,10 @@ export class PlaceSourceFinder {
 
     // ── 2. seed, holding nothing ─────────────────────────────────────────────
     // No coordinate in the URL: `?q=<name>` is the form measured to make Maps
-    // file a recent with a record; with `&ll=` it files nothing. See `write.ts`.
+    // file a recent with a record. With `&ll=<lat>,<lon>` Maps opened a place
+    // card but filed nothing in Recents, so a poll on that form ran to its
+    // timeout every time. The coordinate still serves to
+    // de-duplicate and to check what Maps resolved; it stays out of the URL.
     const url = `maps://?q=${encodeURIComponent(q.query)}`;
     progress(`asking Maps to resolve ${JSON.stringify(q.query)}…`);
     await this.#openUrl(url);

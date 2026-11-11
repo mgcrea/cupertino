@@ -28,12 +28,16 @@ from Maps' Core Data store.
 
 ## What it writes
 
-Only with `APPLE_MAPS_ALLOW_WRITES=1`. The write tools are unregistered rather than refused when it
-is off, so a client that has not opted in is never told they exist.
+**Run from npm, nothing.** This package only reads Maps: with no Cupertino hosting it, it registers
+no write tool, whatever `APPLE_MAPS_ALLOW_WRITES` says. Until 2026-11-11 it wrote favourites as SQL
+straight into the store. The watch that day found those inserts never mirrored to iCloud, and saw
+Maps turn favourites like them into saved places, so that route was removed
+([docs/maps.md](../../docs/maps.md#what-maps-changes-watched-2026-11-11)).
 
-**In Cupertino**, five tools save through Maps' own Core Data model, inside Cupertino.app, so each
-change is recorded the way a change made in Maps is. They exist only when Cupertino hosts this
-server.
+**In [Cupertino](https://cupertino.mgcrea.io)**, with writes on, five tools save through Maps' own
+Core Data model inside Cupertino.app, so each change is recorded the way a change made in Maps is.
+The write tools are unregistered rather than refused when writes are off, so a client that has not
+opted in is never told they exist.
 
 | Tool                            | What                                                                                     |
 | ------------------------------- | ---------------------------------------------------------------------------------------- |
@@ -45,16 +49,12 @@ server.
 
 None of them brings Maps forward or presses anything. A place record can only be minted by Maps, so
 unless the place is already in the store near the coordinate given, Maps resolves it from its name:
-**it is left in your Recents**, and resolving it can take tens of seconds. A write reaches your
-other devices through iCloud **even with Maps closed**, as Maps' background service uploads it:
-every tool was measured on macOS 27.2 on a Mac and an iPhone on 2026-11-11, one write with Maps
-quit. On another Maps model version each answer's `sync` says sync is not yet measured, and the
-place should be checked on another device.
-
-**Run from npm**, only `apple_maps_add_favorite` and `apple_maps_remove_favorite` exist, and they
-write SQL straight into the store; there, `remove_favorite` deletes the pin outright. On
-2026-11-11 the favourites that route inserts were found never mirrored to iCloud, and Maps was
-seen turning favourites like them into saved places ([docs/maps.md](../../docs/maps.md#what-maps-changes-watched-2026-11-11)).
+**it is left in your Recents**, and resolving it can take tens of seconds. Sync was measured on
+macOS 27.2 (Maps model checksum `CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk=`), every tool on a
+Mac and an iPhone on 2026-11-11: on that model a write reaches your other devices through iCloud
+**even with Maps closed**, as Maps' background service uploads it, seen with one write made while
+Maps was quit. On another Maps model version each answer's `sync` says sync is not yet measured,
+and the place should be checked on another device.
 
 ## What it does not do
 
@@ -62,7 +62,7 @@ It reads what is **saved on this Mac**. It does not search Apple's map of the wo
 address, give directions or compute a travel time. Those are network calls to Apple's services,
 not data on your disk.
 
-It writes only with `APPLE_MAPS_ALLOW_WRITES` set: pins, the Places library and Guide membership.
+It writes only in Cupertino, with writes on: pins, the Places library and Guide membership.
 Everything else here is read-only. The store is mirrored to iCloud by
 `NSPersistentCloudKitContainer`, so a write is an edit to one replica of a synchronising object
 graph underneath a running app. That is why a place record is never fabricated: Maps itself mints
@@ -88,7 +88,8 @@ If a listing comes back empty, that means you have saved nothing of that kind. R
 | `APPLE_MAPS_EXPOSE_PROMPTS`  | on         | register the prompt and `cupertino://maps/*` resources |
 | `APPLE_MAPS_DEBUG`           | off        | verbose logging on stderr                              |
 
-`APPLE_MAPS_ALLOW_WRITES` (off) registers the tools under [What it writes](#what-it-writes).
+`APPLE_MAPS_ALLOW_WRITES` (off) registers the tools under [What it writes](#what-it-writes) when
+Cupertino hosts this server. Run from npm it registers nothing.
 
 See [docs/maps.md](../../docs/maps.md) for the phase-0 measurements, including the three separate
 occasions on which this store was declared not to exist.

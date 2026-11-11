@@ -9,7 +9,6 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { MapsAxLane } from "../src/client/ax.js";
 import { MapsLane } from "../src/client/lane.js";
 import { AppleMapsClient } from "../src/client/maps.js";
 import { loadConfig } from "../src/config.js";
@@ -221,7 +220,6 @@ const savesInto =
 const connect = async (opts: {
   writes: boolean;
   lane: NodeJS.ProcessEnv | null;
-  ax?: MapsAxLane | null;
   storePath?: string;
   openUrl?: (url: string) => void;
 }) => {
@@ -234,7 +232,6 @@ const connect = async (opts: {
   const maps = new AppleMapsClient({
     config,
     home: "/nonexistent-home",
-    ax: opts.ax ?? null,
     lane: opts.lane ? MapsLane.open(opts.lane) : null,
     openUrl: opts.openUrl ?? failIfCalled,
   });
@@ -269,9 +266,6 @@ const MEASURED =
   "Saved the way Maps saves it. It reaches your other devices through iCloud, even with Maps " +
   "closed.";
 
-/** A stub that only proves the AX route was not taken: registration never calls it. */
-const axStub = {} as MapsAxLane;
-
 // ── registration ─────────────────────────────────────────────────────────────
 
 describe("registration", () => {
@@ -287,12 +281,12 @@ describe("registration", () => {
     expect(STORE_WRITE_TOOLS).toEqual(WRITE_NAMES);
   });
 
-  it("hosted with writes on: the lane tools, not the SQL or AX ones, and nothing connects", async () => {
+  it("hosted with writes on: the five lane tools, and nothing connects", async () => {
     const { env, connections } = await hostStub(saves);
-    const c = await connect({ writes: true, lane: env, ax: axStub });
+    const c = await connect({ writes: true, lane: env });
     const tools = (await c.listTools()).tools;
     for (const name of WRITE_NAMES) expect(tools.map((t) => t.name)).toContain(name);
-    // remove_saved_place takes a ref on the lane; the AX route took a query.
+    // remove_saved_place takes a ref from a listing, never a query.
     const removeSaved = tools.find((t) => t.name === "apple_maps_remove_saved_place");
     expect(Object.keys(removeSaved?.inputSchema.properties ?? {}).toSorted()).toEqual([
       "confirm",
@@ -307,18 +301,25 @@ describe("registration", () => {
     expect(connections()).toBe(0);
   });
 
-  it("not hosted: today's registration, unchanged", async () => {
-    const sqlOnly = (await (await connect({ writes: true, lane: null })).listTools()).tools;
-    expect(sqlOnly.map((t) => t.name).filter((n) => WRITE_NAMES.includes(n))).toEqual([
-      "apple_maps_add_favorite",
-      "apple_maps_remove_favorite",
-    ]);
-    for (const t of sqlOnly) expect(t.description).not.toMatch(/inside Cupertino/);
+  /*
+   * Run from npm there is no store lane, and since 2026-11-11 no other route:
+   * the SQL inserts were watched never to mirror, and Maps converted them into
+   * saved places. So writes on without the host registers no write tool.
+   */
+  it("not hosted, writes on: no write tool at all", async () => {
+    const tools = (await (await connect({ writes: true, lane: null })).listTools()).tools;
+    for (const name of WRITE_NAMES) expect(tools.map((t) => t.name)).not.toContain(name);
+    for (const t of tools) expect(t.annotations?.readOnlyHint, t.name).toBe(true);
+  });
 
-    const withAx = (await (await connect({ writes: true, lane: null, ax: axStub })).listTools())
-      .tools;
-    const removeSaved = withAx.find((t) => t.name === "apple_maps_remove_saved_place");
-    expect(Object.keys(removeSaved?.inputSchema.properties ?? {})).toContain("query");
+  it("has no SQL writer and no interface lane on the client", () => {
+    const maps = new AppleMapsClient({
+      config: loadConfig({ APPLE_MAPS_INDEX_MODE: "off", APPLE_MAPS_ALLOW_WRITES: "1" }),
+      home: "/nonexistent-home",
+      lane: null,
+    });
+    expect("writer" in maps).toBe(false);
+    expect("axLane" in maps).toBe(false);
   });
 
   it("writes off: no write tool, hosted or not", async () => {
@@ -1019,15 +1020,14 @@ describe("diagnostics", () => {
   const lanesOf = async (c: Client) =>
     (await call(c, "apple_maps_diagnostics", {})).body.lanes as Lanes;
 
-  it("reports writeLane null and the SQL route without the host", async () => {
+  it("reports writeLane null, no route and no tools without the host", async () => {
     const lanes = await lanesOf(await connect({ writes: true, lane: null }));
     expect(lanes.writeLane).toBeNull();
-    expect(lanes.writes.route).toBe("sql");
-    expect(lanes.writes.tools).toEqual(["apple_maps_add_favorite", "apple_maps_remove_favorite"]);
-    // The 2026-11-11 watch: the SQL route's inserts never mirrored.
-    const writes = lanes.writes as unknown as Record<string, string>;
-    expect(writes.blastRadius).toMatch(/never mirrored/);
-    expect(writes.blastRadius).not.toMatch(/every device/);
+    expect(lanes.writes.route).toBe("not hosted");
+    expect(lanes.writes.tools).toEqual([]);
+    expect(lanes.writeLaneNote).toMatch(/need the app/);
+    // No retired route is described as if it ran.
+    expect(JSON.stringify(lanes)).not.toMatch(/\bSQL\b|Accessibility|client\/write\.ts/);
   });
 
   it("reports the lane's status and the store route when hosted", async () => {
@@ -1036,7 +1036,7 @@ describe("diagnostics", () => {
     expect(lanes.writeLane).toEqual(STATUS);
     expect(lanes.writes.route).toBe("store lane");
     expect(lanes.writes.tools).toEqual([...STORE_WRITE_TOOLS]);
-    // The hosted route seeds by name alone and never writes SQL; the text must say so.
+    // The lane seeds by name alone, with no coordinate in the URL; the text must say so.
     const writes = lanes.writes as unknown as Record<string, string>;
     expect(writes.seeding).toContain("maps://?q=<query>");
     expect(writes.seeding).not.toContain("&ll=");

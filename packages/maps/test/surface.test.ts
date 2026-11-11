@@ -75,6 +75,23 @@ describe("maps resources", () => {
     expect(guide).toMatch(/on its way to\s+other devices, not that it is already on the iPhone/);
     expect(guide).toMatch(/When the result's\s+`syncMeasured` is false/);
     expect(guide).toMatch(/also\s+appears in the user's Recents/);
+    // Sync is promised only on the measured model, and before the promise.
+    expect(guide).toMatch(/On the measured model, a save reaches iCloud/);
+    expect(guide).toMatch(/result's `syncMeasured` is true, Maps' background service/);
+  });
+
+  /*
+   * Since 2026-11-11 the store lane is the only write route, so run from npm
+   * this server writes nothing, and the guide must not let a model promise a
+   * change it cannot make.
+   */
+  it("says the writes need Cupertino, and that npm only reads", async () => {
+    const guide = textOf(
+      (await (await connect()).readResource({ uri: "cupertino://maps/guide" })).contents,
+    );
+    expect(guide).toMatch(/run from npm it only reads, and none of them is\s+listed/);
+    expect(guide).toMatch(/say it needs Cupertino/);
+    expect(guide).not.toMatch(/\bSQL\b|Accessibility/);
   });
 });
 

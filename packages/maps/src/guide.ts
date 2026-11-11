@@ -38,7 +38,9 @@ genuinely saved nothing of that kind. Check
 ## Writing, when Cupertino hosts this server
 
 With writes on and Cupertino hosting this server, five tools save through Maps'
-own data model inside Cupertino, as a change made in the app is:
+own data model inside Cupertino, as a change made in the app is. They are the
+only way this server writes: run from npm it only reads, and none of them is
+listed. If the user asks for a change then, say it needs Cupertino.
 
 | Change | Tool |
 | --- | --- |
@@ -63,7 +65,8 @@ place is already in the store near the coordinate given, Maps resolves it by
 name, and it then also appears in the user's Recents. Give a coordinate when
 you have one. The answer says so in \`recentsNote\`; tell the user.
 
-**A save reaches iCloud without the app:** Maps' background service uploads it even
+**On the measured model, a save reaches iCloud without the app:** when the
+result's \`syncMeasured\` is true, Maps' background service uploads it even
 with Maps closed. Say the change is saved on this Mac and on its way to
 other devices, not that it is already on the iPhone. When the result's
 \`syncMeasured\` is false, the save still happened but sync is not yet measured on

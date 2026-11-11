@@ -3,6 +3,17 @@
 Phase-0 findings for `packages/maps`. Probe: `pnpm probe:maps`
 ([scripts/probe-maps.mjs](../scripts/probe-maps.mjs)). Measured on macOS 26.6.
 
+> **2026-11-11: the store lane is Maps' only write route.** The SQL route (`add_favorite` and
+> `remove_favorite` from npm) and the Accessibility route (`save_place`, `remove_saved_place` and
+> `add_place_to_guide` through the place card) were removed that day. The watch below found that
+> the SQL inserts were never mirrored to iCloud, and that Maps itself converts favourites like
+> them into saved places; the store lane saves what the app saves, through Maps' own model, and
+> every one of its five writes was measured on a Mac and an iPhone
+> ([What Maps changes](#what-maps-changes-watched-2026-11-11), [The store lane](#the-store-lane)).
+> Run from npm, `@mgcrea/mcp-apple-maps` now only reads; the five write tools exist only when
+> Cupertino hosts it. The sections on the SQL and Accessibility lanes are kept below as the
+> measurements they were, not as a description of what ships.
+
 ## The headline
 
 Maps has a **file lane and no other lane**, and the file lane is good: favourites,
@@ -149,6 +160,9 @@ with no coordinates and no identifiers — see [surfaces.md](surfaces.md).
 
 ## Writes — measured, and the SQL lane is closed
 
+_History. The SQL route this section and the ones after it measured shipped, and was retired on
+2026-11-11 (see the note at the top)._
+
 Probe: `pnpm probe:maps-write` ([scripts/probe-maps-write.mjs](../scripts/probe-maps-write.mjs)),
 macOS 26.6. It snapshots the store, waits for a place to be saved BY HAND in Maps, and
 diffs. The question was never "is the file writable" — it is, `W_OK` on the store, both
@@ -246,7 +260,10 @@ favourite either.
 
 ## The interface lane, built 2026-09-06
 
-`packages/maps/src/client/ax.ts` drives the place card through Cupertino's native Accessibility
+_History. Retired on 2026-11-11 with the SQL route: `client/ax.ts` and its three tools were
+removed, and the store lane does what they did through Maps' own model._
+
+`packages/maps/src/client/ax.ts` drove the place card through Cupertino's native Accessibility
 driver. It does **not** replace the SQL lane and could not: pressing `AddButton` lands an unfiled
 saved place and never touches `ZFAVORITEITEM`. The two lanes address different objects, and what
 this one reaches is the set SQL does not offer at all — the **Places library** and **guide
@@ -293,6 +310,9 @@ than "Accessibility is not granted" when the latter is why.
 | App Intents        | absent on macOS                     | strings ship, actions are not registered                           |
 | SQL into the store | **works, for any place**            | Maps mints the record via a URL scheme; the insert is three tables |
 | Accessibility      | **built, as the `desktop` surface** | named, pressable `Favorite` and `Add`; see below                   |
+
+As of 2026-11-11 neither write row ships in this package: both were retired for the store lane,
+which is now the only route, and only in Cupertino. The table is the verdict as it stood.
 
 Both write rows have since shipped, and `surfaces.json` now carries `supportsWrites: true` with
 `APPLE_MAPS_ALLOW_WRITES` gating all five mutating tools for real — `add_favorite` and
@@ -774,7 +794,7 @@ says both.
   `latitude` and `longitude` when known (both or neither), and an optional `name` to save under.
 - `remove_favorite` takes a `ref` from `list_favorites` and `confirm: true`.
 - `remove_saved_place` takes a `ref` from `list_unfiled_places` or `list_collection_places` and
-  `confirm: true`. The Accessibility route took a query and a coordinate instead. A coordinate
+  `confirm: true`. The retired Accessibility route took a query and a coordinate instead. A coordinate
   cannot name a saved place safely: Maps' and the caller's differ by up to a building's width, so
   a tight match misses and a loose one can delete a neighbour.
 - `add_place_to_guide` takes `guide`, the Guide's title exactly as Maps shows it, and either a
@@ -824,11 +844,12 @@ A refusal can also carry one of the connection's own reasons. Every check runs b
 saved.
 
 **Registration.** The five lane tools exist only when Cupertino hosts the server and Maps' writes
-are on; the SQL and Accessibility tools are then not registered. With writes off none is. The list
-does not depend on whether the lane is compatible, because MCP clients cache it. Run from npm
-there is no lane, and `add_favorite` and `remove_favorite` take the SQL route above. Diagnostics
-reports `lanes.writes.route` (`store lane`), `lanes.writes.tools`, and `lanes.writeLane` with
-`compatible`, `modelVersion`, `syncMeasured` and the `refusal` a write would meet.
+are on. With writes off none is. The list does not depend on whether the lane is compatible,
+because MCP clients cache it. Run from npm there is no lane and, since 2026-11-11, no other route:
+no write tool is registered, whatever `APPLE_MAPS_ALLOW_WRITES` says. Diagnostics reports
+`lanes.writes.route` (`store lane`, `off`, or `not hosted` with writes on from npm),
+`lanes.writes.tools`, and `lanes.writeLane` with `compatible`, `modelVersion`, `syncMeasured` and
+the `refusal` a write would meet.
 
 **Recents.** Only Maps can mint a place record, so a write that needs one leaves the place in the
 user's Recents. `add_favorite`, `save_place` and `add_place_to_guide` with a `query` seed when no
@@ -841,8 +862,8 @@ by `ref`, never seed.
 never taken from having asked. A place in an answer is the item as the store holds it, read back
 after the lane answers, never the caller's guess.
 
-**Sync.** `mapssyncd`, Maps' sync daemon, exports each lane save to iCloud, whether or not Maps
-is open; the lane launches nothing. Sync was measured on macOS 27.2, model checksum
+**Sync.** On the measured model, `mapssyncd`, Maps' sync daemon, exports each lane save to
+iCloud, whether or not Maps is open; the lane launches nothing. Sync was measured on macOS 27.2, model checksum
 `CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk=` (`DataModel_0_0_1`), on a Mac and an iPhone, on
 2026-11-11 (below): `MapsWriter.measuredVersions` holds that checksum, so a lane write there
 answers `syncMeasured: true` and the `sync` sentence "Saved the way Maps saves it. It reaches your
@@ -890,8 +911,9 @@ each inserted record to exactly `mapItemStorage`, `latitude`, `longitude`, `crea
 - **`ZMUID` stability is untested.** It looks like Apple's cross-device place id and is
   reported, but it is populated 20/23 and identifies a _place_ rather than an _entry_, so
   refs use `ZIDENTIFIER` instead. See `packages/maps/src/client/ref.ts`.
-- ~~**A write half is now plausible and unbuilt.**~~ Built. Both lanes ship: SQL writes into the
-  store, and the Accessibility verbs as part of the `desktop` surface's driver. The missing
+- ~~**A write half is now plausible and unbuilt.**~~ Built, then replaced. Both lanes shipped,
+  SQL writes into the store and the Accessibility verbs through the `desktop` surface's driver,
+  and both were retired on 2026-11-11 for the store lane (see the note at the top). The missing
   measurement was never taken in the form this bullet imagined it — the lane is called natively
   rather than through an `osascript` grandchild, which is the whole finding of
   [desktop.md](desktop.md).

@@ -342,15 +342,14 @@ export const SURFACES: readonly Surface[] = [
       "apple_maps_get_place",
       "apple_maps_diagnostics",
     ],
-    // Writes are SQL into a CloudKit-mirrored Core Data store, because Maps has
-    // no scripting dictionary and no App Intents registered on macOS. The place
-    // record is never fabricated — Maps is asked to mint one through the maps://
-    // URL scheme and it is copied — which is why this took four measured lanes
-    // to arrive at. See docs/maps.md.
-    // The last three go through Maps' own interface rather than its store, and
-    // reach a different set: the Places library and guide membership, neither of
-    // which the SQL lane offers. They are registered only when Cupertino is
-    // hosting the server, because the Accessibility grant belongs to the app.
+    // Maps has no scripting dictionary and no App Intents registered on macOS,
+    // so all five writes go through Cupertino's store lane: the app saves each
+    // into the CloudKit-mirrored Core Data store with Maps' own model. They are
+    // registered only when Cupertino hosts the server; run from npm the package
+    // only reads. The place record is never fabricated: Maps is asked to mint
+    // one through the maps:// URL scheme and it is copied. The SQL and
+    // Accessibility routes that came before were retired on 2026-11-11, after
+    // the SQL inserts were watched never to mirror. See docs/maps.md.
     write: [
       "apple_maps_add_favorite",
       "apple_maps_remove_favorite",
@@ -359,7 +358,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_maps_add_place_to_guide",
     ],
     pitch:
-      "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Saves and removes favourites behind the write gate, and — when Cupertino is hosting it — saves places and files them into Guides through the app's own interface.",
+      "The places you saved: favourites, Guides and recents, with real coordinates and addresses — including the ones filed in no Guide, which the app itself only shows in a union view. Behind the write gate, and only in Cupertino, pins and unpins places, saves and removes them, and files them into Guides, each saved through Maps' own data model the way a change made in the app is.",
     withoutGrant: "Nothing at all — Maps is not scriptable, so the grant is the only way in.",
   },
   {

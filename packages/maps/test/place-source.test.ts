@@ -6,13 +6,14 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { MapsWriteError } from "../src/client/errors.js";
 import { PlaceSourceFinder } from "../src/client/place-source.js";
-import { MapsWriteError } from "../src/client/write.js";
 
 /**
  * Finding a place record for the store lane, read-only.
  *
- * Moved and adapted from `write.test.ts`'s seeding and de-duplication cases.
+ * Moved and adapted from the retired SQL route's seeding and de-duplication
+ * cases (its `write.test.ts`, deleted 2026-11-11).
  * The difference is what comes back: not the record to copy, but the OWNING
  * item's `ZIDENTIFIER` and its kind, which is all the Swift lane needs to fetch
  * the record through Maps' own model.

@@ -8,13 +8,6 @@ import type { AppleMapsClient } from "../client/maps.js";
 import { STORE_WRITE_TOOLS } from "./store-writes.js";
 import { wrap } from "./util.js";
 
-const SQL_TOOLS = ["apple_maps_add_favorite", "apple_maps_remove_favorite"];
-const AX_TOOLS = [
-  "apple_maps_save_place",
-  "apple_maps_remove_saved_place",
-  "apple_maps_add_place_to_guide",
-];
-
 /**
  * The store lane's own answer, asked only when Cupertino hosts this server. A
  * lane that cannot answer is reported as `{ error }`, never as a failed
@@ -49,12 +42,8 @@ export const buildDiagnostics = async (
   const writeLane = await writeLaneStatus(client);
   const allowWrites = client.config.allowWrites;
   /** The route `tools/index.ts` registered, so this report cannot disagree with it. */
-  const route = !allowWrites ? "off" : hosted ? "store lane" : "sql";
-  const tools = !allowWrites
-    ? []
-    : hosted
-      ? [...STORE_WRITE_TOOLS]
-      : [...SQL_TOOLS, ...(client.axLane ? AX_TOOLS : [])];
+  const route = !allowWrites ? "off" : hosted ? "store lane" : "not hosted";
+  const tools = allowWrites && hosted ? [...STORE_WRITE_TOOLS] : [];
   const base = buildBaseDiagnostics({
     build: BUILD_INFO,
     config: client.config,
@@ -78,40 +67,37 @@ export const buildDiagnostics = async (
       writes: {
         enabled: allowWrites,
         route,
-        lane: hosted
-          ? "Cupertino's store lane: the app saves each write through Core Data with Maps' own " +
-            "model, so it is recorded in persistent history like a change made in Maps. This " +
-            "server only reads the store, to de-duplicate, find a place record to copy, and " +
-            "turn a ref into the identifier the lane fetches by."
-          : "SQL, directly into the Core Data store. Maps ships no scripting dictionary and " +
-            "registers no App Intents on macOS, so run from npm there is no lane where the app " +
-            "performs the write on our behalf. Hosted by Cupertino, the writes go through its " +
-            "store lane instead.",
-        seeding: hosted
-          ? "A place is only real to Maps if it carries a ZMAPITEMSTORAGE record, which nothing " +
-            "here can generate. When no record is already in the store near the coordinate, " +
-            "this server opens maps://?q=<query> (the name alone, no coordinate) through " +
-            "LaunchServices and waits, read-only, for the recent Maps files with a record; the " +
-            "lane then copies that record. The place is therefore left in Recents, and " +
-            "resolving it can take tens of seconds."
-          : "A place is only real to Maps if it carries a ZMAPITEMSTORAGE blob, which this repo " +
-            "cannot generate. Opening maps://?q=<name>&ll=<lat>,<lon> through LaunchServices " +
-            "makes Maps mint one, and that record is copied. The place is therefore left in " +
-            "Recents whether or not the favourite is kept, and resolving it can take tens of " +
-            "seconds.",
-        blastRadius: hosted
-          ? "The store is mirrored by NSPersistentCloudKitContainer, and a lane write goes " +
-            "with it: on the model whose syncMeasured is true, every one of the five was seen " +
-            "on a Mac and an iPhone on 2026-11-11, one with Maps quit. Each one is saved by " +
-            "Cupertino through Maps' own model, never as SQL, and only ever copies a place " +
-            "record Maps minted; a model that does not match the store is refused as " +
-            "incompatible rather than opened."
-          : "The store is mirrored by NSPersistentCloudKitContainer, but these writes are SQL " +
-            "with no persistent history, which is what its exporter reads: the 2026-11-11 " +
-            "watch found such inserts never mirrored, so they stay on this Mac, and Maps " +
-            "itself later converts such favourites into saved places. A malformed row is " +
-            "still Maps' to read. Hence the rule in client/write.ts — never fabricate a place " +
-            "record, only ever copy one Maps wrote.",
+        ...(hosted
+          ? {
+              lane:
+                "Cupertino's store lane, Maps' only write route: the app saves each write " +
+                "through Core Data with Maps' own model, so it is recorded in persistent " +
+                "history like a change made in Maps. This server only reads the store, to " +
+                "de-duplicate, find a place record to copy, and turn a ref into the " +
+                "identifier the lane fetches by.",
+              seeding:
+                "A place is only real to Maps if it carries a ZMAPITEMSTORAGE record, which " +
+                "nothing here can generate. When no record is already in the store near the " +
+                "coordinate, this server opens maps://?q=<query> (the name alone, no " +
+                "coordinate) through LaunchServices and waits, read-only, for the recent Maps " +
+                "files with a record; the lane then copies that record. The place is " +
+                "therefore left in Recents, and resolving it can take tens of seconds.",
+              blastRadius:
+                "The store is mirrored by NSPersistentCloudKitContainer, and a lane write goes " +
+                "with it: on the model whose syncMeasured is true, every one of the five was " +
+                "seen on a Mac and an iPhone on 2026-11-11, one with Maps quit. Each one is " +
+                "saved by Cupertino through Maps' own model and only ever copies a place " +
+                "record Maps minted; a model that does not match the store is refused as " +
+                "incompatible rather than opened.",
+            }
+          : {
+              lane:
+                "none: run from npm, this server writes nothing to Maps, whatever " +
+                "APPLE_MAPS_ALLOW_WRITES says. Maps' writes exist only when Cupertino hosts " +
+                "this server, through its store lane. The route this package wrote through " +
+                "itself was retired on 2026-11-11: its inserts were watched never to reach " +
+                "iCloud (docs/maps.md).",
+            }),
         tools,
       },
       writeLane,

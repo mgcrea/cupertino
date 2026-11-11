@@ -11,14 +11,14 @@ import { z } from "zod";
  * Configuration is environment-only — this server holds no secret at all. Its
  * access is the macOS permission the user granted, which is the whole point.
  *
- * `allowWrites` gates the mutating tools. Maps has no scripting dictionary and
- * no registered App Intents, so the route depends on who runs this server.
- * Hosted by Cupertino, the store lane saves with Maps' own Core Data model, and
- * those saves were measured on 2026-11-11 to reach an iPhone through iCloud.
- * Run from npm, two tools write SQL straight into the store, and the same
- * day's watch found those inserts never mirrored: they stay on this Mac. Both
- * keep one rule: never fabricate a place record, only ever copy one Maps wrote
- * itself. See `docs/maps.md` and `client/write.ts`.
+ * `allowWrites` gates the mutating tools, and only matters when Cupertino
+ * hosts this server. Maps has no scripting dictionary and no registered App
+ * Intents, so its one write route is Cupertino's store lane, which saves with
+ * Maps' own Core Data model; on macOS 27.2 those saves were measured on
+ * 2026-11-11 to reach an iPhone through iCloud. Run from npm there is no lane,
+ * and no write tool is registered whatever this says. The lane keeps one rule:
+ * never fabricate a place record, only ever copy one Maps wrote itself. See
+ * `docs/maps.md`.
  */
 const ConfigSchema = BaseConfigSchema.extend({
   /** Explicit store path. Bypasses discovery — for tests and forensic copies. */

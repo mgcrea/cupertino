@@ -8,7 +8,8 @@ import Foundation
 /// `AccessibilityDriver`, because that is where every synthetic event is posted.
 /// The Node surfaces cannot: they run in another process and reach their apps by
 /// Apple Event, System Events or the Safari extension, none of which passes
-/// through the driver. Only Mail's native lane and Maps' card lane borrow it.
+/// through the driver. Only Mail's native lane borrows it; Maps' card lane did
+/// until its store lane replaced it on 2026-11-11.
 ///
 /// So the app decides from the one thing it sees for every Node call, the tool
 /// name on the wire (`RequestObserver.note`), before the child has done anything.

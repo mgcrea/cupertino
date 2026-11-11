@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.mgcrea/mcp-apple-maps",
   "title": "Apple Maps",
-  "description": "Read and act on Apple Maps — favourites, Guides and recents, writes off by default",
+  "description": "Read Apple Maps — favourites, Guides and recents; writes only when Cupertino hosts it",
   "version": "1.38.0",
   "websiteUrl": "https://cupertino.mgcrea.io",
   "repository": {
@@ -23,7 +23,7 @@
       "environmentVariables": [
         {
           "name": "APPLE_MAPS_ALLOW_WRITES",
-          "description": "Register the mutating tools. Off by default, and the gate decides whether the write tools exist at all rather than merely refusing — an agent with writes off cannot see them.",
+          "description": "Register the five write tools, which exist only when Cupertino hosts this server: run with npx it registers none, as this package writes nothing to Maps on its own. Off by default, and the gate decides whether the write tools exist at all rather than merely refusing.",
           "isRequired": false,
           "isSecret": false
         }
