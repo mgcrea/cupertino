@@ -87,7 +87,11 @@ enum Cell {
     switch self {
     case .null: return NSNull()
     case .integer(let v): return NSNumber(value: v)
-    case .real(let v): return NSNumber(value: v)
+    case .real(let v):
+      // JSON has no infinity or NaN, and JSONSerialization throws on them.
+      if v.isNaN { return "<real nan>" }
+      if v.isInfinite { return v < 0 ? "<real -inf>" : "<real inf>" }
+      return NSNumber(value: v)
     case .text(let n): return "<string len \(n)>"
     case .blob(let d): return "<data len \(d.count)>"
     }
@@ -314,10 +318,22 @@ let txColumns = Set(tableColumns("ATRANSACTION"))
 guard !txColumns.isEmpty, !tableColumns("ACHANGE").isEmpty else {
   fail("no ATRANSACTION/ACHANGE: the store has no persistent history")
 }
+// A transaction's author, bundle id, process and context name are identifiers the app or the
+// system chose, not user data, so they print as text. Current Core Data leaves the text columns
+// (`ZAUTHOR`…) null and keeps the label in `ATRANSACTIONSTRING.ZNAME`, keyed by the `…TS`
+// column; the text column is read only on a store whose schema has no `…TS` column for it.
+let hasStrings = !tableColumns("ATRANSACTIONSTRING").isEmpty
+let txLabelSelects: [(column: String, select: String)] =
+  ["ZAUTHOR", "ZBUNDLEID", "ZCONTEXTNAME", "ZPROCESSID"].compactMap { column in
+    if hasStrings, txColumns.contains(column + "TS") {
+      return (column, "(SELECT s.ZNAME FROM ATRANSACTIONSTRING s WHERE s.Z_PK = t.\(column)TS) AS \(column)")
+    }
+    return txColumns.contains(column) ? (column, "t.\(column) AS \(column)") : nil
+  }
 let txLabels = ["ZAUTHOR": "author", "ZBUNDLEID": "bundle", "ZPROCESSID": "process", "ZCONTEXTNAME": "context"]
-  .filter { txColumns.contains($0.key) }
-let txLabelSQL = txLabels.isEmpty ? nil
-  : "SELECT \(txLabels.keys.sorted().joined(separator: ", ")) FROM ATRANSACTION WHERE Z_PK = ?"
+  .filter { key, _ in txLabelSelects.contains { $0.column == key } }
+let txLabelSQL = txLabelSelects.isEmpty ? nil
+  : "SELECT \(txLabelSelects.map(\.select).joined(separator: ", ")) FROM ATRANSACTION t WHERE t.Z_PK = ?"
 
 let types: [Int64: String] = [0: "insert", 1: "update", 2: "delete"]
 var labelsByTx: [Int64: [String: String]] = [:]
