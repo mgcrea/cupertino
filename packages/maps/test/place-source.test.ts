@@ -114,10 +114,18 @@ const collectionItem = (
     VALUES (${pk}, ${ent}, 1, ${mapPk}, ${lat}, ${lon}, '${name}', ${id ? blob(id) : "NULL"});
 `;
 
-const recent = (pk: number, mapPk: number, lat: number, lon: number, id: string | null) => `
+/** A recent; `ent` other than `HistoryPlaceItem` makes a history row that is not a place. */
+const recent = (
+  pk: number,
+  mapPk: number,
+  lat: number,
+  lon: number,
+  id: string | null,
+  ent: number = ENT.historyPlaceItem,
+) => `
   ${mapItem(mapPk, lat, lon)}
   INSERT INTO ZHISTORYITEM (Z_PK, Z_ENT, Z_OPT, ZMAPITEM, ZLATITUDE1, ZLONGITUDE1, ZIDENTIFIER)
-    VALUES (${pk}, ${ENT.historyPlaceItem}, 1, ${mapPk}, ${lat}, ${lon}, ${id ? blob(id) : "NULL"});
+    VALUES (${pk}, ${ent}, 1, ${mapPk}, ${lat}, ${lon}, ${id ? blob(id) : "NULL"});
 `;
 
 /** Stands in for Maps: never called when a donor is already in the store. */
@@ -221,6 +229,33 @@ describe("find: a record already in the store", () => {
     expect(source).toMatchObject({ kind: "savedPlace", id: SAVED_ID });
   });
 
+  /* The order is favourite, saved place, recent; pinned so the answer is deterministic. */
+  it("ranks a favourite above a saved place and a recent at the same spot", async () => {
+    const path = emptyStore();
+    exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
+    exec(path, collectionItem(1, ENT.collectionPlaceItem, 2, 48.1, 2.2, "Test Café", SAVED_ID));
+    exec(path, favorite(1, 3, 48.1, 2.2, "Test Café", FAV_ID));
+    const finder = new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled });
+    const q = { query: "Test Café", latitude: 48.1, longitude: 2.2 };
+    expect(await finder.find(q)).toMatchObject({ kind: "favorite", id: FAV_ID });
+    exec(path, `DELETE FROM ZFAVORITEITEM`);
+    expect(await finder.find(q)).toMatchObject({ kind: "savedPlace", id: SAVED_ID });
+  });
+
+  /* A history row that is not a place (a search, a route) is not a recent the lane can copy. */
+  it("does not take a non-place history row as a recent", async () => {
+    const path = emptyStore();
+    exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID, ENT.historyItem));
+    const opened: string[] = [];
+    const source = await new PlaceSourceFinder({
+      storePath: path,
+      openUrl: seedsAt(path, 48.1001, 2.2001, opened),
+      seedTimeoutMs: 2000,
+    }).find({ query: "Test Café", latitude: 48.1, longitude: 2.2 });
+    expect(opened).toHaveLength(1);
+    expect(source.id).toBe(SEEDED_ID);
+  });
+
   /* A transit line filed in a guide is not a saved place; the lane would not find it. */
   it("does not take a transit item as a saved place", async () => {
     const path = emptyStore();
@@ -237,9 +272,9 @@ describe("find: a record already in the store", () => {
 });
 
 describe("find: seeding", () => {
-  it("opens the query and polls Recents above the watermark", async () => {
+  it("opens the query and polls Recents", async () => {
     const path = emptyStore();
-    // An older recent elsewhere, below the watermark: never the answer.
+    // An older recent elsewhere. Not what this test guards: see the next one.
     exec(path, recent(1, 1, 10.0, 10.0, RECENT_ID));
     const opened: string[] = [];
     const source = await new PlaceSourceFinder({
@@ -259,6 +294,34 @@ describe("find: seeding", () => {
     expect(opened).toEqual(["maps://?q=Test%20Tower"]);
     // No coordinate in the seed URL: with one, Maps files no recent.
     expect(opened[0]).not.toContain("ll=");
+  });
+
+  /*
+   * The watermark is the only guard on a query with no coordinate: that path has
+   * no 250 m check, so without it a recent the user made last week would be
+   * returned as what Maps just resolved.
+   */
+  it("never returns a recent that was there before the seed", async () => {
+    const path = emptyStore();
+    exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
+    const attempt = new PlaceSourceFinder({
+      storePath: path,
+      openUrl: () => {},
+      seedTimeoutMs: 300,
+    }).find({ query: "Test Tower" });
+    await expect(attempt).rejects.toThrow(/^Maps did not produce a place record for "Test Tower"/);
+  });
+
+  /* Maps filing a non-place history row (a search) is not a seeded place. */
+  it("does not take a non-place history row as the seeded recent", async () => {
+    const path = emptyStore();
+    const openUrl = () => exec(path, recent(1, 1, 51.5007, -0.1246, SEEDED_ID, ENT.historyItem));
+    const attempt = new PlaceSourceFinder({ storePath: path, openUrl, seedTimeoutMs: 300 }).find({
+      query: "Test Tower",
+      latitude: 51.5007,
+      longitude: -0.1246,
+    });
+    await expect(attempt).rejects.toThrow(/^Maps did not produce a place record for "Test Tower"/);
   });
 
   it("seeds with no coordinate at all, and accepts what Maps resolved", async () => {
@@ -314,19 +377,25 @@ describe("find: seeding", () => {
     const path = emptyStore();
     exec(path, favorite(1, 1, 48.1, 2.2, "Test Café", FAV_ID));
     const before = new DatabaseSync(path, { readOnly: true });
-    const count = () =>
-      Number(
-        (before.prepare(`SELECT COUNT(*) AS c FROM ZMIXINMAPITEM`).get() as { c: number | bigint })
-          .c,
-      );
-    const rows = count();
-    await new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled }).find({
-      query: "Test Café",
-      latitude: 48.1,
-      longitude: 2.2,
-    });
-    expect(count()).toBe(rows);
-    before.close();
+    try {
+      const count = () =>
+        Number(
+          (
+            before.prepare(`SELECT COUNT(*) AS c FROM ZMIXINMAPITEM`).get() as {
+              c: number | bigint;
+            }
+          ).c,
+        );
+      const rows = count();
+      await new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled }).find({
+        query: "Test Café",
+        latitude: 48.1,
+        longitude: 2.2,
+      });
+      expect(count()).toBe(rows);
+    } finally {
+      before.close();
+    }
   });
 });
 
