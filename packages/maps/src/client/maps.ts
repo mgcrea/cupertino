@@ -4,6 +4,7 @@ import type { Config } from "../config.js";
 import { MapsAxLane } from "./ax.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import { MapsStoreUnavailableError } from "./errors.js";
+import { MapsLane } from "./lane.js";
 import { locateStore, type LocateResult } from "./locate.js";
 import { PlaceSourceFinder } from "./place-source.js";
 import { encodeCollectionRef, encodePlaceRef, type PlaceKind } from "./ref.js";
@@ -79,6 +80,17 @@ export type CreateClientOptions = {
    * not. Undefined means "ask the environment", which is what the server does.
    */
   ax?: MapsAxLane | null | undefined;
+  /**
+   * The store lane, for tests. The same seam as `ax`: null pins the npm
+   * surface, a lane opened on a stub socket drives the lane tools, and
+   * undefined asks the environment.
+   */
+  lane?: MapsLane | null | undefined;
+  /**
+   * How a place is opened in Maps to seed a record, for tests, so a suite never
+   * launches the app. Undefined is `open -g`.
+   */
+  openUrl?: OpenUrl | undefined;
 };
 
 /**
@@ -105,6 +117,14 @@ export class AppleMapsClient {
    * registering the tools that need it.
    */
   readonly #ax: MapsAxLane | null;
+
+  /**
+   * The store lane, when this server is hosted by Cupertino: the five writes,
+   * saved by the app with Maps' own model. Null when it is not, which is the
+   * supported case, as for `#ax`. Opening it connects nothing.
+   */
+  readonly #lane: MapsLane | null;
+  readonly #openUrl: OpenUrl | undefined;
   readonly #logger: Logger | undefined;
   readonly #home: string | undefined;
 
@@ -115,6 +135,8 @@ export class AppleMapsClient {
   constructor(opts: CreateClientOptions) {
     this.#config = opts.config;
     this.#ax = opts.ax !== undefined ? opts.ax : MapsAxLane.open();
+    this.#lane = opts.lane !== undefined ? opts.lane : MapsLane.open();
+    this.#openUrl = opts.openUrl;
     this.#logger = opts.logger;
     this.#home = opts.home;
   }
@@ -125,6 +147,10 @@ export class AppleMapsClient {
 
   get axLane(): MapsAxLane | null {
     return this.#ax;
+  }
+
+  get lane(): MapsLane | null {
+    return this.#lane;
   }
 
   located(): LocateResult {
@@ -160,7 +186,7 @@ export class AppleMapsClient {
    * located store, or an error explaining why not. It writes nothing: the lane
    * does the writing, through Maps' own model.
    */
-  placeSource(openUrl?: OpenUrl): PlaceSourceFinder {
+  placeSource(openUrl: OpenUrl | undefined = this.#openUrl): PlaceSourceFinder {
     const located = this.located();
     if (!located.readable || !located.storePath) {
       throw new MapsStoreUnavailableError(located.reason ?? "Maps' store could not be opened.");
@@ -356,5 +382,6 @@ export class AppleMapsClient {
   close(): void {
     this.#store?.close();
     this.#store = null;
+    this.#lane?.close();
   }
 }

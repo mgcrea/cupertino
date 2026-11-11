@@ -3,8 +3,34 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import { BUILD_INFO } from "../build-info.js";
+import type { LaneStatus } from "../client/lane.js";
 import type { AppleMapsClient } from "../client/maps.js";
+import { STORE_WRITE_TOOLS } from "./store-writes.js";
 import { wrap } from "./util.js";
+
+const SQL_TOOLS = ["apple_maps_add_favorite", "apple_maps_remove_favorite"];
+const AX_TOOLS = [
+  "apple_maps_save_place",
+  "apple_maps_remove_saved_place",
+  "apple_maps_add_place_to_guide",
+];
+
+/**
+ * The store lane's own answer, asked only when Cupertino hosts this server. A
+ * lane that cannot answer is reported as `{ error }`, never as a failed
+ * diagnostics call: this report is where a person looks when the lane is the
+ * thing that broke. As Voice Memos' diagnostics does.
+ */
+const writeLaneStatus = async (
+  client: AppleMapsClient,
+): Promise<LaneStatus | { error: string } | null> => {
+  if (!client.lane) return null;
+  try {
+    return await client.lane.status();
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+};
 
 /**
  * Build the report.
@@ -19,6 +45,16 @@ export const buildDiagnostics = async (
 ): Promise<Record<string, unknown>> => {
   const status = client.status();
   const located = status.located;
+  const hosted = client.lane !== null;
+  const writeLane = await writeLaneStatus(client);
+  const allowWrites = client.config.allowWrites;
+  /** The route `tools/index.ts` registered, so this report cannot disagree with it. */
+  const route = hosted ? "store lane" : "sql";
+  const tools = !allowWrites
+    ? []
+    : hosted
+      ? [...STORE_WRITE_TOOLS]
+      : [...SQL_TOOLS, ...(client.axLane ? AX_TOOLS : [])];
   const base = buildBaseDiagnostics({
     build: BUILD_INFO,
     config: client.config,
@@ -40,11 +76,17 @@ export const buildDiagnostics = async (
       },
       appleEvents: "none — Maps is not scriptable",
       writes: {
-        enabled: client.config.allowWrites,
-        lane:
-          "SQL, directly into the Core Data store. Maps ships no scripting dictionary and " +
-          "registers no App Intents on macOS, so there is no lane where the app performs the " +
-          "write on our behalf — this is the only surface here that writes its own store.",
+        enabled: allowWrites,
+        route,
+        lane: hosted
+          ? "Cupertino's store lane: the app saves each write through Core Data with Maps' own " +
+            "model, so it is recorded in persistent history like a change made in Maps. This " +
+            "server only reads the store, to de-duplicate, find a place record to copy, and " +
+            "turn a ref into the identifier the lane fetches by."
+          : "SQL, directly into the Core Data store. Maps ships no scripting dictionary and " +
+            "registers no App Intents on macOS, so run from npm there is no lane where the app " +
+            "performs the write on our behalf. Hosted by Cupertino, the writes go through its " +
+            "store lane instead.",
         seeding:
           "A place is only real to Maps if it carries a ZMAPITEMSTORAGE blob, which this repo " +
           "cannot generate. Opening maps://?q=<name>&ll=<lat>,<lon> through LaunchServices makes " +
@@ -55,10 +97,16 @@ export const buildDiagnostics = async (
           "to be told. A malformed row is not a local mistake: it reaches every device on the " +
           "account as soon as Maps next runs. Hence the rule in client/write.ts — never " +
           "fabricate a place record, only ever copy one Maps wrote.",
-        tools: client.config.allowWrites
-          ? ["apple_maps_add_favorite", "apple_maps_remove_favorite"]
-          : [],
+        tools,
       },
+      writeLane,
+      ...(hosted
+        ? {}
+        : {
+            writeLaneNote:
+              "not hosted by Cupertino: the store lane, and the writes that go through it, " +
+              "need the app",
+          }),
     },
     store: {
       path: located.storePath,
