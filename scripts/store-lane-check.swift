@@ -293,10 +293,14 @@ struct StoreLaneCheck {
   /// The number of history transactions, and the last one's author, changed attribute names per
   /// change, and changes by row (sorted by row; a change that is not an update reads
   /// `"insert"` or `"delete"` as its only property).
-  static func history(_ storeURL: URL) throws -> (
-    count: Int, author: String?, changes: [[String]], rows: [HistoryChange]
-  ) {
-    try voiceMemos(storeURL) { context in
+  typealias History = (count: Int, author: String?, changes: [[String]], rows: [HistoryChange])
+
+  /// `History` of the store at `storeURL`, read with `model`; `rowName` names each change's row.
+  static func history(
+    _ storeURL: URL, model: NSManagedObjectModel,
+    rowName: (NSPersistentHistoryChange, NSManagedObjectContext) throws -> String
+  ) throws -> History {
+    try reading(storeURL, model: model) { context in
       let request = NSPersistentHistoryChangeRequest.fetchHistory(after: .distantPast)
       request.resultType = .transactionsAndChanges
       let result = try context.execute(request) as? NSPersistentHistoryResult
@@ -304,17 +308,22 @@ struct StoreLaneCheck {
       let last = transactions.last?.changes ?? []
       let changes = last.map { ($0.updatedProperties ?? []).map(\.name).sorted() }
       let rows = try last.map { change in
-        let object = try context.existingObject(with: change.changedObjectID)
-        let row =
-          (object.value(forKey: object.entity.name == "Folder" ? "uuid" : "uniqueID") as? String)
-          ?? "?"
         let properties =
           change.changeType == .update
           ? (change.updatedProperties ?? []).map(\.name).sorted()
           : [change.changeType == .insert ? "insert" : "delete"]
-        return HistoryChange(row: row, properties: properties)
+        return HistoryChange(row: try rowName(change, context), properties: properties)
       }.sorted { $0.row < $1.row }
       return (transactions.count, transactions.last?.author, changes, rows)
+    }
+  }
+
+  /// Voice Memos' history: a recording's row is its `uniqueID`, a folder's its `uuid`.
+  static func history(_ storeURL: URL) throws -> History {
+    try history(storeURL, model: voiceMemosModel()) { change, context in
+      let object = try context.existingObject(with: change.changedObjectID)
+      return (object.value(forKey: object.entity.name == "Folder" ? "uuid" : "uniqueID") as? String)
+        ?? "?"
     }
   }
 
@@ -324,9 +333,17 @@ struct StoreLaneCheck {
   static func oneTransaction(_ storeURL: URL, _ label: String, _ call: () throws -> Void) throws
     -> [HistoryChange]
   {
-    let before = try history(storeURL).count
+    try oneTransaction(storeURL, label, reader: { try history($0) }, call)
+  }
+
+  /// `oneTransaction`, with the history read by `reader`.
+  @discardableResult
+  static func oneTransaction(
+    _ storeURL: URL, _ label: String, reader: (URL) throws -> History, _ call: () throws -> Void
+  ) throws -> [HistoryChange] {
+    let before = try reader(storeURL).count
     try call()
-    let after = try history(storeURL)
+    let after = try reader(storeURL)
     try expect(
       after.count == before + 1, "\(label) saved \(after.count - before) history transactions")
     try expect(after.author == "cupertino", "\(label) author is \(after.author ?? "nil")")
@@ -1037,6 +1054,7 @@ struct StoreLaneCheck {
     }
 
     voiceMemosCases()
+    mapsCases()
 
     // Not a `defer`: `exit` never returns, so a deferred removal would never run.
     try? FileManager.default.removeItem(at: scratch)

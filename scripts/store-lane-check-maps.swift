@@ -1,0 +1,938 @@
+import CoreData
+import Foundation
+
+/// The Maps group of `make store-lane-check`: `MapsWriter` against a store built from the real
+/// `DataModel_0_0_1.momd` in a temporary folder, holding synthetic places only.
+///
+/// Each write is held to what Maps itself saved for the same step, watched 2026-11-11
+/// (`docs/maps.md`, "What Maps changes"): one transaction, the rows it names, and the exact set
+/// of attributes a new item holds.
+extension StoreLaneCheck {
+  // MARK: - The fixture
+
+  /// The fixture's items, by the name the history labels use.
+  enum MapsID {
+    static let recent = UUID(uuidString: "5E0C0000-0000-4000-8000-000000000001")!
+    static let bareRecent = UUID(uuidString: "5E0C0000-0000-4000-8000-000000000002")!
+    static let favorite = UUID(uuidString: "5E0C0000-0000-4000-8000-000000000003")!
+    static let saved = UUID(uuidString: "5E0C0000-0000-4000-8000-000000000004")!
+    static let guide = UUID(uuidString: "5E0C0000-0000-4000-8000-000000000005")!
+    static let twinA = UUID(uuidString: "5E0C0000-0000-4000-8000-000000000006")!
+    static let twinB = UUID(uuidString: "5E0C0000-0000-4000-8000-000000000007")!
+
+    static let names: [UUID: String] = [
+      recent: "recent", bareRecent: "bareRecent", favorite: "favorite", saved: "saved",
+      guide: "guide", twinA: "twinA", twinB: "twinB",
+    ]
+  }
+
+  /// Where each fixture item stands. The recent's is the watch's example pin.
+  static let recentAt = (48.8553108, 2.3158494)
+  static let favoriteAt = (41.4036, 2.1744)
+  static let savedAt = (51.5007, -0.1246)
+
+  /// The watch's newest pin: new pins land 5e7 above it.
+  static let favoritePosition: Int64 = 9_218_868_438_090_581_837
+  static let favoriteCreated = Date(timeIntervalSinceReferenceDate: 780_000_000)
+
+  /// 1–2 KB of arbitrary bytes, a different run per record: never a real place record.
+  static func syntheticRecord(_ seed: Int) -> Data {
+    Data((0..<(1_000 + seed * 300)).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ seed &* 97) })
+  }
+
+  /// The real Maps model, copied as the writer loads it (Maps needs no patch).
+  static func mapsModel() throws -> NSManagedObjectModel {
+    guard let loaded = NSManagedObjectModel(contentsOf: MapsWriter.modelURL),
+      let model = loaded.copy() as? NSManagedObjectModel
+    else { throw Failure(why: "the Maps model did not load") }
+    return model
+  }
+
+  /// A Maps store from the real model, synthetic rows only: a recent with a record and one
+  /// without, a favourite, a saved place filed in "Synthetic guide", and two Guides titled
+  /// "Synthetic twin".
+  static func makeMapsStore(at url: URL, model: NSManagedObjectModel) throws {
+    let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+    let store = try coordinator.addPersistentStore(type: .sqlite, at: url, options: storeOptions)
+    let context = NSManagedObjectContext(.privateQueue)
+    context.persistentStoreCoordinator = coordinator
+    try withExtendedLifetime(model) {
+      try context.performAndWait {
+        @discardableResult
+        func insert(_ entity: String, _ values: [String: Any]) -> NSManagedObject {
+          let object = NSEntityDescription.insertNewObject(forEntityName: entity, into: context)
+          for (key, value) in values { object.setValue(value, forKey: key) }
+          return object
+        }
+        func record(_ seed: Int, _ at: (Double, Double)) -> NSManagedObject {
+          insert(
+            "MixinMapItem",
+            ["mapItemStorage": syntheticRecord(seed), "latitude": at.0, "longitude": at.1])
+        }
+        let created = Date(timeIntervalSinceReferenceDate: 779_000_000)
+        insert(
+          "HistoryPlaceItem",
+          [
+            "identifier": MapsID.recent, "createTime": created, "modificationTime": created,
+            "latitude": recentAt.0, "longitude": recentAt.1, "muid": Int64(1001),
+            "mapItem": record(1, recentAt),
+          ])
+        insert(
+          "HistoryPlaceItem",
+          [
+            "identifier": MapsID.bareRecent, "createTime": created, "latitude": 40.0,
+            "longitude": -3.0,
+          ])
+        insert(
+          "FavoriteItem",
+          [
+            "identifier": MapsID.favorite, "createTime": favoriteCreated,
+            "modificationTime": favoriteCreated, "mapItemLastRefreshed": favoriteCreated,
+            "latitude": favoriteAt.0, "longitude": favoriteAt.1,
+            "mapItemName": "Synthetic favourite", "mapItemAddress": "1 Synthetic Street",
+            "mapItemCategory": "Synthetic category", "muid": Int64(1002),
+            "shortcutIdentifier": "41.40360,2.17440", "positionIndex": favoritePosition,
+            "type": Int16(1), "version": Int16(2), "source": Int16(0), "hidden": false,
+            "mapItem": record(2, favoriteAt),
+          ])
+        let guide = insert(
+          "Collection",
+          [
+            "identifier": MapsID.guide, "title": "Synthetic guide", "createTime": created,
+            "modificationTime": created,
+          ])
+        for twin in [MapsID.twinA, MapsID.twinB] {
+          insert(
+            "Collection",
+            [
+              "identifier": twin, "title": "Synthetic twin", "createTime": created,
+              "modificationTime": created,
+            ])
+        }
+        let saved = insert(
+          "CollectionPlaceItem",
+          [
+            "identifier": MapsID.saved, "createTime": created, "modificationTime": created,
+            "latitude": savedAt.0, "longitude": savedAt.1,
+            "mapItemName": "Synthetic saved place", "mapItemAddress": "2 Synthetic Road",
+            "mapItemCategory": "Synthetic category", "muid": Int64(1003),
+            "mapItem": record(3, savedAt),
+          ])
+        saved.mutableSetValue(forKey: "collections").add(guide)
+        try context.save()
+      }
+    }
+    try coordinator.remove(store)
+  }
+
+  static func mapsFixture(_ name: String) throws -> (MapsWriter, URL) {
+    let storeURL = try folder("maps-\(name)").appendingPathComponent("MapsSync_0.0.1")
+    try makeMapsStore(at: storeURL, model: mapsModel())
+    return (MapsWriter(store: MapsWriter.store(at: storeURL)), storeURL)
+  }
+
+  /// Runs `body` on the fixture on an independent coordinator, saving if it changed anything.
+  static func maps<T>(_ storeURL: URL, _ body: (NSManagedObjectContext) throws -> T) throws -> T {
+    try reading(storeURL, model: mapsModel()) { context in
+      let result = try body(context)
+      if context.hasChanges { try context.save() }
+      return result
+    }
+  }
+
+  /// The one `entity` named `uuid`, as the check reads it (not through the writer).
+  static func mapsRow(_ entity: String, _ uuid: UUID, in context: NSManagedObjectContext) throws
+    -> NSManagedObject
+  {
+    let request = NSFetchRequest<NSManagedObject>(entityName: entity)
+    request.predicate = NSPredicate(format: "identifier == %@", uuid as NSUUID)
+    let rows = try context.fetch(request)
+    guard rows.count == 1, let row = rows.first else {
+      throw Failure(why: "\(rows.count) \(entity) rows named \(uuid)")
+    }
+    return row
+  }
+
+  /// `entity` `uuid`'s attributes that hold a value, and those values.
+  static func mapsValues(_ storeURL: URL, _ entity: String, _ uuid: UUID) throws -> [String: Any] {
+    try maps(storeURL) { context in
+      let row = try mapsRow(entity, uuid, in: context)
+      return row.entity.attributesByName.keys.reduce(into: [:]) { values, key in
+        if let value = row.value(forKey: key) { values[key] = value }
+      }
+    }
+  }
+
+  /// `entity` `uuid`'s record bytes, nil without a record.
+  static func mapsRecord(_ storeURL: URL, _ entity: String, _ uuid: UUID) throws -> Data? {
+    try maps(storeURL) { context in
+      let record = try mapsRow(entity, uuid, in: context).value(forKey: "mapItem")
+      return (record as? NSManagedObject)?.value(forKey: "mapItemStorage") as? Data
+    }
+  }
+
+  static func mapsCount(_ storeURL: URL, _ entity: String) throws -> Int {
+    try maps(storeURL) { try $0.count(for: NSFetchRequest<NSManagedObject>(entityName: entity)) }
+  }
+
+  static func placesCount(_ storeURL: URL, _ guide: UUID) throws -> Int? {
+    try maps(storeURL) {
+      (try mapsRow("Collection", guide, in: $0).value(forKey: "placesCount") as? NSNumber)?.intValue
+    }
+  }
+
+  /// The Guides `uuid` (a saved place) is filed in, by fixture name.
+  static func guidesOf(_ storeURL: URL, _ uuid: UUID) throws -> Set<String> {
+    try maps(storeURL) { context in
+      let collections =
+        try mapsRow("CollectionPlaceItem", uuid, in: context)
+        .value(forKey: "collections") as? Set<NSManagedObject> ?? []
+      return Set(
+        collections.map { guide in
+          (guide.value(forKey: "identifier") as? UUID).flatMap { MapsID.names[$0] } ?? "?"
+        })
+    }
+  }
+
+  /// A label for every object now in the store, by its object id: `"<Entity> <name>"`, the name
+  /// from the fixture or `extra`, and a record by its owner's name. Taken before a call, so a
+  /// row the call deletes is still named in its history.
+  static func mapsLabels(_ storeURL: URL, extra: [UUID: String] = [:]) throws -> [URL: String] {
+    try maps(storeURL) { context in
+      var labels: [URL: String] = [:]
+      func name(_ object: NSManagedObject?) -> String {
+        guard let object, let uuid = object.value(forKey: "identifier") as? UUID else {
+          return "?"
+        }
+        return MapsID.names[uuid] ?? extra[uuid] ?? "unnamed"
+      }
+      for entity in ["FavoriteItem", "CollectionPlaceItem", "HistoryPlaceItem", "Collection"] {
+        for object in try context.fetch(NSFetchRequest<NSManagedObject>(entityName: entity)) {
+          labels[object.objectID.uriRepresentation()] = "\(entity) \(name(object))"
+        }
+      }
+      for record in try context.fetch(NSFetchRequest<NSManagedObject>(entityName: "MixinMapItem")) {
+        let owner = ["favoriteItem", "collectionPlaceItem", "historyPlaceItem"].lazy
+          .compactMap { record.value(forKey: $0) as? NSManagedObject }.first
+        labels[record.objectID.uriRepresentation()] = "MixinMapItem \(name(owner))"
+      }
+      return labels
+    }
+  }
+
+  /// The fixture's history, each row named by `labels`, and a row it does not name as
+  /// `"<Entity> new"`.
+  static func mapsHistory(_ storeURL: URL, labels: [URL: String]) throws -> History {
+    try history(storeURL, model: mapsModel()) { change, _ in
+      labels[change.changedObjectID.uriRepresentation()]
+        ?? "\(change.changedObjectID.entity.name ?? "?") new"
+    }
+  }
+
+  /// `call` saved one transaction, by `cupertino`, whose changes are exactly `expected`.
+  static func expectMapsHistory(
+    _ storeURL: URL, _ label: String, extra: [UUID: String] = [:], _ expected: [HistoryChange],
+    _ call: () throws -> Void
+  ) throws {
+    let labels = try mapsLabels(storeURL, extra: extra)
+    let rows = try oneTransaction(
+      storeURL, label, reader: { try mapsHistory($0, labels: labels) }, call)
+    let sorted = expected.sorted { $0.row < $1.row }
+    try expect(rows == sorted, "\(label) recorded \(rows), not \(sorted)")
+  }
+
+  /// `call` saved nothing.
+  static func expectNoMapsHistory(_ storeURL: URL, _ label: String, _ call: () throws -> Void)
+    throws
+  {
+    let before = try mapsHistory(storeURL, labels: [:]).count
+    try call()
+    let after = try mapsHistory(storeURL, labels: [:]).count
+    try expect(after == before, "\(label) saved \(after - before) history transactions")
+  }
+
+  static func inserted(_ entity: String) -> HistoryChange {
+    HistoryChange(row: "\(entity) new", properties: ["insert"])
+  }
+
+  /// What every new item holds, beside the columns copied from its source.
+  static let newItemKeys: Set<String> = [
+    "identifier", "createTime", "modificationTime", "mapItemLastRefreshed", "latitude",
+    "longitude", "positionIndex", "type",
+  ]
+  static let newFavoriteKeys = newItemKeys.union([
+    "shortcutIdentifier", "version", "source", "hidden",
+  ])
+  static let newSavedPlaceKeys = newItemKeys.union(["origin", "droppedPinFloorOrdinal"])
+
+  static func uuid(_ result: MapsWriter.Result) throws -> UUID {
+    guard let uuid = UUID(uuidString: result.id) else {
+      throw Failure(why: "the result's id \(result.id) is not a uuid")
+    }
+    return uuid
+  }
+
+  static func int(_ values: [String: Any], _ key: String) -> Int64? {
+    (values[key] as? NSNumber)?.int64Value
+  }
+
+  /// A coordinate `metres` north of `at`.
+  static func north(of at: (Double, Double), metres: Double) -> (Double, Double) {
+    (at.0 + metres / 111_195, at.1)
+  }
+
+  /// What the writer and the fixture touch. A model without one of these (another macOS's Maps)
+  /// cannot exercise the writer, so the group skips rather than fails.
+  static let mapsNeeds: [String: [String]] = [
+    "FavoriteItem": [
+      "identifier", "createTime", "modificationTime", "mapItemLastRefreshed", "latitude",
+      "longitude", "mapItemName", "mapItemAddress", "mapItemCategory", "muid",
+      "shortcutIdentifier", "positionIndex", "type", "version", "source", "hidden", "customName",
+      "originatingAddressString", "mapItem",
+    ],
+    "CollectionPlaceItem": [
+      "identifier", "createTime", "modificationTime", "mapItemLastRefreshed", "latitude",
+      "longitude", "mapItemName", "mapItemAddress", "mapItemCategory", "muid", "type", "origin",
+      "positionIndex", "droppedPinFloorOrdinal", "customName", "droppedPinCoordinate",
+      "placeItemNote", "originalIdentifier", "mapItem", "collections",
+    ],
+    "HistoryPlaceItem": [
+      "identifier", "createTime", "modificationTime", "latitude", "longitude", "muid", "mapItem",
+    ],
+    "MixinMapItem": [
+      "mapItemStorage", "latitude", "longitude", "favoriteItem", "collectionPlaceItem",
+      "historyPlaceItem",
+    ],
+    "Collection": [
+      "identifier", "title", "createTime", "modificationTime", "places", "placesCount",
+    ],
+  ]
+
+  static func mapsLacks(_ model: NSManagedObjectModel) -> [String] {
+    mapsNeeds.flatMap { entity, names in
+      let properties = model.entitiesByName[entity]?.propertiesByName ?? [:]
+      return names.filter { properties[$0] == nil }.map { "\(entity).\($0)" }
+    }.sorted()
+  }
+
+  /// The `.momd`'s checksum for `DataModel_0_0_1`, read here rather than through the opener.
+  static func mapsChecksum() -> String? {
+    let info = MapsWriter.modelURL.appendingPathComponent("VersionInfo.plist")
+    guard let data = try? Data(contentsOf: info),
+      let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
+        as? [String: Any],
+      let checksums = plist["NSManagedObjectModel_VersionChecksums"] as? [String: Any]
+    else { return nil }
+    return checksums["DataModel_0_0_1"] as? String
+  }
+
+  // MARK: - The cases
+
+  static func mapsCases() {
+    guard FileManager.default.fileExists(atPath: MapsWriter.modelURL.path) else {
+      print("SKIP maps: model not on this machine")
+      return
+    }
+    guard let model = try? mapsModel() else {
+      print("FAIL maps: the model is on this machine but did not load")
+      failures += 1
+      return
+    }
+    let lacks = mapsLacks(model)
+    guard lacks.isEmpty else {
+      print("SKIP maps: the model lacks \(lacks.joined(separator: ", "))")
+      return
+    }
+
+    check("addFavoriteCopiesRecord") {
+      let (writer, storeURL) = try mapsFixture("add-favorite")
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "addFavorite", [inserted("FavoriteItem"), inserted("MixinMapItem")]
+      ) {
+        result = try writer.addFavorite(
+          source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
+          near: recentAt)
+      }
+      guard let result else { throw Failure(why: "addFavorite returned nothing") }
+      try expect(result.created, "created is false")
+      try expect(result.filed == nil, "filed is \(String(describing: result.filed))")
+      let id = try uuid(result)
+      let values = try mapsValues(storeURL, "FavoriteItem", id)
+      // A recent has only `muid` among the display columns: the name is the caller's, and the
+      // address and category stay nil.
+      let keys = newFavoriteKeys.union(["mapItemName", "muid"])
+      try expect(Set(values.keys) == keys, "the favourite holds \(values.keys.sorted())")
+      try expect(result.changed == keys.sorted(), "changed is \(result.changed)")
+      try expect(values["mapItemName"] as? String == "Synthetic recent place", "mapItemName")
+      try expect(int(values, "muid") == 1001, "muid is \(int(values, "muid") ?? -1)")
+      try expect(int(values, "type") == 1, "type is \(int(values, "type") ?? -1)")
+      try expect(int(values, "version") == 2, "version is \(int(values, "version") ?? -1)")
+      try expect(int(values, "source") == 0, "source is \(int(values, "source") ?? -1)")
+      try expect(values["hidden"] as? Bool == false, "hidden is \(values["hidden"] ?? "nil")")
+      try expect(
+        values["shortcutIdentifier"] as? String == "48.85530,2.31580",
+        "shortcutIdentifier is \(values["shortcutIdentifier"] ?? "nil")")
+      try expect(
+        int(values, "positionIndex") == favoritePosition + 50_000_000,
+        "positionIndex is \(int(values, "positionIndex") ?? -1)")
+      try expect(
+        values["latitude"] as? Double == recentAt.0 && values["longitude"] as? Double == recentAt.1,
+        "the coordinate is \(values["latitude"] ?? "nil"), \(values["longitude"] ?? "nil")")
+      let now = Date()
+      for key in ["createTime", "modificationTime", "mapItemLastRefreshed"] {
+        let date = values[key] as? Date
+        try expect(
+          date.map { abs($0.timeIntervalSince(now)) < 60 } == true, "\(key) is \(date as Any)")
+      }
+      let record = try mapsRecord(storeURL, "FavoriteItem", id)
+      try expect(record == syntheticRecord(1), "the record is not the recent's bytes")
+      try expect(
+        try mapsRecord(storeURL, "HistoryPlaceItem", MapsID.recent) == syntheticRecord(1),
+        "the recent's own record changed")
+      try expect(try mapsCount(storeURL, "MixinMapItem") == 4, "not one new MixinMapItem")
+    }
+
+    check("addFavoriteIsIdempotent") {
+      let (writer, storeURL) = try mapsFixture("add-favorite-again")
+      let first = try writer.addFavorite(
+        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
+        near: nil)
+      var again: MapsWriter.Result?
+      try expectNoMapsHistory(storeURL, "a second addFavorite") {
+        again = try writer.addFavorite(
+          source: .recent, sourceId: MapsID.recent.uuidString, name: "Another name",
+          near: recentAt)
+      }
+      try expect(again?.id == first.id, "the second call answers \(again?.id ?? "nil")")
+      try expect(again?.created == false, "the second call created one")
+      try expect(again?.changed == [], "the second call changed \(again?.changed ?? [])")
+      // The fixture favourite, from itself: already there.
+      let own = try writer.addFavorite(
+        source: .favorite, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+      try expect(
+        own.id.lowercased() == MapsID.favorite.uuidString.lowercased() && !own.created,
+        "the favourite from itself answers \(own)")
+      try expect(try mapsCount(storeURL, "FavoriteItem") == 2, "a duplicate favourite was saved")
+    }
+
+    check("addFavoriteRefusesFarResolution") {
+      let (writer, storeURL) = try mapsFixture("add-favorite-far")
+      try expectNoMapsHistory(storeURL, "a far addFavorite") {
+        try expectRefusal("invalid", "300 m away") {
+          _ = try writer.addFavorite(
+            source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
+            near: north(of: recentAt, metres: 300))
+        }
+      }
+      try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "a favourite was saved")
+      // 200 m is within Maps' usual drift.
+      let close = try writer.addFavorite(
+        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
+        near: north(of: recentAt, metres: 200))
+      try expect(close.created, "200 m away was not saved")
+    }
+
+    check("addFavoritePositionIndex") {
+      let (writer, storeURL) = try mapsFixture("add-favorite-position")
+      func setPosition(_ value: Int64) throws {
+        try maps(storeURL) {
+          try mapsRow("FavoriteItem", MapsID.favorite, in: $0).setValue(
+            value, forKey: "positionIndex")
+        }
+      }
+      // Past Int64 by the step: one above the maximum instead.
+      try setPosition(Int64.max - 1_000)
+      let near = try writer.addFavorite(
+        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic", near: nil)
+      let position = int(try mapsValues(storeURL, "FavoriteItem", try uuid(near)), "positionIndex")
+      try expect(position == Int64.max - 999, "positionIndex is \(position ?? -1)")
+      // No room at all: refused, nothing saved.
+      _ = try writer.removeFavorite(id: near.id)
+      try setPosition(Int64.max)
+      try expectNoMapsHistory(storeURL, "an addFavorite past Int64") {
+        try expectRefusal("failed", "positionIndex at Int64.max") {
+          _ = try writer.addFavorite(
+            source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic", near: nil)
+        }
+      }
+    }
+
+    check("removeFavoriteUnpinsIntoLibrary") {
+      let (writer, storeURL) = try mapsFixture("remove-favorite")
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "removeFavorite",
+        [
+          HistoryChange(row: "FavoriteItem favorite", properties: ["delete"]),
+          HistoryChange(row: "MixinMapItem favorite", properties: ["delete"]),
+          inserted("CollectionPlaceItem"), inserted("MixinMapItem"),
+        ]
+      ) { result = try writer.removeFavorite(id: MapsID.favorite.uuidString) }
+      guard let result else { throw Failure(why: "removeFavorite returned nothing") }
+      try expect(
+        result.id.lowercased() == MapsID.favorite.uuidString.lowercased(), "id is \(result.id)")
+      try expect(result.changed == ["favorite", "savedPlace"], "changed is \(result.changed)")
+      try expect(result.created, "created is false")
+      try expect(try mapsCount(storeURL, "FavoriteItem") == 0, "the favourite is still there")
+      // The new saved place: the one row the fixture does not name.
+      let placeID = try maps(storeURL) { context -> UUID in
+        let rows = try context.fetch(
+          NSFetchRequest<NSManagedObject>(entityName: "CollectionPlaceItem"))
+        let ids = rows.compactMap { $0.value(forKey: "identifier") as? UUID }
+          .filter { $0 != MapsID.saved }
+        guard ids.count == 1, let id = ids.first else {
+          throw Failure(why: "\(ids.count) new saved places")
+        }
+        return id
+      }
+      let values = try mapsValues(storeURL, "CollectionPlaceItem", placeID)
+      let keys = newSavedPlaceKeys.union([
+        "mapItemName", "mapItemAddress", "mapItemCategory", "muid",
+      ])
+      try expect(Set(values.keys) == keys, "the saved place holds \(values.keys.sorted())")
+      try expect(
+        values["createTime"] as? Date == favoriteCreated, "createTime is not the pin's")
+      for (key, value) in [
+        ("mapItemName", "Synthetic favourite"), ("mapItemAddress", "1 Synthetic Street"),
+        ("mapItemCategory", "Synthetic category"),
+      ] {
+        try expect(values[key] as? String == value, "\(key) is \(values[key] ?? "nil")")
+      }
+      try expect(int(values, "muid") == 1002, "muid is \(int(values, "muid") ?? -1)")
+      for key in ["type", "origin", "positionIndex", "droppedPinFloorOrdinal"] {
+        try expect(int(values, key) == 0, "\(key) is \(int(values, key) ?? -1)")
+      }
+      try expect(
+        values["latitude"] as? Double == favoriteAt.0
+          && values["longitude"] as? Double == favoriteAt.1, "the coordinate moved")
+      let refreshed = values["mapItemLastRefreshed"] as? Date
+      try expect(
+        refreshed.map { abs($0.timeIntervalSinceNow) < 60 } == true, "mapItemLastRefreshed")
+      try expect(
+        try mapsRecord(storeURL, "CollectionPlaceItem", placeID) == syntheticRecord(2),
+        "the saved place's record is not the pin's bytes")
+      try expect(try guidesOf(storeURL, placeID).isEmpty, "the saved place is in a Guide")
+      try expect(try mapsCount(storeURL, "MixinMapItem") == 3, "the record count moved")
+    }
+
+    check("removeFavoriteCascadesOwnRecordOnly") {
+      let (writer, storeURL) = try mapsFixture("remove-favorite-onto-saved")
+      // A saved place already stands at the pin, with its own record.
+      let there = UUID()
+      try maps(storeURL) { context in
+        let record = NSEntityDescription.insertNewObject(
+          forEntityName: "MixinMapItem", into: context)
+        record.setValue(syntheticRecord(4), forKey: "mapItemStorage")
+        let place = NSEntityDescription.insertNewObject(
+          forEntityName: "CollectionPlaceItem", into: context)
+        place.setValue(there, forKey: "identifier")
+        place.setValue(favoriteAt.0 + 5e-6, forKey: "latitude")
+        place.setValue(favoriteAt.1 - 5e-6, forKey: "longitude")
+        place.setValue(record, forKey: "mapItem")
+      }
+      let before = try mapsValues(storeURL, "CollectionPlaceItem", there)
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "removeFavorite onto a saved place", extra: [there: "there"],
+        [
+          HistoryChange(row: "FavoriteItem favorite", properties: ["delete"]),
+          HistoryChange(row: "MixinMapItem favorite", properties: ["delete"]),
+        ]
+      ) { result = try writer.removeFavorite(id: MapsID.favorite.uuidString) }
+      try expect(result?.changed == ["favorite"], "changed is \(result?.changed ?? [])")
+      try expect(result?.created == false, "created is true")
+      try expect(try mapsCount(storeURL, "MixinMapItem") == 3, "not exactly the pin's record went")
+      try expect(
+        try mapsRecord(storeURL, "CollectionPlaceItem", there) == syntheticRecord(4),
+        "the saved place lost its record")
+      let after = try mapsValues(storeURL, "CollectionPlaceItem", there)
+      try expect(
+        (before as NSDictionary).isEqual(to: after), "the saved place changed: \(after)")
+      try expectRefusal("notFound", "removing it twice") {
+        _ = try writer.removeFavorite(id: MapsID.favorite.uuidString)
+      }
+    }
+
+    check("savePlaceUnfiled") {
+      let (writer, storeURL) = try mapsFixture("save-place")
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "savePlace", [inserted("CollectionPlaceItem"), inserted("MixinMapItem")]
+      ) {
+        result = try writer.savePlace(
+          source: .favorite, sourceId: MapsID.favorite.uuidString, name: "Synthetic favourite",
+          near: favoriteAt)
+      }
+      guard let result else { throw Failure(why: "savePlace returned nothing") }
+      try expect(result.created, "created is false")
+      let id = try uuid(result)
+      let values = try mapsValues(storeURL, "CollectionPlaceItem", id)
+      // The caller's name is the source's: no customName.
+      let keys = newSavedPlaceKeys.union([
+        "mapItemName", "mapItemAddress", "mapItemCategory", "muid",
+      ])
+      try expect(Set(values.keys) == keys, "the saved place holds \(values.keys.sorted())")
+      try expect(result.changed == keys.sorted(), "changed is \(result.changed)")
+      for key in ["type", "origin", "positionIndex", "droppedPinFloorOrdinal"] {
+        try expect(int(values, key) == 0, "\(key) is \(int(values, key) ?? -1)")
+      }
+      try expect(int(values, "muid") == 1002, "muid is \(int(values, "muid") ?? -1)")
+      try expect(
+        values["mapItemAddress"] as? String == "1 Synthetic Street", "the address is not copied")
+      try expect(
+        (values["createTime"] as? Date).map { abs($0.timeIntervalSinceNow) < 60 } == true,
+        "createTime is not now")
+      try expect(try guidesOf(storeURL, id).isEmpty, "the new place is in a Guide")
+      try expect(
+        try mapsRecord(storeURL, "CollectionPlaceItem", id) == syntheticRecord(2),
+        "the record is not the favourite's bytes")
+      try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "the favourite went")
+      // A saved place from itself, and the same favourite again: already there.
+      let own = try writer.savePlace(
+        source: .savedPlace, sourceId: MapsID.saved.uuidString, name: "Synthetic own name",
+        near: nil)
+      try expect(
+        own.id.lowercased() == MapsID.saved.uuidString.lowercased() && !own.created,
+        "the fixture's saved place, from itself, answers \(own)")
+      let other = try writer.savePlace(
+        source: .favorite, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+      try expect(other.id == result.id && !other.created, "a second save answers \(other)")
+    }
+
+    check("savePlaceKeepsCallersName") {
+      let (writer, storeURL) = try mapsFixture("save-place-name")
+      let result = try writer.savePlace(
+        source: .favorite, sourceId: MapsID.favorite.uuidString, name: "  Synthetic own name ",
+        near: nil)
+      let values = try mapsValues(storeURL, "CollectionPlaceItem", try uuid(result))
+      try expect(
+        values["customName"] as? String == "Synthetic own name",
+        "customName is \(values["customName"] ?? "nil")")
+      try expect(
+        values["mapItemName"] as? String == "Synthetic favourite", "mapItemName is not copied")
+      try expect(result.changed.contains("customName"), "changed is \(result.changed)")
+    }
+
+    check("removeSavedPlace") {
+      let (writer, storeURL) = try mapsFixture("remove-saved")
+      try expect(try placesCount(storeURL, MapsID.guide) == 1, "the guide does not start at 1")
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "removeSavedPlace",
+        [
+          HistoryChange(row: "CollectionPlaceItem saved", properties: ["delete"]),
+          HistoryChange(row: "MixinMapItem saved", properties: ["delete"]),
+          HistoryChange(row: "Collection guide", properties: ["places"]),
+        ]
+      ) { result = try writer.removeSavedPlace(id: MapsID.saved.uuidString) }
+      try expect(result?.changed == ["savedPlace"], "changed is \(result?.changed ?? [])")
+      try expect(result?.created == false, "created is true")
+      try expect(
+        result?.id.lowercased() == MapsID.saved.uuidString.lowercased(), "the id differs")
+      try expect(try placesCount(storeURL, MapsID.guide) == 0, "the guide still counts it")
+      try expect(try mapsCount(storeURL, "MixinMapItem") == 2, "the record is still there")
+      try expect(try mapsCount(storeURL, "Collection") == 3, "a Guide went with it")
+      try expectRefusal("notFound", "removing it twice") {
+        _ = try writer.removeSavedPlace(id: MapsID.saved.uuidString)
+      }
+    }
+
+    check("fileInGuideByPlaceId") {
+      let (writer, storeURL) = try mapsFixture("file-by-id")
+      let saved = try writer.savePlace(
+        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
+        near: nil)
+      let placeID = try uuid(saved)
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "fileInGuide", extra: [placeID: "place"],
+        [
+          HistoryChange(
+            row: "CollectionPlaceItem place", properties: ["collections", "modificationTime"]),
+          HistoryChange(row: "Collection guide", properties: ["modificationTime", "places"]),
+        ]
+      ) {
+        result = try writer.fileInGuide(
+          guideTitle: "Synthetic guide", placeId: saved.id, source: nil, sourceId: nil,
+          name: nil, near: nil)
+      }
+      try expect(result?.filed == true, "filed is \(String(describing: result?.filed))")
+      try expect(result?.changed == ["collections"], "changed is \(result?.changed ?? [])")
+      try expect(result?.created == false, "created is true")
+      try expect(result?.id == saved.id, "id is \(result?.id ?? "nil")")
+      try expect(try placesCount(storeURL, MapsID.guide) == 2, "placesCount is not 2")
+      try expect(try guidesOf(storeURL, placeID) == ["guide"], "the place is not in the guide")
+      // Again: already there, nothing saved.
+      for (label, id) in [
+        ("again", saved.id), ("the fixture's filed place", MapsID.saved.uuidString),
+      ] {
+        var again: MapsWriter.Result?
+        try expectNoMapsHistory(storeURL, label) {
+          again = try writer.fileInGuide(
+            guideTitle: "Synthetic guide", placeId: id, source: nil, sourceId: nil, name: nil,
+            near: nil)
+        }
+        try expect(again?.changed == [], "\(label) changed \(again?.changed ?? [])")
+        try expect(again?.filed == true, "\(label) filed is \(String(describing: again?.filed))")
+      }
+    }
+
+    check("fileInGuideSavesThenFiles") {
+      let (writer, storeURL) = try mapsFixture("file-from-source")
+      var result: MapsWriter.Result?
+      try expectMapsHistory(
+        storeURL, "fileInGuide from a source",
+        [
+          inserted("CollectionPlaceItem"), inserted("MixinMapItem"),
+          HistoryChange(row: "Collection guide", properties: ["modificationTime", "places"]),
+        ]
+      ) {
+        result = try writer.fileInGuide(
+          guideTitle: "Synthetic guide", placeId: nil, source: .recent,
+          sourceId: MapsID.recent.uuidString, name: "Synthetic recent place", near: recentAt)
+      }
+      guard let result else { throw Failure(why: "fileInGuide returned nothing") }
+      try expect(result.created, "created is false")
+      try expect(result.filed == true, "filed is \(String(describing: result.filed))")
+      try expect(result.changed == ["collections"], "changed is \(result.changed)")
+      let id = try uuid(result)
+      try expect(try guidesOf(storeURL, id) == ["guide"], "the new place is not in the guide")
+      try expect(try placesCount(storeURL, MapsID.guide) == 2, "placesCount is not 2")
+      let values = try mapsValues(storeURL, "CollectionPlaceItem", id)
+      let keys = newSavedPlaceKeys.union(["mapItemName", "muid"])
+      try expect(Set(values.keys) == keys, "the saved place holds \(values.keys.sorted())")
+      try expect(
+        try mapsRecord(storeURL, "CollectionPlaceItem", id) == syntheticRecord(1),
+        "the record is not the recent's bytes")
+    }
+
+    check("fileInGuideRefusesAmbiguousTitle") {
+      let (writer, storeURL) = try mapsFixture("file-ambiguous")
+      try expectNoMapsHistory(storeURL, "an ambiguous Guide") {
+        let message = try expectRefusal("invalid", "Synthetic twin") {
+          _ = try writer.fileInGuide(
+            guideTitle: "Synthetic twin", placeId: MapsID.saved.uuidString, source: nil,
+            sourceId: nil, name: nil, near: nil)
+        }
+        for twin in [MapsID.twinA, MapsID.twinB] {
+          try expect(
+            message.lowercased().contains(twin.uuidString.lowercased()),
+            "the refusal does not name \(twin): \(message)")
+        }
+        try expect(!message.contains("Synthetic"), "the refusal repeats a title: \(message)")
+      }
+    }
+
+    check("fileInGuideRefusesUnknownTitle") {
+      let (writer, storeURL) = try mapsFixture("file-unknown")
+      try expectNoMapsHistory(storeURL, "an unknown Guide") {
+        let message = try expectRefusal("invalid", "Synthetic none") {
+          _ = try writer.fileInGuide(
+            guideTitle: "Synthetic none", placeId: nil, source: .recent,
+            sourceId: MapsID.recent.uuidString, name: "Synthetic recent place", near: nil)
+        }
+        for guide in [MapsID.guide, MapsID.twinA, MapsID.twinB] {
+          try expect(
+            message.lowercased().contains(guide.uuidString.lowercased()),
+            "the refusal does not name \(guide): \(message)")
+        }
+        try expect(!message.contains("Synthetic"), "the refusal repeats a title: \(message)")
+      }
+      try expect(try mapsCount(storeURL, "CollectionPlaceItem") == 1, "a place was saved")
+    }
+
+    check("fileInGuideRefusesBadArguments") {
+      let (writer, storeURL) = try mapsFixture("file-arguments")
+      try expectNoMapsHistory(storeURL, "malformed fileInGuide calls") {
+        let place = MapsID.saved.uuidString
+        let recent = MapsID.recent.uuidString
+        let calls: [(String, () throws -> Void)] = [
+          (
+            "both a placeId and a source",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: place, source: .recent, sourceId: recent,
+                name: nil, near: nil)
+            }
+          ),
+          (
+            "neither",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: nil, source: nil, sourceId: nil,
+                name: nil, near: nil)
+            }
+          ),
+          (
+            "a source without its id",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: nil, source: .recent, sourceId: nil,
+                name: nil, near: nil)
+            }
+          ),
+          (
+            "a name with a placeId",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: place, source: nil, sourceId: nil,
+                name: "Synthetic", near: nil)
+            }
+          ),
+          (
+            "a blank Guide title",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "  ", placeId: place, source: nil, sourceId: nil, name: nil,
+                near: nil)
+            }
+          ),
+        ]
+        for (label, call) in calls {
+          let message = try expectRefusal("invalid", label, call)
+          try expect(!message.contains(place), "\(label): the refusal repeats the id")
+        }
+      }
+    }
+
+    check("sourceVanished") {
+      let (writer, storeURL) = try mapsFixture("vanished")
+      let gone = UUID().uuidString
+      try expectNoMapsHistory(storeURL, "calls naming nothing") {
+        let calls: [(String, () throws -> Void)] = [
+          (
+            "addFavorite from a gone recent",
+            { _ = try writer.addFavorite(source: .recent, sourceId: gone, name: nil, near: nil) }
+          ),
+          (
+            "savePlace from a gone recent",
+            { _ = try writer.savePlace(source: .recent, sourceId: gone, name: nil, near: nil) }
+          ),
+          (
+            // Entity-scoped: a favourite's id does not name a saved place.
+            "savePlace from the favourite, called a saved place",
+            {
+              _ = try writer.savePlace(
+                source: .savedPlace, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+            }
+          ),
+          (
+            "a recent with no record",
+            {
+              _ = try writer.addFavorite(
+                source: .recent, sourceId: MapsID.bareRecent.uuidString, name: "Synthetic",
+                near: nil)
+            }
+          ),
+          ("removeFavorite of nothing", { _ = try writer.removeFavorite(id: gone) }),
+          (
+            "removeFavorite of a saved place",
+            { _ = try writer.removeFavorite(id: MapsID.saved.uuidString) }
+          ),
+          ("removeSavedPlace of nothing", { _ = try writer.removeSavedPlace(id: gone) }),
+          (
+            "removeSavedPlace of a favourite",
+            { _ = try writer.removeSavedPlace(id: MapsID.favorite.uuidString) }
+          ),
+          (
+            "fileInGuide of nothing",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: gone, source: nil, sourceId: nil,
+                name: nil, near: nil)
+            }
+          ),
+        ]
+        for (label, call) in calls {
+          let message = try expectRefusal("notFound", label, call)
+          try expect(!message.contains(gone), "\(label): the refusal repeats the id")
+        }
+      }
+    }
+
+    check("badIds") {
+      let (writer, storeURL) = try mapsFixture("bad-ids")
+      let bad = "not-a-uuid-secret"
+      let recent = MapsID.recent.uuidString
+      try expectNoMapsHistory(storeURL, "calls with bad ids") {
+        let calls: [(String, () throws -> Void)] = [
+          (
+            "addFavorite",
+            { _ = try writer.addFavorite(source: .recent, sourceId: bad, name: nil, near: nil) }
+          ),
+          (
+            "savePlace",
+            { _ = try writer.savePlace(source: .recent, sourceId: bad, name: nil, near: nil) }
+          ),
+          ("removeFavorite", { _ = try writer.removeFavorite(id: bad) }),
+          ("removeSavedPlace", { _ = try writer.removeSavedPlace(id: "") }),
+          (
+            "fileInGuide placeId",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: bad, source: nil, sourceId: nil,
+                name: nil, near: nil)
+            }
+          ),
+          (
+            "fileInGuide sourceId",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: nil, source: .recent, sourceId: bad,
+                name: nil, near: nil)
+            }
+          ),
+          (
+            "a blank name",
+            { _ = try writer.addFavorite(source: .recent, sourceId: recent, name: " ", near: nil) }
+          ),
+          (
+            "a name with a line break",
+            {
+              _ = try writer.savePlace(
+                source: .recent, sourceId: recent, name: "a\nb", near: nil)
+            }
+          ),
+          (
+            "a latitude past 90",
+            {
+              _ = try writer.addFavorite(
+                source: .recent, sourceId: recent, name: nil, near: (91, 2))
+            }
+          ),
+          (
+            "a NaN longitude",
+            {
+              _ = try writer.savePlace(
+                source: .recent, sourceId: recent, name: nil, near: (48, .nan))
+            }
+          ),
+        ]
+        for (label, call) in calls {
+          let message = try expectRefusal("invalid", label, call)
+          try expect(!message.contains(bad), "\(label): the refusal repeats the id")
+        }
+      }
+    }
+
+    check("versionKeyIsChecksum") {
+      let (writer, _) = try mapsFixture("version")
+      try expect(MapsWriter.measuredVersions.isEmpty, "measuredVersions is not empty")
+      let status = writer.status()
+      try expect(status.compatible, "the fixture is incompatible: \(status)")
+      try expect(status.modelVersion != nil, "no model version")
+      try expect(
+        status.modelVersion == mapsChecksum(),
+        "modelVersion \(status.modelVersion ?? "nil") is not the .momd's checksum")
+      try expect(!status.syncMeasured, "syncMeasured with no measured version")
+      let result = try writer.removeSavedPlace(id: MapsID.saved.uuidString)
+      try expect(
+        result.modelVersion == status.modelVersion && !result.syncMeasured,
+        "a write reports \(result.modelVersion ?? "nil"), \(result.syncMeasured)")
+      try expect(
+        MapsWriter.storePath == "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
+        "storePath is \(MapsWriter.storePath)")
+    }
+  }
+}
