@@ -57,8 +57,8 @@ nonisolated struct AppChannel {
 
   /// Record the process `apple_desktop_launch` just started with
   /// `-DrivingChannel YES`, so its channel is believed.
-  static func register(bundleId: String) {
-    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
+  static func register(pid: pid_t, bundleId: String) {
+    guard let app = NSRunningApplication(processIdentifier: pid), app.bundleIdentifier == bundleId
     else { return }
     lock.lock()
     registry = registry.filter { pid, _ in kill(pid, 0) == 0 || errno == EPERM }

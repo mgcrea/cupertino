@@ -613,18 +613,27 @@ nonisolated enum DesktopServer {
           + "channel: true, a Debug build of an app that links swift-support-kit's "
           + "SupportKitDriving opens a driving channel: click, drag, hover, key and type with its "
           + "bundleId then reach its own windows without bringing it forward (lane: channel), "
-          + "shortcuts included. Any other app ignores it and answers channel: false.",
+          + "shortcuts included. Any other app ignores it and answers channel: false. Pass "
+          + "'path' (with or instead of bundleId) to start one exact .app, the Debug build of an "
+          + "App Store app that shares its bundle id with the installed copy.",
         "inputSchema": [
           "type": "object",
           "properties": [
             "bundleId": launchBundleIdProperty,
+            "path": [
+              "type": "string",
+              "description":
+                "An .app to start instead of the copy Launch Services picks: a Debug build that "
+                + "shares its bundle id with the installed one. Refused while any copy with that "
+                + "bundle id is running.",
+            ],
             "channel": [
               "type": "boolean",
               "description":
                 "Open a SupportKitDriving channel in a Debug build of one of our apps.",
             ],
           ],
-          "required": ["bundleId"],
+
         ],
         "annotations": [
           "readOnlyHint": false, "destructiveHint": false, "idempotentHint": true,
@@ -1421,16 +1430,38 @@ nonisolated enum DesktopServer {
         return ok(id, ["activated": bundleId])
 
       case "apple_desktop_launch":
-        guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+        // A path names the copy, a Debug build beside the installed one; its
+        // bundle id is what the reach is checked against.
+        let path = args["path"] as? String
+        let named = args["bundleId"] as? String
+        let bundleId: String
+        if let path {
+          let atPath = try AccessibilityDriver.bundleId(atPath: path)
+          if let named, named != atPath {
+            return failure(id, "\(path) is \(atPath), not \(named), so nothing was started.")
+          }
+          bundleId = atPath
+        } else if let named {
+          bundleId = named
+        } else {
+          return failure(id, "Either 'bundleId' or 'path' is required.")
         }
         let wantsChannel = args["channel"] as? Bool ?? false
         let launched = try AccessibilityDriver.launch(
-          bundleId: bundleId, scope: scope,
+          bundleId: bundleId, path: path, scope: scope,
           arguments: wantsChannel ? ["-DrivingChannel", "YES"] : [])
         guard launched.launched else {
           var note = "Already running."
-          if wantsChannel {
+          if path != nil {
+            // Two copies under one bundle id would make every bundleId verb,
+            // and the channel's own lookup, ambiguous.
+            note =
+              "A copy of \(bundleId) is already running"
+              + (launched.runningAt.map { ", at \($0)," } ?? "")
+              + " so no second one was started: two copies under one bundle identifier would "
+              + "leave every bundleId verb unsure which it reaches. Ask the person to quit it, "
+              + "then launch again."
+          } else if wantsChannel {
             note +=
               channel(for: bundleId) != nil
               ? " It already has a driving channel."
@@ -1444,7 +1475,7 @@ nonisolated enum DesktopServer {
         if wantsChannel {
           // Only a process launched here with the argument is believed to have
           // a channel: see `AppChannel.find(bundleId:)`.
-          AppChannel.register(bundleId: bundleId)
+          if let pid = launched.pid { AppChannel.register(pid: pid, bundleId: bundleId) }
           // The app opens its channel from its own launch code, which can trail
           // the window that made `ready` true.
           var opened = channel(for: bundleId) != nil
@@ -1776,6 +1807,11 @@ nonisolated enum DesktopServer {
           id,
           "Step \(number) (\(tool)) is missing \(missing.map { "'\($0)'" }.joined(separator: " and ")). "
             + "Nothing was run.")
+      }
+      // The schema cannot say "one of the two", so launch says it here.
+      if tool == "launch", step["bundleId"] == nil, step["path"] == nil {
+        return failure(
+          id, "Step \(number) (launch) is missing 'bundleId' or 'path'. Nothing was run.")
       }
       if tool == "wait_for", matching(step).isEmpty {
         return failure(

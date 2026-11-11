@@ -453,6 +453,43 @@ struct DesktopCheck {
       "launch of an application that is not installed is refused and lights nothing",
       launchAbsentError && launchAbsent.contains("is installed")
         && DriveActivity.notice()?.target != "com.example.absent")
+    // By path: the Debug build an App Store app shares its bundle id with.
+    let (pathAbsent, pathAbsentError) = callText(
+      "apple_desktop_launch", ["path": "/nonexistent/Absent.app"], writes: true, anyApp: true)
+    check(
+      "launch by a path that holds nothing is refused",
+      pathAbsentError && pathAbsent.contains("No application at"))
+    let (pathFolder, pathFolderError) = callText(
+      "apple_desktop_launch", ["path": "/tmp"], writes: true, anyApp: true)
+    check(
+      "launch by a path that is not an application is refused",
+      pathFolderError && pathFolder.contains("not an application"))
+    let (pathMismatch, pathMismatchError) = callText(
+      "apple_desktop_launch",
+      ["path": "/System/Applications/Calculator.app", "bundleId": "com.apple.TextEdit"],
+      writes: true, anyApp: true)
+    check(
+      "launch by a path whose bundle is not the bundleId given is refused, starting nothing",
+      pathMismatchError && pathMismatch.contains("not com.apple.TextEdit")
+        && NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit")
+          .allSatisfy { !$0.isActive })
+    let (pathSelf, pathSelfError) = callText(
+      "apple_desktop_launch", ["path": Bundle.main.bundlePath], writes: true, anyApp: true)
+    check(
+      "launch by a path is held to the same reach as by bundleId",
+      pathSelfError || json(pathSelf)?["launched"] as? Bool != true)
+    if NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").isEmpty {
+      skip("launch by path names the copy already running", "Finder is not running here")
+    } else {
+      let (pathRunning, pathRunningError) = callText(
+        "apple_desktop_launch", ["path": "/System/Library/CoreServices/Finder.app"],
+        writes: true, anyApp: true)
+      let note = json(pathRunning)?["note"] as? String ?? ""
+      check(
+        "launch by path, with a copy already running, starts no second one and says where it is",
+        !pathRunningError && json(pathRunning)?["launched"] as? Bool == false
+          && note.contains("already running") && note.contains("Finder.app"))
+    }
     if NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").isEmpty {
       skip("launch leaves a running application alone", "Finder is not running here")
     } else {

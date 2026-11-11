@@ -149,8 +149,12 @@ struct ChannelCheck {
       Thread.sleep(forTimeInterval: 0.5)
     }
     let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-    let launched = call("apple_desktop_launch", ["bundleId": fixture, "channel": true])
-    check("it starts behind", launched["launched"] as? Bool == true)
+    // By path, the way a Debug build that shares its bundle id with an installed
+    // copy is started.
+    let fixturePath = FileManager.default.currentDirectoryPath
+      + "/apps/apple/.build/channel-fixture/CupertinoChannelFixture.app"
+    let launched = call("apple_desktop_launch", ["path": fixturePath, "channel": true])
+    check("it starts behind, by path", launched["launched"] as? Bool == true)
     check("and says it opened a channel", launched["channel"] as? Bool == true)
     guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: fixture).first
     else {
@@ -168,6 +172,15 @@ struct ChannelCheck {
       exit(1)
     }
     check("its channel is found by pid", true)
+    let again = call("apple_desktop_launch", ["path": fixturePath, "channel": true])
+    check(
+      "a second launch by path starts no second copy, and says where the first is",
+      again["launched"] as? Bool == false
+        && (again["note"] as? String ?? "").contains("CupertinoChannelFixture.app"))
+    check(
+      "and the first copy keeps its channel",
+      AppChannel.find(bundleId: fixture) != nil
+        && NSRunningApplication.runningApplications(withBundleIdentifier: fixture).count == 1)
 
     let root = AXUIElementCreateApplication(app.processIdentifier)
     guard let window = (attr(root, kAXWindowsAttribute) as? [AXUIElement])?.first else {

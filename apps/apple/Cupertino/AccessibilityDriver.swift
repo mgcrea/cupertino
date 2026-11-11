@@ -2272,6 +2272,24 @@ nonisolated enum AccessibilityDriver {
     var tookFront = false
     /// And the application in front before it was given the front back.
     var handedBack = false
+    /// The process it started, for a driving channel to be trusted by.
+    var pid: pid_t?
+    /// Where the copy already running lives, when nothing was started.
+    var runningAt: String?
+  }
+
+  /// The bundle identifier of the application at `path`, which a launch by path
+  /// is scope-checked by: a path names a copy, never a way round the reach.
+  static func bundleId(atPath path: String) throws -> String {
+    var isFolder: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: path, isDirectory: &isFolder) else {
+      throw Failure.refused("No application at \(path).")
+    }
+    let url = URL(fileURLWithPath: path)
+    guard isFolder.boolValue, url.pathExtension == "app",
+      let id = Bundle(url: url)?.bundleIdentifier
+    else { throw Failure.refused("\(path) is not an application bundle.") }
+    return id
   }
 
   /// Start an application that is not running, behind whatever is in front.
@@ -2292,12 +2310,29 @@ nonisolated enum AccessibilityDriver {
   ///
   /// Blocks for up to `timeout`, so it runs on a connection's own thread like
   /// every other verb here.
+  ///
+  /// `path` starts that copy rather than the one Launch Services would pick: an App
+  /// Store app's Debug build shares its bundle identifier with the installed copy,
+  /// so a launch by bundle id can start the one without a driving channel.
   static func launch(
-    bundleId: String, scope: Scope, timeout: TimeInterval = 10, arguments: [String] = []
+    bundleId: String, path: String? = nil, scope: Scope, timeout: TimeInterval = 10,
+    arguments: [String] = []
   ) throws -> Launched {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
-    if (try? app(forBundleId: bundleId)) != nil { return Launched(launched: false) }
-    guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
+    // Asked of Launch Services directly: `NSWorkspace.runningApplications` is kept
+    // current by the main run loop, and from a thread or a process without one it
+    // missed a copy started a moment earlier, which then got a second launch.
+    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
+      var already = Launched(launched: false)
+      already.runningAt = running.bundleURL?.path
+      return already
+    }
+    let url: URL
+    if let path {
+      url = URL(fileURLWithPath: path)
+    } else if let installed = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+      url = installed
+    } else {
       throw Failure.refused("No application with bundle identifier '\(bundleId)' is installed.")
     }
     // Starting it would stop at Gatekeeper's "downloaded from the Internet"
@@ -2322,9 +2357,9 @@ nonisolated enum AccessibilityDriver {
     config.promptsUserIfNeeded = false
     config.arguments = arguments
     let done = DispatchSemaphore(value: 0)
-    let box = ResultBox<Void>()
-    NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
-      box.result = error.map { .failure($0) } ?? .success(())
+    let box = ResultBox<pid_t?>()
+    NSWorkspace.shared.openApplication(at: url, configuration: config) { app, error in
+      box.result = error.map { .failure($0) } ?? .success(app?.processIdentifier)
       done.signal()
     }
     let deadline = Date().addingTimeInterval(timeout)
@@ -2344,6 +2379,7 @@ nonisolated enum AccessibilityDriver {
     // reason `Permissions.launchAndRequestAutomation` gives: a cold launch off a
     // slow disk is much slower than a warm one.
     var result = Launched(launched: true)
+    if case .success(let pid) = box.result { result.pid = pid }
     var readyAt: Date?
     while Date() < deadline {
       if let running = try? app(forBundleId: bundleId), running.isFinishedLaunching {

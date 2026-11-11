@@ -31,6 +31,8 @@ summary.
   then go into its own windows (`lane: "channel"`), including shortcuts and windows covered by
   other apps. Nothing reaches the person's keyboard or cursor. The channel exists only in Debug
   builds, and other applications are driven as before.
+  `path` starts one exact `.app`: the Debug build of an App Store app that shares its bundle id
+  with the installed copy. Nothing is started while another copy with that bundle id is running.
 
 - **Rename, move, favourite, delete and restore a voice memo, in Cupertino.** Five tools,
   `rename_recording`, `move_recording`, `set_favorite`, `delete_recording` (to Recently Deleted)

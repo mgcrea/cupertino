@@ -1448,6 +1448,20 @@ exactly what the background lane hands on. `channel-check` now plants one for Fi
 that it is ignored. The same rule leaves out a crashed app's stale directory and a reused pid.
 After Cupertino or the app restarts, launch it again with `channel: true`.
 
+**Launch the Debug build by `path`.** An App Store app's Debug build shares its bundle id with
+the installed copy, so `apple_desktop_launch` by bundle id can start the installed one, which has
+no channel. Starting the Debug build any other way (`make run`, Xcode, `open`) gives a channel
+Cupertino does not trust. `path` starts that exact `.app`, and its bundle id is still
+checked against the reach. While any copy with that bundle id is running, nothing is started and
+the answer says where that copy lives. Two copies under one bundle id would leave every
+`bundleId` verb unsure which one it reaches. Measured by `channel-check`, which launches its
+fixture that way.
+
+The already-running check asks Launch Services
+(`NSRunningApplication.runningApplications(withBundleIdentifier:)`), not
+`NSWorkspace.runningApplications`. That list is kept current by the main run loop, and a
+process without one missed a copy started a moment earlier and launched it a second time.
+
 Click (left only), drag (within the app), hover, key (when every modifier has a menu meaning) and
 type with that `bundleId` then go through the channel. They answer `lane: "channel"` with what the
 app hit and what holds its focus. Nothing is brought forward or checked against the window
