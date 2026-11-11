@@ -110,7 +110,9 @@ func query(_ sql: String, _ bind: [Int64] = []) -> [[String: Cell]] {
   while true {
     let rc = sqlite3_step(stmt)
     if rc == SQLITE_DONE { break }
-    guard rc == SQLITE_ROW else { fail("cannot step \(sql): \(String(cString: sqlite3_errmsg(db)))") }
+    guard rc == SQLITE_ROW else {
+      fail("cannot step \(sql): \(String(cString: sqlite3_errmsg(db)))")
+    }
     var row: [String: Cell] = [:]
     for c in 0..<sqlite3_column_count(stmt) {
       let name = String(cString: sqlite3_column_name(stmt, c))
@@ -138,7 +140,8 @@ func label(_ sql: String, _ bind: Int64) -> [String: String] {
   var out: [String: String] = [:]
   if sqlite3_step(stmt) == SQLITE_ROW {
     for c in 0..<sqlite3_column_count(stmt) where sqlite3_column_type(stmt, c) == SQLITE_TEXT {
-      out[String(cString: sqlite3_column_name(stmt, c))] = String(cString: sqlite3_column_text(stmt, c))
+      out[String(cString: sqlite3_column_name(stmt, c))] = String(
+        cString: sqlite3_column_text(stmt, c))
     }
   }
   return out
@@ -148,10 +151,13 @@ func label(_ sql: String, _ bind: Int64) -> [String: String] {
 /// the schema's own column names).
 func tableColumns(_ table: String) -> [String] {
   var stmt: OpaquePointer?
-  guard sqlite3_prepare_v2(db, "PRAGMA table_info(\"\(table)\")", -1, &stmt, nil) == SQLITE_OK else { return [] }
+  guard sqlite3_prepare_v2(db, "PRAGMA table_info(\"\(table)\")", -1, &stmt, nil) == SQLITE_OK
+  else { return [] }
   defer { sqlite3_finalize(stmt) }
   var names: [String] = []
-  while sqlite3_step(stmt) == SQLITE_ROW { names.append(String(cString: sqlite3_column_text(stmt, 1))) }
+  while sqlite3_step(stmt) == SQLITE_ROW {
+    names.append(String(cString: sqlite3_column_text(stmt, 1)))
+  }
   return names
 }
 
@@ -160,27 +166,35 @@ func tableColumns(_ table: String) -> [String] {
 /// The store's own model version hashes, from `Z_METADATA.Z_PLIST`.
 func storeVersionHashes() -> [String: Data]? {
   guard case .blob(let plist)? = query("SELECT Z_PLIST FROM Z_METADATA LIMIT 1").first?["Z_PLIST"],
-    let dict = try? PropertyListSerialization.propertyList(from: plist, format: nil) as? [String: Any]
+    let dict = try? PropertyListSerialization.propertyList(from: plist, format: nil)
+      as? [String: Any]
   else { return nil }
   return dict["NSStoreModelVersionHashes"] as? [String: Data]
 }
 
 func loadModel() -> NSManagedObjectModel {
-  guard let current = NSManagedObjectModel(contentsOf: momdURL) else { fail("cannot load the model at \(momdURL.path)") }
+  guard let current = NSManagedObjectModel(contentsOf: momdURL) else {
+    fail("cannot load the model at \(momdURL.path)")
+  }
   guard let hashes = storeVersionHashes() else {
     note("the store has no model version hashes; using the bundle's current version")
     return current
   }
   if current.entityVersionHashesByName == hashes { return current }
-  let moms = ((try? FileManager.default.contentsOfDirectory(at: momdURL, includingPropertiesForKeys: nil)) ?? [])
+  let moms =
+    ((try? FileManager.default.contentsOfDirectory(at: momdURL, includingPropertiesForKeys: nil))
+    ?? [])
     .filter { $0.pathExtension == "mom" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
   for mom in moms {
-    if let model = NSManagedObjectModel(contentsOf: mom), model.entityVersionHashesByName == hashes {
+    if let model = NSManagedObjectModel(contentsOf: mom), model.entityVersionHashesByName == hashes
+    {
       note("the store matches \(mom.lastPathComponent), not the bundle's current version; using it")
       return model
     }
   }
-  note("no version in \(momdURL.lastPathComponent) matches the store's hashes; using the current one, names may be wrong")
+  note(
+    "no version in \(momdURL.lastPathComponent) matches the store's hashes; using the current one, names may be wrong"
+  )
   return current
 }
 
@@ -193,7 +207,9 @@ func maskOrder(_ entity: NSEntityDescription) -> [String] {
 }
 
 /// Each group is the superentity's group, then the entity's own properties of that group by name.
-func maskGroups(_ entity: NSEntityDescription) -> (toOne: [String], attrs: [String], toMany: [String]) {
+func maskGroups(_ entity: NSEntityDescription) -> (
+  toOne: [String], attrs: [String], toMany: [String]
+) {
   let parent = entity.superentity.map(maskGroups) ?? (toOne: [], attrs: [], toMany: [])
   let parentNames = Set(entity.superentity?.propertiesByName.keys.map { $0 } ?? [])
   let own = entity.properties.filter { !$0.isTransient && !parentNames.contains($0.name) }
@@ -242,7 +258,8 @@ func table(for entity: NSEntityDescription) -> Table {
   let r = root(entity)
   if let t = tables[r.name!] { return t }
   let name = "Z" + r.name!.uppercased()
-  let claimed = Set(allEntities(under: r).flatMap { $0.properties.map { "Z" + $0.name.uppercased() } })
+  let claimed = Set(
+    allEntities(under: r).flatMap { $0.properties.map { "Z" + $0.name.uppercased() } })
   let t = Table(name: name, columns: Set(tableColumns(name)), claimed: claimed)
   if t.columns.isEmpty { note("no table \(name) for \(entity.name!)") }
   tables[r.name!] = t
@@ -265,12 +282,15 @@ func candidates(_ property: String, in t: Table) -> [String] {
 
 func values(of entity: NSEntityDescription, pk: Int64) -> Any {
   let t = table(for: entity)
-  guard !t.columns.isEmpty, let row = query("SELECT * FROM \"\(t.name)\" WHERE Z_PK = ?", [pk]).first else {
+  guard !t.columns.isEmpty,
+    let row = query("SELECT * FROM \"\(t.name)\" WHERE Z_PK = ?", [pk]).first
+  else {
     return NSNull()
   }
   var out: [String: Any] = [:]
   let stored = entity.properties.filter { !$0.isTransient }
-  let toOne = stored.compactMap { $0 as? NSRelationshipDescription }.filter { !$0.isToMany }.map(\.name)
+  let toOne = stored.compactMap { $0 as? NSRelationshipDescription }.filter { !$0.isToMany }.map(
+    \.name)
   let attrs = stored.compactMap { $0 as? NSAttributeDescription }.map(\.name)
   for name in toOne + attrs {
     let cells = candidates(name, in: t).map { ($0, row[$0] ?? .null) }
@@ -289,9 +309,11 @@ func values(of entity: NSEntityDescription, pk: Int64) -> Any {
 
 func encode(_ value: Any) -> String {
   if let dict = value as? [String: Any] {
-    return "{" + dict.keys.sorted().map { "\(encode($0)):\(encode(dict[$0]!))" }.joined(separator: ",") + "}"
+    return "{"
+      + dict.keys.sorted().map { "\(encode($0)):\(encode(dict[$0]!))" }.joined(separator: ",") + "}"
   }
-  let data = try! JSONSerialization.data(withJSONObject: value, options: [.fragmentsAllowed, .withoutEscapingSlashes])
+  let data = try! JSONSerialization.data(
+    withJSONObject: value, options: [.fragmentsAllowed, .withoutEscapingSlashes])
   return String(decoding: data, as: UTF8.self)
 }
 
@@ -305,7 +327,9 @@ func line(_ pairs: [(String, Any)]) -> String {
 var entityNames: [Int64: String] = [:]
 do {
   var stmt: OpaquePointer?
-  guard sqlite3_prepare_v2(db, "SELECT Z_ENT, Z_NAME FROM Z_PRIMARYKEY", -1, &stmt, nil) == SQLITE_OK else {
+  guard
+    sqlite3_prepare_v2(db, "SELECT Z_ENT, Z_NAME FROM Z_PRIMARYKEY", -1, &stmt, nil) == SQLITE_OK
+  else {
     fail("no Z_PRIMARYKEY: is this a Core Data store?")
   }
   while sqlite3_step(stmt) == SQLITE_ROW {
@@ -326,13 +350,20 @@ let hasStrings = !tableColumns("ATRANSACTIONSTRING").isEmpty
 let txLabelSelects: [(column: String, select: String)] =
   ["ZAUTHOR", "ZBUNDLEID", "ZCONTEXTNAME", "ZPROCESSID"].compactMap { column in
     if hasStrings, txColumns.contains(column + "TS") {
-      return (column, "(SELECT s.ZNAME FROM ATRANSACTIONSTRING s WHERE s.Z_PK = t.\(column)TS) AS \(column)")
+      return (
+        column,
+        "(SELECT s.ZNAME FROM ATRANSACTIONSTRING s WHERE s.Z_PK = t.\(column)TS) AS \(column)"
+      )
     }
     return txColumns.contains(column) ? (column, "t.\(column) AS \(column)") : nil
   }
-let txLabels = ["ZAUTHOR": "author", "ZBUNDLEID": "bundle", "ZPROCESSID": "process", "ZCONTEXTNAME": "context"]
-  .filter { key, _ in txLabelSelects.contains { $0.column == key } }
-let txLabelSQL = txLabelSelects.isEmpty ? nil
+let txLabels = [
+  "ZAUTHOR": "author", "ZBUNDLEID": "bundle", "ZPROCESSID": "process", "ZCONTEXTNAME": "context",
+]
+.filter { key, _ in txLabelSelects.contains { $0.column == key } }
+let txLabelSQL =
+  txLabelSelects.isEmpty
+  ? nil
   : "SELECT \(txLabelSelects.map(\.select).joined(separator: ", ")) FROM ATRANSACTION t WHERE t.Z_PK = ?"
 
 let types: [Int64: String] = [0: "insert", 1: "update", 2: "delete"]
@@ -342,7 +373,8 @@ let changes = query(
   "SELECT ZTRANSACTIONID, ZENTITY, ZENTITYPK, ZCHANGETYPE, ZCOLUMNS FROM ACHANGE WHERE ZTRANSACTIONID > ? ORDER BY ZTRANSACTIONID, Z_PK",
   [sinceTx])
 for change in changes {
-  guard case .integer(let tx)? = change["ZTRANSACTIONID"], case .integer(let ent)? = change["ZENTITY"],
+  guard case .integer(let tx)? = change["ZTRANSACTIONID"],
+    case .integer(let ent)? = change["ZENTITY"],
     case .integer(let pk)? = change["ZENTITYPK"], case .integer(let kind)? = change["ZCHANGETYPE"]
   else { continue }
   let entityName = entityNames[ent] ?? "?ent\(ent)"
