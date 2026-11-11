@@ -16,7 +16,7 @@ export const syncSentence = (w: LaneWrite): string => {
   if (w.syncMeasured) {
     return (
       "Saved the way Voice Memos saves it. It reaches your other devices through iCloud, " +
-      "once Voice Memos is running."
+      "even with Voice Memos closed."
     );
   }
   return (
@@ -35,8 +35,8 @@ const report = (write: () => Promise<LaneWrite>) =>
 /** Every lane tool says this after what it does. */
 const savedLike = (what: string): string =>
   "Saved through Voice Memos' own data model inside Cupertino, so Voice Memos uploads it to " +
-  `iCloud like ${what} made in the app; it syncs when Voice Memos next runs. Only available ` +
-  "when Cupertino hosts this server.";
+  `iCloud like ${what} made in the app, even with Voice Memos closed. Only available when ` +
+  "Cupertino hosts this server.";
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true } as const;
 
@@ -55,10 +55,8 @@ export const registerStoreWriteTools = (server: McpServer, lane: VoiceMemosLane)
     "apple_voice_memos_rename_recording",
     {
       description:
-        "Rename one recording. Saved through Voice Memos' own data model inside Cupertino, so " +
-        "Voice Memos uploads it to iCloud like a rename made in the app; it syncs when Voice " +
-        "Memos next runs. Only available when Cupertino hosts this server. Changes the title " +
-        "and nothing else.",
+        `Rename one recording. ${savedLike("a rename")} Changes the title, and marks it set ` +
+        "by hand as the app does, and nothing else.",
       inputSchema: z.object({
         id: idArg.describe(`${idArg.description ?? "The recording's id."} ${NOT_DELETED}`),
         title: z

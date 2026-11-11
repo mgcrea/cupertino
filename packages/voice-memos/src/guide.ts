@@ -44,9 +44,9 @@ from \`list_folders\`.
 **A recording in Recently Deleted cannot be renamed, moved or favourited**, as in the app: those
 three refuse it with reason \`invalid\`, so restore it first, and only if the person asked for that.
 
-**A write syncs when Voice Memos next runs.** Nothing is launched to make it happen, so say the
-change is saved on this Mac and will reach other devices once Voice Memos runs, not that it is
-already on the iPhone. When the result's \`syncMeasured\` is false, the save still happened but
+**A write reaches iCloud without the app:** Voice Memos' background service
+uploads it even with Voice Memos closed. Say the change is saved on this Mac and on its way to
+other devices, not that it is already on the iPhone. When the result's \`syncMeasured\` is false, the save still happened but
 sync is not yet measured on this macOS: pass on its \`sync\` sentence, which asks to check the
 recording on another device.
 

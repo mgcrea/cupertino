@@ -125,8 +125,8 @@ const call = async (c: Client, name: string, args: Record<string, unknown>) => {
 };
 
 const MEASURED =
-  "Saved the way Voice Memos saves it. It reaches your other devices through iCloud, once " +
-  "Voice Memos is running.";
+  "Saved the way Voice Memos saves it. It reaches your other devices through iCloud, even with " +
+  "Voice Memos closed.";
 
 describe("store lane tools", () => {
   it("registers the five lane tools when hosted and writes are on", async () => {
@@ -172,6 +172,17 @@ describe("store lane tools", () => {
       | Record<string, { description?: string }>
       | undefined;
     expect(properties?.id?.description).toMatch(/^The recording's id\. .+ restore it first\.$/);
+  });
+
+  it("never tells a host that sync waits for Voice Memos to run", async () => {
+    // Measured 2026-11-11: with the app quit, voicememod uploaded a lane rename to the iPhone.
+    const { env } = await hostStub(saves);
+    const tools = (await (await connect({ writes: true, lane: env })).listTools()).tools;
+    for (const name of STORE_WRITE_TOOLS) {
+      const description = tools.find((t) => t.name === name)?.description ?? "";
+      expect(description, name).toMatch(/even with Voice Memos closed/);
+      expect(description, name).not.toMatch(/next runs|is running/);
+    }
   });
 
   it("annotates every lane tool idempotent, and only delete destructive", async () => {

@@ -30,18 +30,18 @@ Data store mirrored by `NSPersistentCloudKitContainer` (the `ANSCK*` tables). It
 directory as the audio. It opens `mode=ro` beside a live 494 KB `-wal`, and a full read of
 `ZCLOUDRECORDING` takes 0.2 ms.
 
-| Column            | What it holds                                                                                                                                   |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ZUNIQUEID`       | a UUID, 87/87 distinct: the recording's id                                                                                                      |
-| `ZENCRYPTEDTITLE` | **the title, in plaintext** despite its name: 85/87 have spaces and letters, 4–27 chars; equals `ZCUSTOMLABELFORSORTING`                        |
-| `ZCUSTOMLABEL`    | 20 chars, no letters: the default date-shaped label, not the title                                                                              |
-| `ZDATE`           | Core Data seconds since 2001                                                                                                                    |
-| `ZDURATION`       | seconds, float                                                                                                                                  |
-| `ZPATH`           | file name relative to `Recordings/`; 86/86 resolve; **one 2019 row has none** and no audio digest                                               |
-| `ZFOLDER`         | foreign key to `ZFOLDER.Z_PK`, null when unfiled; `ZFOLDER.ZCOUNTOFRECORDINGS` agrees                                                           |
-| `ZEVICTIONDATE`   | **set when a memo goes to Recently Deleted**, to the moment of deletion (measured: 0.00 days from now), not the purge date                      |
-| `ZSHAREDFLAGS`    | **bit `0x1` is favourite**: 4 rows set, and the app's Favourites view shows 4. Null or `0` otherwise; `0` on 5 rows, presumably once-favourited |
-| `ZFLAGS`          | a bitfield: `4` ×58, `1540` ×8, `4612` ×3, `5636` ×7, `5644` ×10, `0` ×1. Favouriting does **not** touch it; meaning unknown                    |
+| Column            | What it holds                                                                                                                                                                            |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ZUNIQUEID`       | a UUID, 87/87 distinct: the recording's id                                                                                                                                               |
+| `ZENCRYPTEDTITLE` | **the title, in plaintext** despite its name: 85/87 have spaces and letters, 4–27 chars; equals `ZCUSTOMLABELFORSORTING`                                                                 |
+| `ZCUSTOMLABEL`    | 20 chars, no letters: the default date-shaped label, not the title                                                                                                                       |
+| `ZDATE`           | Core Data seconds since 2001                                                                                                                                                             |
+| `ZDURATION`       | seconds, float                                                                                                                                                                           |
+| `ZPATH`           | file name relative to `Recordings/`; 86/86 resolve; **one 2019 row has none** and no audio digest                                                                                        |
+| `ZFOLDER`         | foreign key to `ZFOLDER.Z_PK`, null when unfiled; `ZFOLDER.ZCOUNTOFRECORDINGS` agrees                                                                                                    |
+| `ZEVICTIONDATE`   | **set when a memo goes to Recently Deleted**, to the moment of deletion (measured: 0.00 days from now), not the purge date                                                               |
+| `ZSHAREDFLAGS`    | **bit `0x1` is favourite**: 4 rows set, and the app's Favourites view shows 4. Null or `0` otherwise; `0` on 5 rows, presumably once-favourited                                          |
+| `ZFLAGS`          | a bitfield: `4` ×58, `1540` ×8, `4612` ×3, `5636` ×7, `5644` ×10, `0` ×1. **A rename in the app sets bit `0x8`** (2026-11-11); favouriting does not touch it; the other bits are unknown |
 
 `ZRECORDING` is a legacy entity with the same core columns and no rows. The schema fixture lives at
 `packages/voice-memos/test/fixtures/cloud-recordings.sql` (fingerprint `fb804d4a4d59`).
@@ -156,34 +156,37 @@ The store lane is how this Core Data route shipped: Cupertino.app makes the save
 server never writes the store. The sections below say what it changes and how a call runs. The
 design is [the store lane spec](superpowers/specs/2026-11-10-swift-write-lane-design.md).
 
-## What the app changes, watched 2026-11-10
+## What the app changes, watched 2026-11-10 and 2026-11-11
 
-Each edit but the rename was made once in Voice Memos itself, on a throwaway memo, and the store
-read after each step, one transaction per step. The rename row comes from the Core Data rename
-above. The lane sets what the app set and nothing else. Names are Core
-Data's; the column is the same name upper-cased with a `Z` in front (`encryptedTitle` is
-`ZENCRYPTEDTITLE`).
+Each edit was made once in Voice Memos itself, on a throwaway memo, and the store read after each
+step, one transaction per step: favourite, move, delete and restore on 2026-11-10, rename,
+unfavourite and a move out of a folder on 2026-11-11. The lane sets what the app set and nothing
+else. Names are Core Data's; the column is the same name upper-cased with a `Z` in front
+(`encryptedTitle` is `ZENCRYPTEDTITLE`).
 
-| Method        | Attributes it sets                                                                                              | As the app did it                                                   |
-| ------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `rename`      | `encryptedTitle`, `customLabelForSorting`                                                                       | measured by the Core Data rename that reached the iPhone            |
-| `setFavorite` | `sharedFlags`: bit 0 set (`(old ?? 0) \| 1`) or cleared (`(old ?? 0) & ~1`)                                     | favourite went `null` → `1`, nothing else                           |
-| `move`        | the recording's `folder`; `countOfRecordings` on the old and the new folder, each set to its `recordings.count` | the move set `folder` and the destination's count 0 → 1 in one save |
-| `delete`      | `evictionDate = Date()`                                                                                         | nothing else; the folder count kept the deleted memo                |
-| `restore`     | `evictionDate = nil`                                                                                            | nothing else                                                        |
+| Method        | Attributes it sets                                                                                             | As the app did it                                     |
+| ------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `rename`      | `encryptedTitle`, `customLabelForSorting`; `flags`: bit `0x8` set (`(old ?? 0) \| 0x8`), only with a new title | the same three; `flags` went `1540` → `1548`          |
+| `setFavorite` | `sharedFlags`: bit 0 set (`(old ?? 0) \| 1`) or cleared (`(old ?? 0) & ~1`)                                    | favourite went `null` → `1`, nothing else             |
+| `move`        | the recording's `folder`; Core Data derives each folder's `countOfRecordings`                                  | `folder`, and each folder's `recordings`, in one save |
+| `delete`      | `evictionDate = Date()`                                                                                        | nothing else; the folder count kept the deleted memo  |
+| `restore`     | `evictionDate = nil`                                                                                           | nothing else                                          |
 
 Four more facts came out of the same watch:
 
-- **Folder counts are maintained, and include Recently Deleted.** The app keeps
-  `countOfRecordings` up to date on a move, and a memo in Recently Deleted still counts in the
-  folder it was in. The lane follows the same rule: a moved memo's old and new folders are each
-  set to their `recordings.count`, deleted members included.
+- **Folder counts are derived, and include Recently Deleted.** `countOfRecordings` is a
+  derived attribute, `count:(recordings)`, so Core Data updates it on any save that moves a
+  memo: a move's history lists only the folders' `recordings`, for the app and for the lane. A
+  memo in Recently Deleted still counts in the folder it was in.
 - **`EntityRevision` is empty.** The entity held no rows before or after any edit, so there is
   nothing there to keep in step.
 - **The app's history rows carry no author.** Its persistent-history transactions have a null
   `author`. The lane's carry `cupertino`, so its saves can be told apart from the app's.
-- **`ZFLAGS` is never touched.** No edit moved it, and its meaning is still unknown, so the lane
-  never writes `flags`.
+- **A rename sets bit `0x8` of `ZFLAGS`; nothing else touches it.** The 2026-11-10 watch never
+  renamed in the app, and on 2026-11-11 the app's rename changed `flags` beside the two title
+  columns. 11 rows carry the bit, each beside `0x200` and `0x400`. Its effect is unknown, perhaps
+  keeping a generated title from replacing the person's, so the lane sets it on a rename as the
+  app does.
 
 The lane adds its own rules on top. A title is trimmed, then must be 1 to 500 characters with no
 line break inside, or the call is refused as `invalid`. A call that would change nothing (the same
@@ -226,17 +229,41 @@ admits it only from the Voice Memos server it spawned itself. The app then:
 5. sets only the attributes in the table above, saves once with the author `cupertino`, and drops
    the coordinator.
 
-**The answer** carries `id`, `changed` (the recording's own attributes it set, sorted; a move's
-folder counts are bookkeeping and are not listed), `modelVersion`, `syncMeasured`, and a `sync`
-sentence. A refusal's reason (`invalid`, `notFound`, `incompatible`, `writesOff`, `failed`, or
-one from the connection) is in the tool error's `details.reason`.
+**The answer** carries `id`, `changed` (the recording's own attributes it set, sorted),
+`modelVersion`, `syncMeasured`, and a `sync` sentence. A refusal's reason (`invalid`,
+`notFound`, `incompatible`, `writesOff`, `failed`, or one from the connection) is in the tool
+error's `details.reason`.
 
-**Sync.** A write syncs when Voice Memos next runs. The lane launches nothing: until Voice Memos
-runs, the change is saved on this Mac and waiting in persistent history. Sync was measured on
-macOS 27.2, model version `VoiceMemos14`, on a Mac and an iPhone. The model version is read from
+**Sync.** `voicememod`, Voice Memos' daemon, exports each lane save to iCloud, whether or not
+the app is open; the lane launches nothing. Sync was measured on macOS 27.2, model version
+`VoiceMemos14`, on a Mac and an iPhone, on 2026-11-11 (below). The model version is read from
 the `.momd`'s `VersionInfo.plist` (`NSManagedObjectModel_CurrentVersionName`). On any other
 version the save still happens, `syncMeasured` is false, and the `sync` sentence says sync is not
 yet measured on this macOS and to check the recording on another device.
+
+**Measured 2026-11-11**, on a Debug build, through each tool on a throwaway memo. The store was
+read about 15 s after each call, and Olivier checked the Mac and the iPhone:
+
+| Call                   | Transaction | History                                           | Exported | Mac and iPhone                      |
+| ---------------------- | ----------- | ------------------------------------------------- | -------- | ----------------------------------- |
+| rename                 | 154         | the recording: the two title columns              | yes      | both                                |
+| unfavourite, favourite | 155, 156    | the recording: `sharedFlags`                      | yes      | both                                |
+| move out, move back in | 157, 158    | the recording: `folder`; the folder: `recordings` | yes      | both                                |
+| delete, restore        | 159, 160    | the recording: `evictionDate`                     | yes      | both                                |
+| rename, app quit       | 161         | the recording: the two title columns              | yes      | the iPhone, before the app reopened |
+| rename, with the bit   | 172         | the recording: the two title columns and `flags`  | yes      | the iPhone                          |
+
+"Exported" is `ANSCKRECORDMETADATA.ZLASTEXPORTEDTRANSACTIONNUMBER` reaching the transaction.
+With the app quit, `voicememod` was still running and exported 161 within 20 s. Renames 154 and
+161 predate the `flags` bit. Rename 172 ran on a fresh memo with the writer that sets it: `flags`
+went `516` → `524` and the history mask was `02500000`, the app's own rename's.
+
+**Reading a history column mask.** `ACHANGE.ZCOLUMNS` numbers an entity's to-one relationships,
+then its attributes, then its to-many relationships, each group by name, and reads bit 0 as the
+high bit of the first byte. For `CloudRecording`, `folder` is `80000000`, the two title columns
+`02400000`, `flags` `00100000`, `evictionDate` `00200000` and `sharedFlags` `00001000`;
+`Folder.recordings` is `08`. Lane transactions read a null `ZAUTHOR` in SQL, though the history
+API returns `cupertino` for them.
 
 **Diagnostics** reports the lane when Cupertino hosts the server: `lanes.writeLane` holds
 `compatible`, `modelVersion`, `syncMeasured` and the `refusal` a write would meet, and

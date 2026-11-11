@@ -49,7 +49,8 @@ describe("voice-memos resources", () => {
     ]) {
       expect(guide).toContain(`apple_voice_memos_${tool}`);
     }
-    expect(guide).toMatch(/syncs when Voice Memos next runs/);
+    expect(guide).toMatch(/uploads it even with Voice Memos closed/);
+    expect(guide).not.toMatch(/next runs/);
     expect(guide).toMatch(/trimmed, then must be 1 to 500 characters with no line break inside/);
   });
 

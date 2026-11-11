@@ -173,8 +173,9 @@ struct StoreLaneCheck {
           folder.setValue(Int64(count), forKey: "countOfRecordings")
           folders[uuid] = folder
         }
-        for (id, title, folder) in [
-          ("R-ONE", "Synthetic one", folders["F-ONE"]), ("R-TWO", "Synthetic two", nil),
+        for (id, title, folder, flags) in [
+          ("R-ONE", "Synthetic one", folders["F-ONE"], Int64(1540) as Int64?),
+          ("R-TWO", "Synthetic two", nil, nil),
         ] {
           let recording = NSEntityDescription.insertNewObject(
             forEntityName: "CloudRecording", into: context)
@@ -182,6 +183,7 @@ struct StoreLaneCheck {
           recording.setValue(title, forKey: "encryptedTitle")
           recording.setValue(title, forKey: "customLabelForSorting")
           recording.setValue(folder, forKey: "folder")
+          recording.setValue(flags, forKey: "flags")
         }
         try context.save()
       }
@@ -293,8 +295,8 @@ struct StoreLaneCheck {
   }
 
   /// `call` was a move of `id` that saved one transaction: the recording's change lists only
-  /// `folder`, and every other change is one of `folders`, listing only `countOfRecordings`
-  /// and/or `recordings`.
+  /// `folder`, and every other change is one of `folders`, listing only `recordings`, as the
+  /// app's move did (`countOfRecordings` is derived from it).
   static func expectMoveHistory(
     _ storeURL: URL, _ label: String, id: String, folders: Set<String>,
     _ call: () throws -> Void
@@ -307,8 +309,7 @@ struct StoreLaneCheck {
     for change in rows where change.row != id {
       try expect(folders.contains(change.row), "\(label) changed \(change), not an affected folder")
       try expect(
-        !change.properties.isEmpty
-          && Set(change.properties).isSubset(of: ["countOfRecordings", "recordings"]),
+        change.properties == ["recordings"],
         "\(label) recorded \(change)")
     }
   }
@@ -376,8 +377,8 @@ struct StoreLaneCheck {
   /// Voice Memos) cannot exercise the writer, so the group skips rather than fails.
   static let voiceMemosNeeds: [String: [String]] = [
     "CloudRecording": [
-      "uniqueID", "encryptedTitle", "customLabelForSorting", "sharedFlags", "evictionDate",
-      "folder",
+      "uniqueID", "encryptedTitle", "customLabelForSorting", "flags", "sharedFlags",
+      "evictionDate", "folder",
     ],
     "Folder": ["uuid", "countOfRecordings", "recordings"],
   ]
@@ -424,18 +425,18 @@ struct StoreLaneCheck {
       unpatchedModel.entitiesByName["CloudRecording"]?.versionHash
       != patchedModel.entitiesByName["CloudRecording"]?.versionHash
 
-    check("renameSetsTitleAndSortKey") {
+    check("renameSetsTitleSortKeyAndRenamedBit") {
       let (writer, storeURL) = try voiceMemosFixture("rename")
       var result: VoiceMemosWriter.Result?
-      try expectHistory(
-        storeURL, "rename",
-        [HistoryChange(row: "R-ONE", properties: ["customLabelForSorting", "encryptedTitle"])]
-      ) { result = try writer.rename(id: "R-ONE", title: "  Synthetic renamed ") }
+      let renamed = ["customLabelForSorting", "encryptedTitle", "flags"]
+      try expectHistory(storeURL, "rename", [HistoryChange(row: "R-ONE", properties: renamed)]) {
+        result = try writer.rename(id: "R-ONE", title: "  Synthetic renamed ")
+      }
       guard let result else { throw Failure(why: "rename returned nothing") }
       try expect(result.id == "R-ONE", "id is \(result.id)")
-      try expect(
-        result.changed == ["customLabelForSorting", "encryptedTitle"],
-        "changed is \(result.changed)")
+      try expect(result.changed == renamed, "changed is \(result.changed)")
+      let flags = try recording(storeURL, "R-ONE", "flags") as? Int64
+      try expect(flags == 1548, "R-ONE's flags read back as \(flags ?? -1), not 1540 | 8")
       try expect(result.modelVersion != nil, "no model version")
       try expect(
         result.syncMeasured == (result.modelVersion == "VoiceMemos14"),
@@ -446,6 +447,14 @@ struct StoreLaneCheck {
       }
       let other = try recording(storeURL, "R-TWO", "encryptedTitle") as? String
       try expect(other == "Synthetic two", "R-TWO's title changed to \(other ?? "nil")")
+      // A nil flags gets the bit alone; a recording that has it already keeps flags as it is.
+      _ = try writer.rename(id: "R-TWO", title: "Synthetic two renamed")
+      let fresh = try recording(storeURL, "R-TWO", "flags") as? Int64
+      try expect(fresh == 8, "R-TWO's nil flags read back as \(fresh ?? -1), not 8")
+      let again = try writer.rename(id: "R-ONE", title: "Synthetic again")
+      try expect(
+        again.changed == ["customLabelForSorting", "encryptedTitle"],
+        "a second rename changed \(again.changed)")
     }
 
     check("renameRefusesBadTitles") {
@@ -615,7 +624,7 @@ struct StoreLaneCheck {
         "result keys are \(result.keys.sorted())")
       try expect(result["id"] as? String == "R-ONE", "result id is \(result["id"] ?? "absent")")
       try expect(
-        result["changed"] as? [String] == ["customLabelForSorting", "encryptedTitle"],
+        result["changed"] as? [String] == ["customLabelForSorting", "encryptedTitle", "flags"],
         "changed is \(result["changed"] ?? "absent")")
       let measured = VoiceMemosWriter.measuredVersions.contains(voiceMemosVersion())
       try expect(result["modelVersion"] as? String == voiceMemosVersion(), "modelVersion differs")

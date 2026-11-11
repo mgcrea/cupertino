@@ -52,8 +52,8 @@ them away: until the server restarts they stay listed, and each call is refused 
 | `apple_voice_memos_restore_recording` | bring a recording back from Recently Deleted |
 
 Cupertino saves each one through Core Data with Voice Memos' own model, so iCloud uploads it like
-a change made in the app. A write syncs when Voice Memos next runs; nothing is launched to make it
-happen. Sync was measured on macOS 27.2 (model `VoiceMemos14`) on a Mac and an iPhone. On another
+a change made in the app, even with Voice Memos closed: its background service uploads it.
+Sync was measured on macOS 27.2 (model `VoiceMemos14`) on a Mac and an iPhone. On another
 model version the save still happens, and the result says sync is not yet measured there. A title
 is trimmed, then must be 1 to 500 characters with no line break inside. A call that would change
 nothing saves nothing and returns `changed: []`.

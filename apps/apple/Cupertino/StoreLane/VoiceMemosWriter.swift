@@ -3,15 +3,16 @@ import Foundation
 
 /// Renames, favourites, moves, deletes and restores a Voice Memo by saving through Voice Memos'
 /// own Core Data model, so the save lands in the persistent history the app's iCloud exporter
-/// reads, and the change syncs when Voice Memos next runs.
+/// reads. Voice Memos' daemon, `voicememod`, uploads it, whether or not the app is open.
 ///
-/// Each method changes only what the app itself changed for the same step (watched 2026-11-10,
-/// one transaction per step):
+/// Each method changes only what the app itself changed for the same step (watched 2026-11-10
+/// and 2026-11-11, one transaction per step):
 ///
-/// - rename: `encryptedTitle` and `customLabelForSorting`, both to the trimmed title.
-/// - favourite: bit 0 of `sharedFlags`, nothing else. `flags` is never written.
-/// - move: the recording's `folder`, and each affected folder's `countOfRecordings` set to its
-///   `recordings.count`.
+/// - rename: `encryptedTitle` and `customLabelForSorting`, both to the trimmed title, and bit
+///   `0x8` of `flags` set, its other bits kept.
+/// - favourite: bit 0 of `sharedFlags`, nothing else.
+/// - move: the recording's `folder`. Each folder's `countOfRecordings` is derived from its
+///   `recordings`, so Core Data keeps it.
 /// - delete: `evictionDate` to now; the folder count keeps the deleted memo.
 /// - restore: `evictionDate` to nil.
 ///
@@ -22,8 +23,7 @@ import Foundation
 /// save. Values are compared before they are set: Core Data counts some same-value sets as
 /// changes.
 nonisolated struct VoiceMemosWriter: Sendable {
-  /// What a call did. `changed` lists the recording's own attributes it set, sorted; a move's
-  /// folder counts are bookkeeping and are not listed.
+  /// What a call did. `changed` lists the recording's own attributes it set, sorted.
   struct Result: Equatable {
     var id: String
     var changed: [String]
@@ -70,6 +70,10 @@ nonisolated struct VoiceMemosWriter: Sendable {
     store.status()
   }
 
+  /// The `flags` bit the app sets on a rename (watched 2026-11-11). Its effect is not known, so
+  /// the lane sets it as the app does.
+  static let renamedFlag: Int64 = 0x8
+
   func rename(id: String, title: String) throws -> Result {
     let title = try Self.validTitle(title)
     return try edit(id) { recording, _ in
@@ -77,6 +81,11 @@ nonisolated struct VoiceMemosWriter: Sendable {
       for key in ["encryptedTitle", "customLabelForSorting"]
       where Self.set(recording, key, to: title) {
         changed.append(key)
+      }
+      // Only with a new title: the same title saves nothing, as before.
+      if !changed.isEmpty {
+        let flags = (recording.value(forKey: "flags") as? NSNumber)?.int64Value ?? 0
+        if Self.set(recording, "flags", to: flags | Self.renamedFlag) { changed.append("flags") }
       }
       return changed
     }
@@ -100,13 +109,9 @@ nonisolated struct VoiceMemosWriter: Sendable {
       }
       let source = recording.value(forKey: "folder") as? NSManagedObject
       if source?.objectID == destination?.objectID { return [] }
+      // The inverse, each folder's `recordings`, follows, and with it the derived
+      // `countOfRecordings`.
       recording.setValue(destination, forKey: "folder")
-      // Inverse relationships are maintained here, so each folder's `recordings` is current.
-      context.processPendingChanges()
-      for folder in [source, destination].compactMap({ $0 }) {
-        let count = (folder.value(forKey: "recordings") as? NSSet)?.count ?? 0
-        _ = Self.set(folder, "countOfRecordings", to: Int64(count))
-      }
       return ["folder"]
     }
   }
