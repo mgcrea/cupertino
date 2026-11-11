@@ -1390,17 +1390,29 @@ So `apple_desktop_type` with a handle now tries the background first
 1. **Only a field that can be read back.** It needs a string `AXValue`, and must not be an
    `AXSecureTextField`, whose value reads empty whatever it holds (`BackgroundTyping.eligible`).
    Anything else goes the old way.
-2. **Admitted as background.** `DrivingPolicy.decide(background: true)` opens the session without
-   a countdown or a question. A recent no still refuses it. The session is **quiet**
-   (`DrivingSession.Open.quiet`): the first verb that takes the front in it is still put to the
-   decision. Without that, a background type that fell back to the front would have skipped the
-   countdown that the fallback needs.
+2. **Admitted as background, and only behind the person's app.** Into the app in front, a posted
+   key still moves their caret and mixes with their own keys, so `DrivingPolicy.isBackground`
+   sends that case the old way, with its countdown. Behind, `DrivingPolicy.decide(background:
+true)` opens the session without a countdown or a question. A recent no still refuses it. The
+   session is **quiet** (`DrivingSession.Open.quiet`):
+   - The first verb in it that takes the front is still put to the decision. Without that, a
+     background type that fell back to the front would have skipped the countdown the fallback
+     needs.
+   - A no to that verb ends the quiet session, and its background verbs stop with it.
+   - Who it hands back to is read when it first takes the front, not when it opened.
 3. **Focused through AX, then posted to the pid** in the same 20-character unicode chunks `type`
    uses.
-4. **Read back** every 25 ms for up to 500 ms (`BackgroundTyping.verdict`). A field that changed
-   at all counts as landed and is never typed again. `verified` says whether it now holds one more
-   copy of the text than before. Only an unchanged field falls back to the front, because a field
-   that took part of the text would otherwise get that part twice.
+4. **Read back** every 25 ms for up to 500 ms (`BackgroundTyping.verdict`). Each of these counts
+   as landed and is never typed again:
+   - a field that changed at all;
+   - a field whose selection moved: focusing an NSTextField selects all of it, so the same text
+     typed over itself changes nothing else;
+   - a value that could not be read: unknown is not nothing.
+
+   `verified` says whether the field now holds one more copy of the text than before. A field
+   that took part of the text is not typed again, or that part would arrive twice. An unchanged
+   field falls back to the front, and is read once more just before the front types. That catches
+   keys the app handled after the read-back gave up.
 
 `make background-type-live` runs this checkout's desktop server against a TextEdit started behind.
 It passed 2026-11-11 while Olivier worked in VS Code: `typed behind, é ✓` landed `verified`,
@@ -1410,8 +1422,9 @@ it once its document is closed.
 
 Not measured: Return, Tab and Escape posted to a pid (plain keyDowns, so probably like letters,
 though a field's action on Return may differ), Chromium and Electron fields, WebKit content, and
-input methods. Each of these is covered by the read-back. The cost is that such a field comes
-forward as before, not that text is lost.
+input methods. For a field that takes nothing, the read-back sends it forward as before. A field
+that takes the keys more than 500 ms late, and also after the front came, would still get the
+text twice. The re-read narrows that window but has not been measured against such an app.
 
 ## A channel into our own apps, 2026-11-11
 
@@ -1426,18 +1439,31 @@ permission. Cupertino never links it: the Shell window takes only a hardware cli
 channel inside Cupertino would be a way round that.
 
 `apple_desktop_launch` with `channel: true` passes the argument and says whether a channel
-opened. After that, `AppChannel.find` matches the running app's pid to a directory whose `ready`
-names that pid, which leaves out a crashed app's stale directory and a reused pid. Click, drag
-(within the app), hover, key (when every modifier has a menu meaning) and type with that
-`bundleId` then go through it. They answer `lane: "channel"` with what the app hit and what holds
-its focus. They are admitted as background, so no countdown is shown, and nothing is brought
-forward or checked against the window server's stacking: the app hit-tests its own windows, so a
-covered window still takes the click. An application without a channel is driven exactly as
-before.
+opened. **Only a process launched that way has a channel** (`AppChannel.register`), matched by pid
+and launch date. A channel is a directory, and the per-user temporary directory is shared by every
+unsandboxed process the user runs. The first version believed any directory whose `ready` named
+a live pid. Review found what that meant: a process with no grant at all could plant one for
+Safari and read off it what the agent typed. That includes a password, because a secure field is
+exactly what the background lane hands on. `channel-check` now plants one for Finder and checks
+that it is ignored. The same rule leaves out a crashed app's stale directory and a reused pid.
+After Cupertino or the app restarts, launch it again with `channel: true`.
+
+Click (left only), drag (within the app), hover, key (when every modifier has a menu meaning) and
+type with that `bundleId` then go through the channel. They answer `lane: "channel"` with what the
+app hit and what holds its focus. Nothing is brought forward or checked against the window
+server's stacking: the app hit-tests its own windows, so a covered window still takes the click.
+Behind the person's app they are admitted as background, with no countdown; in front they get
+the countdown. An application without a channel is driven exactly as before.
+
+A right-click is refused, with a pointer to `apple_desktop_show_menu`. The context menu is a window
+of its own, drawn over the person's work even when the app's window is covered. Its tracking loop
+reads no key sent to the app's window, so nothing sent through the channel could close it. A
+shortcut honours an item the app disabled: in a menu that does not enable its items
+automatically, as SwiftUI command menus do not, `isEnabled` decides.
 
 `make channel-check` builds a fixture app from swift-support-kit's sources and registers it with
 Launch Services, so `apple_desktop_launch` can start it by bundle id. It then drives the fixture
-through both `AppChannel` and the server's verbs. 20/20 passed on 2026-11-11 while Olivier
+through both `AppChannel` and the server's verbs. 22/22 passed on 2026-11-11 while Olivier
 worked. The fixture never became active, and the app in front stayed in front. The check found
 two defects, both fixed in swift-support-kit before this was written:
 
@@ -1454,9 +1480,9 @@ two defects, both fixed in swift-support-kit before this was written:
 one (it defaults to `~/Projects/swift-support-kit`).
 
 Not measured: hover (whether a `mouseMoved` delivered this way fires a tracking area or
-`onContinuousHover`), scroll, right-click menus (the ack goes out before the menu opens, because
-the menu's loop holds the mouse-down), a drag that needs real time between steps (the steps are
-queued all at once), and a sandboxed app's container from a Cupertino without Full Disk Access.
+`onContinuousHover`), scroll, right-click menus (refused, above), a drag that needs real time
+between steps (the steps are queued all at once), and a sandboxed app's container from a
+Cupertino without Full Disk Access.
 
 ## Still open
 
