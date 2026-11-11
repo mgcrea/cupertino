@@ -676,6 +676,52 @@ places and maps to `ZFAVORITEITEM`, not to collection items. The remaining candi
 **Saved Places** and **Recently Added** sidebar sections; if either holds eight, these are
 places the surface cannot list rather than debris.
 
+## What Maps changes, watched 2026-11-11
+
+Watched on macOS 27.2 for the store lane ([the design](superpowers/specs/2026-11-11-maps-store-lane-design.md)).
+Olivier made each change by hand in Maps on throwaway public places, and
+[`scripts/history-columns.swift`](../scripts/history-columns.swift) decoded the persistent
+history after each step. Names are Core Data's; the column is the same name upper-cased with a `Z`
+in front. Each save below is one transaction by `com.apple.Maps` (process `Maps`).
+
+| Step                   | Transaction | What Maps saved                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Open a place           | 850         | a `HistoryPlaceItem` (a recent) and its own `MixinMapItem` with a place record                                                                                                                                                                                                                                                                                                                                                                    |
+| Pin it                 | 851, 852    | a `FavoriteItem` and its own `MixinMapItem`, the record **copied** from the recent's. Set: `identifier`, `createTime`, `modificationTime`, `mapItemLastRefreshed`, `latitude`, `longitude`, `mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`, `shortcutIdentifier`, `positionIndex`; `type 1`, `version 2`, `source 0`, `hidden 0`; `customName` and `originatingAddressString` nil. 852 rewrote `positionIndex` and `modificationTime` |
+| Unpin it               | 856–858     | **not a delete**: Maps refreshed the record (856), inserted a `CollectionPlaceItem` in no Guide with its own `MixinMapItem` (857), then deleted the `FavoriteItem` and, by cascade, its `MixinMapItem` (858). The new saved place keeps the pin's `createTime`, name, address, category and `muid`; `type 0`, `origin 0`, `positionIndex 0`                                                                                                       |
+| Save to the library    | 862         | a `CollectionPlaceItem` in no Guide and its own `MixinMapItem`. Set: `identifier`, `createTime`, `modificationTime`, `mapItemLastRefreshed`, `latitude`, `longitude`, `mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`; `type 0`, `origin 0`, `positionIndex 0`, `droppedPinFloorOrdinal 0`; `customName`, `droppedPinCoordinate`, `placeItemNote`, `originalIdentifier` nil                                                            |
+| Create a Guide         | 865         | a `Collection`: `identifier`, `title`, `createTime`, `modificationTime`, `positionIndex 0`                                                                                                                                                                                                                                                                                                                                                        |
+| File a place in it     | 866         | both sides of the relationship, in one save: the `Collection`'s `places` and `modificationTime`, and the `CollectionPlaceItem`'s `collections` and `modificationTime`. `placesCount` followed (it is derived, `count:(places)`)                                                                                                                                                                                                                   |
+| Remove the saved place | 867         | the `CollectionPlaceItem` deleted, its `MixinMapItem` by cascade, and the `Collection`'s `places` with it; the Guide's `modificationTime` did not move                                                                                                                                                                                                                                                                                            |
+
+Five findings the store lane builds on:
+
+- **Unpinning keeps the place.** Maps moves an unpinned place into the library as a saved place.
+  `remove_favorite` does the same through the lane; `remove_saved_place` is what removes a place.
+- **A pin carries a `shortcutIdentifier`**, the coordinate at pin time rounded to four decimals
+  and printed with five (`"48.85530,2.31580"`). 13 of the 15 coordinate-shaped ids on this store
+  sit within 20 m of their pin's stored coordinate, the rest within 2 km, because Maps refreshes
+  the coordinate later. The two without a comma belong to the Home and Work slots.
+- **`positionIndex` on a pin is a large ordering key**, not a count: new pins land above the
+  current maximum, about 5e7 apart (9218868438038614688 → 9218868438090581837 for the newest two).
+- **Maps converts favourites that are not real pins into saved places.** Before the pin, Maps
+  itself deleted favourite 24 and converted it into the saved place already at that spot (848–849),
+  and later did the same to favourite 26, as a new saved place carrying the favourite's
+  `createTime` (854–855). The SQL route's favourites look exactly like those: a small
+  `positionIndex`, no `shortcutIdentifier`, and no `ANSCKRECORDMETADATA` row, so they were never
+  mirrored. Favourite 27 is the last such row on this store. The SQL route's inserts did not sync,
+  whatever the section above once concluded.
+- **Recents are replaced, not kept.** Opening a place again deleted its earlier recent and inserted
+  a new one (859–860, 863–864). A lane write that names a recent as its source must refuse cleanly
+  when that recent has gone.
+
+Reading the masks takes the sub-entity rule `scripts/history-columns.swift` records: within each
+group (to-one relationships, then attributes, then to-many relationships), a sub-entity lists its
+parent's properties first in the parent's order, then its own by name. `CollectionPlaceItem` and
+`HistoryPlaceItem` are sub-entities. The many-to-many join table is `Z_7PLACES`
+(`Z_7COLLECTIONS`, `Z_8PLACES`) on macOS 27.2, `Z_6PLACES` on 26.6: Core Data renumbers it, so
+nothing should name it.
+
 ## Still open
 
 - **The captured fixture is schema-only, so coverage still is not testable offline.**

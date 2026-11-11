@@ -1,6 +1,6 @@
 # Maps on the store lane: favourites, saved places and Guides through Maps' own model
 
-**Status:** approved 2026-11-11. Olivier, the same day: the npm routes may go where the lane
+**Status:** approved 2026-11-11. Amended the same day by the watch (`docs/maps.md`, "What Maps changes"): unpinning keeps the place as a saved place, so `remove_favorite` does too. Olivier, the same day: the npm routes may go where the lane
 makes them redundant, so the lane is Maps' only write route.
 
 This is Phase 2 of [the store lane](2026-11-10-swift-write-lane-design.md), which fixed the lane
@@ -40,13 +40,13 @@ not match.) Voice Memos needed a runtime patch; Maps needs none.
 - When Cupertino hosts the Maps server, these five tools save through the lane, with their names
   unchanged and their inputs as "Inputs" below says:
 
-  | Tool                 | Lane method             | What the save does                                                                                   |
-  | -------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------- |
-  | `add_favorite`       | `maps.addFavorite`      | inserts a `FavoriteItem` and its own `MixinMapItem`, copying the place record of a recent Maps wrote |
-  | `remove_favorite`    | `maps.removeFavorite`   | deletes the `FavoriteItem`; the model's cascade rule deletes its `MixinMapItem`                      |
-  | `save_place`         | `maps.savePlace`        | inserts a `CollectionPlaceItem` in no Guide, and its own `MixinMapItem`, copied the same way         |
-  | `remove_saved_place` | `maps.removeSavedPlace` | deletes the `CollectionPlaceItem`; the cascade deletes its `MixinMapItem`                            |
-  | `add_place_to_guide` | `maps.fileInGuide`      | adds a `Collection` to a `CollectionPlaceItem`'s `collections`; `Collection.placesCount` is derived  |
+  | Tool                 | Lane method             | What the save does                                                                                                                                                                                                      |
+  | -------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+  | `add_favorite`       | `maps.addFavorite`      | inserts a `FavoriteItem` and its own `MixinMapItem`, copying the place record of a recent Maps wrote                                                                                                                    |
+  | `remove_favorite`    | `maps.removeFavorite`   | unpins as Maps does (watched 2026-11-11): inserts a `CollectionPlaceItem` in no Guide copying the pin, unless a saved place already sits there, then deletes the `FavoriteItem`; the cascade deletes its `MixinMapItem` |
+  | `save_place`         | `maps.savePlace`        | inserts a `CollectionPlaceItem` in no Guide, and its own `MixinMapItem`, copied the same way                                                                                                                            |
+  | `remove_saved_place` | `maps.removeSavedPlace` | deletes the `CollectionPlaceItem`; the cascade deletes its `MixinMapItem`                                                                                                                                               |
+  | `add_place_to_guide` | `maps.fileInGuide`      | adds a `Collection` to a `CollectionPlaceItem`'s `collections`; `Collection.placesCount` is derived                                                                                                                     |
 
   Plus `maps.status`, as `voiceMemos.status`.
 
