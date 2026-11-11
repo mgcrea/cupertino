@@ -38,11 +38,13 @@
 ### Task 1: Background admission
 
 **Files:**
+
 - Modify: `apps/apple/Cupertino/DrivingPolicy.swift` (`decide`)
 - Modify: `apps/apple/Cupertino/DrivingSession.swift` (`admit`)
 - Test: `scripts/unit-check.swift` (Driving policy block)
 
 **Interfaces:**
+
 - Produces: `DrivingPolicy.decide(_:secondsSinceInput:declinedUntil:now:background: Bool = false) -> Decision`, and `DrivingSession.admit(_ target: String, background: Bool = false, settings:secondsSinceInput:)`.
 
 - [ ] Step 1: Add the failing checks: `decide(counting, idle: 0.5, background: true) == .open`; `decide(asking, idle: 0, background: true) == .open`; `decide(counting, idle: 0, declinedUntil: noon+10, background: true) == .declined(retryIn: 10)`.
@@ -54,11 +56,13 @@
 ### Task 2: The verdict on a background type
 
 **Files:**
+
 - Create: `apps/apple/Cupertino/BackgroundTyping.swift` (Foundation only)
 - Modify: `Makefile` (`unit` list), and the Xcode project (target membership)
 - Test: `scripts/unit-check.swift`
 
 **Interfaces:**
+
 - Produces: `nonisolated enum BackgroundTyping { enum Verdict: Equatable { case landed(verified: Bool), nothingLanded }; static func verdict(before: String, after: String, typed: String) -> Verdict; static func eligible(role: String?, subrole: String?, value: Any?) -> Bool }`.
 
 - [ ] Step 1: Failing checks:
@@ -78,10 +82,12 @@
 ### Task 3: `apple_desktop_type` types in the background
 
 **Files:**
+
 - Modify: `apps/apple/Cupertino/AccessibilityDriver.swift`: add `typeInBackground` beside `type(text:)`
 - Modify: `apps/apple/Cupertino/DesktopServer.swift`: the `apple_desktop_type` case and its description
 
 **Interfaces:**
+
 - Consumes: `DrivingSession.admit(_:background:)` (Task 1), `BackgroundTyping` (Task 2).
 - Produces: `static func typeInBackground(text: String, handle: String, scope: Scope) throws -> BackgroundTyping.Verdict?`. Nil means not eligible, so nothing was posted and the caller takes today's path.
 
@@ -101,6 +107,7 @@
 ### Task 4: Measured live, and written down
 
 **Files:**
+
 - Modify: `docs/desktop.md`: a new dated section, "Typing without the front, 2026-11-11"
 - Modify: `CHANGELOG.md`: an Unreleased entry
 - Keep: `scripts/spike-background-input.swift` (its header holds the measurement)
@@ -115,11 +122,13 @@
 ### Task 5: The command model (swift-support-kit)
 
 **Files:**
+
 - Modify: `Package.swift`: product and target `SupportKitDriving`, test target `SupportKitDrivingTests`, and a paragraph in the header comment saying why it is its own product (it posts input, Debug only)
 - Create: `Sources/SupportKitDriving/DrivingCommand.swift`
 - Test: `Tests/SupportKitDrivingTests/DrivingCommandTests.swift`
 
 **Interfaces:**
+
 - Produces: `public enum DrivingCommand: Equatable, Sendable`, with these cases:
   - `click(point: CGPoint, button: Button, count: Int)`
   - `drag(from: CGPoint, to: CGPoint, durationMs: Int)`
@@ -129,6 +138,7 @@
   - `key(name: String, modifiers: [Modifier])`
 
   Also `enum Button: String { left, right }`, `enum Modifier: String { command, shift, option, control }`, `struct Envelope { seq: Int; command: DrivingCommand }`, `static func parse(line: String) throws -> Envelope`, and `static func keyCode(_ name: String) -> UInt16?`. The key table holds the same position-only keys as Cupertino's `keyCodes`, plus a–z, 0–9 by US position for shortcuts, used only together with a modifier.
+
 - Wire format: `{"seq":1,"verb":"click","x":10,"y":20,"button":"left","count":1}`. `drag` uses `from:[x,y]` and `to:[x,y]`; `key` uses `"key":"a","modifiers":["command"]`.
 
 - [ ] Step 1: Tests: each verb parses from its wire line. A missing `seq` throws. An unknown verb throws an error whose message names the verb. An unknown modifier throws. `keyCode("return") == 36`, and `keyCode("a") == 0`.
@@ -139,12 +149,14 @@
 ### Task 6: The channel and the event synthesis (swift-support-kit)
 
 **Files:**
+
 - Create: `Sources/SupportKitDriving/Driving.swift`: the public entry point
 - Create: `Sources/SupportKitDriving/DrivingChannel.swift`: file transport
 - Create: `Sources/SupportKitDriving/EventSynthesis.swift`: `NSEvent` building and delivery
 - Test: `Tests/SupportKitDrivingTests/WindowPickTests.swift`
 
 **Interfaces:**
+
 - Produces:
   - `@MainActor public final class Driving { public static func startIfRequested() -> Driving? }`. In a non-DEBUG build the body is `return nil` and nothing else compiles in.
   - The channel directory: `<NSTemporaryDirectory()>/SupportKitDriving/<pid>/`, holding `commands.jsonl` (Cupertino appends) and `events.jsonl` (the app appends).
@@ -167,6 +179,7 @@
 ### Task 7: Cupertino routes through the channel
 
 **Files:**
+
 - Create: `apps/apple/Cupertino/AppChannel.swift`: the client (find by pid, append command, wait for ack)
 - Modify: `apps/apple/Cupertino/DesktopServer.swift`: `launch` takes `channel: Bool`; click, drag, hover, key and type look for a channel first
 - Modify: `apps/apple/Cupertino/AccessibilityDriver.swift`: `launch(bundleId:scope:timeout:arguments:)`
@@ -175,6 +188,7 @@
 - Test: `scripts/channel-check.swift`
 
 **Interfaces:**
+
 - Consumes: the wire format and events from Tasks 5–6.
 - Produces: `nonisolated struct AppChannel { static func find(pid: pid_t, bundleId: String) -> AppChannel?; func send(_ verb: [String: Any], timeout: TimeInterval = 2) throws -> [String: Any] }`.
   - `find` checks the container's `Data/tmp/SupportKitDriving/<pid>/` first, then this user's `NSTemporaryDirectory()`, and requires a `ready` event whose pid is alive and equals `pid`.

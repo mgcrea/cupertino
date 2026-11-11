@@ -1363,6 +1363,56 @@ one rule is easier to follow than a list of exceptions, and reading first costs 
 while the Mac was in use, so the probe reproduced only the part that matters, an action that holds
 the main thread past the timeout.
 
+## Typing without the front, 2026-11-11
+
+The iOS lane in mgcrea-ai drives a Simulator through WebDriverAgent without ever taking the Mac's
+focus, because its events go into the simulated device's own event system. The Mac has one per
+login session, with one cursor, one key window and one frontmost application. So every verb here
+that posts to the session competes with the person at the keyboard, and the countdown, the card and
+the hand-back all exist to manage that. The question was which verbs need the session at all.
+
+`scripts/spike-background-input.swift` measured it against a throwaway app (AppKit field, text view
+and button, SwiftUI field and button), with its window in front and again behind other windows.
+`textedit-probe` then checked a third-party app. In 32 cases the target never became active and its
+window was never key.
+
+| How                                                                  | Inactive app, window in front or covered   |
+| -------------------------------------------------------------------- | ------------------------------------------ |
+| Keys posted from another process (`postToPid`), field focused via AX | **land**: AppKit, SwiftUI, TextEdit        |
+| A shortcut (Cmd-A, the Mail spike's Cmd-V) posted the same way       | ignored: the menu bar is not in use        |
+| Clicks posted the same way, with or without the window fields set    | arrive (the monitor sees them), do nothing |
+| `AXPress`                                                            | works, as it always has                    |
+| In process: `NSWindow.sendEvent` keys, clicks, click-then-type       | **land**                                   |
+
+So `apple_desktop_type` with a handle now tries the background first
+(`AccessibilityDriver.typeInBackground`):
+
+1. **Only a field that can be read back.** It needs a string `AXValue`, and must not be an
+   `AXSecureTextField`, whose value reads empty whatever it holds (`BackgroundTyping.eligible`).
+   Anything else goes the old way.
+2. **Admitted as background.** `DrivingPolicy.decide(background: true)` opens the session without
+   a countdown or a question. A recent no still refuses it. The session is **quiet**
+   (`DrivingSession.Open.quiet`): the first verb that takes the front in it is still put to the
+   decision. Without that, a background type that fell back to the front would have skipped the
+   countdown that the fallback needs.
+3. **Focused through AX, then posted to the pid** in the same 20-character unicode chunks `type`
+   uses.
+4. **Read back** every 25 ms for up to 500 ms (`BackgroundTyping.verdict`). A field that changed
+   at all counts as landed and is never typed again. `verified` says whether it now holds one more
+   copy of the text than before. Only an unchanged field falls back to the front, because a field
+   that took part of the text would otherwise get that part twice.
+
+`make background-type-live` runs this checkout's desktop server against a TextEdit started behind.
+It passed 2026-11-11 while Olivier worked in VS Code: `typed behind, é ✓` landed `verified`,
+TextEdit never became active, and the app in front stayed in front. It is not a gate, because it
+posts input. AppleScript's `quit` did not end a TextEdit started that way, so the check terminates
+it once its document is closed.
+
+Not measured: Return, Tab and Escape posted to a pid (plain keyDowns, so probably like letters,
+though a field's action on Return may differ), Chromium and Electron fields, WebKit content, and
+input methods. Each of these is covered by the read-back. The cost is that such a field comes
+forward as before, not that text is lost.
+
 ## Still open
 
 - **An application that takes the front when launched behind.** `launch` hands the front back when

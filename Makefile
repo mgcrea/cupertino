@@ -317,6 +317,34 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/desktop-check.swift
 	@apps/apple/.build/desktop-check
 
+background-type-live: ## Type into a TextEdit started behind, through this checkout's desktop server (posts input; by hand)
+	@# Not a gate: it posts real keys, to TextEdit's pid only, so it is safe
+	@# while someone works and needs the shell's Accessibility grant. It
+	@# refuses to start while TextEdit is running.
+	@mkdir -p apps/apple/.build
+	@swiftc -O -o apps/apple/.build/background-type-live \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
+		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
+		apps/apple/Cupertino/MailComposer.swift \
+		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
+		apps/apple/Cupertino/DrivingSession.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
+		apps/apple/Cupertino/DrivingOverlay.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/background-type-live.swift
+	@apps/apple/.build/background-type-live
+
 mail-composer-check: ## Assert the Mail composer's text matching, handle registry and Mail-only verbs
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/mail-composer-check \
