@@ -325,6 +325,32 @@ describe("find: seeding", () => {
     await expect(attempt).rejects.toThrow(/^Maps did not produce a place record for "Test Tower"/);
   });
 
+  /*
+   * The newest recent above the watermark is the seed's only when it is the
+   * only one: a second place opened in Maps meanwhile could be either.
+   */
+  it("refuses when two places land in Recents during the wait", async () => {
+    for (const coords of [{}, { latitude: 51.5007, longitude: -0.1246 }]) {
+      const path = emptyStore();
+      const openUrl = () =>
+        exec(
+          path,
+          recent(1, 1, 51.5007, -0.1246, SEEDED_ID) +
+            recent(2, 2, 51.5008, -0.1247, "22222222-3333-4444-8555-666666666666"),
+        );
+      const attempt = new PlaceSourceFinder({ storePath: path, openUrl, seedTimeoutMs: 2000 }).find(
+        { query: "Test Tower", ...coords },
+      );
+      await expect(attempt).rejects.toThrow(MapsWriteError);
+      const error = (await attempt.catch((err: unknown) => err)) as MapsWriteError;
+      expect(error.message).toBe(
+        'While Maps resolved "Test Tower", another place was opened in Maps too, so which ' +
+          "record is this one's cannot be told. Nothing was saved — try again.",
+      );
+      expect(error.details).toMatchObject({ reason: "invalid" });
+    }
+  });
+
   it("seeds with no coordinate at all, and accepts what Maps resolved", async () => {
     const path = emptyStore();
     const source = await new PlaceSourceFinder({

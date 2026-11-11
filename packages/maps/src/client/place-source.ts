@@ -22,8 +22,9 @@ import type { EntityKey } from "./store.js";
  *   1. A record already in the store within about a metre of the coordinate,
  *      owned by a favourite, a saved place or a recent. Costs nothing.
  *   2. Seeding: open `maps://?q=<query>` and poll Recents above a watermark for
- *      the record Maps files there. Leaves a Recents entry, which is why the
- *      first way is always tried first.
+ *      the record Maps files there, refused when a second place lands there
+ *      meanwhile. Leaves a Recents entry, which is why the first way is always
+ *      tried first.
  *
  * Every connection here is read-only, and none is held across the seed: Maps is
  * being asked to write the very row being waited for.
@@ -276,9 +277,13 @@ export class PlaceSourceFinder {
     return row ?? null;
   }
 
-  /** The newest recent place carrying a record, above a watermark. */
-  #seededDonor(db: DatabaseSync, sinceHistoryPk: number): SourceRow | null {
-    const row = db
+  /**
+   * The recent places carrying a record above a watermark, newest first, two
+   * at most: two is enough to tell the seed's own from a second place opened
+   * in Maps meanwhile.
+   */
+  #seededDonors(db: DatabaseSync, sinceHistoryPk: number): SourceRow[] {
+    return db
       .prepare(
         `SELECT 'recent' AS kind, HEX(h."ZIDENTIFIER") AS hex,
                 m."ZLATITUDE" AS lat, m."ZLONGITUDE" AS lon
@@ -286,10 +291,9 @@ export class PlaceSourceFinder {
            JOIN "ZMIXINMAPITEM" m ON m."Z_PK" = h."ZMAPITEM"
           WHERE h."Z_PK" > ? AND m."ZMAPITEMSTORAGE" IS NOT NULL
             AND ${named("h")} AND ${entityIs("h", "HistoryPlaceItem")}
-          ORDER BY h."Z_PK" DESC LIMIT 1`,
+          ORDER BY h."Z_PK" DESC LIMIT 2`,
       )
-      .get(sinceHistoryPk) as SourceRow | undefined;
-    return row ?? null;
+      .all(sinceHistoryPk) as SourceRow[];
   }
 
   #maxHistory(db: DatabaseSync): number {
@@ -345,14 +349,25 @@ export class PlaceSourceFinder {
     await this.#openUrl(url);
     progress(`opened, waiting up to ${Math.round(this.#seedTimeoutMs / 1000)}s for a record`);
     const deadline = Date.now() + this.#seedTimeoutMs;
-    let seeded: SourceRow | null = null;
+    let landed: SourceRow[] = [];
     let polls = 0;
-    while (Date.now() < deadline && !seeded) {
-      seeded = this.#read((db) => this.#seededDonor(db, watermark));
-      if (!seeded) await sleep(STORAGE_POLL_MS);
+    while (Date.now() < deadline && landed.length === 0) {
+      landed = this.#read((db) => this.#seededDonors(db, watermark));
+      if (landed.length === 0) await sleep(STORAGE_POLL_MS);
       polls += 1;
       if (polls % 8 === 0) progress(`still waiting (${polls * (STORAGE_POLL_MS / 1000)}s)…`);
     }
+    if (landed.length > 1) {
+      // Two places filed since the watermark: the newest need not be the seed's, and with no
+      // coordinate nothing else tells them apart. Copying the wrong one would save, and sync,
+      // another place.
+      throw new MapsWriteError(
+        `While Maps resolved ${JSON.stringify(q.query)}, another place was opened in Maps too, ` +
+          `so which record is this one's cannot be told. Nothing was saved — try again.`,
+        { query: q.query, reason: "invalid" },
+      );
+    }
+    const seeded = landed[0] ?? null;
 
     if (!seeded) {
       throw new MapsWriteError(

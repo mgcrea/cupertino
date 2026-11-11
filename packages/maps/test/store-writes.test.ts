@@ -266,6 +266,24 @@ const MEASURED =
   "Saved the way Maps saves it. It reaches your other devices through iCloud, even with Maps " +
   "closed.";
 
+const REMOVED =
+  "Removed the way Maps removes it. It reaches your other devices through iCloud, even with " +
+  "Maps closed.";
+
+/** Takes the synthetic store away, so any read after it throws. */
+const removeStore = (path: string): void => {
+  for (const file of [path, `${path}-wal`, `${path}-shm`]) rmSync(file, { force: true });
+};
+
+/** The lane's answer to a source that is no longer in the store. */
+const sourceGone: Reply = {
+  error: {
+    code: -32000,
+    message: "expected one HistoryPlaceItem with that identifier, found none",
+    data: { reason: "notFound" },
+  },
+};
+
 // ── registration ─────────────────────────────────────────────────────────────
 
 describe("registration", () => {
@@ -569,6 +587,60 @@ describe("add_favorite", () => {
     expect(res.body.alreadyExisted).toMatch(/already existed/);
   });
 
+  it("answers a committed save with its ref alone when reading it back fails", async () => {
+    for (const [tool, args, key, kind] of [
+      ["apple_maps_add_favorite", {}, "favorite", "f"],
+      ["apple_maps_save_place", {}, "place", "c"],
+      ["apple_maps_add_place_to_guide", { guide: "Synthetic guide" }, "place", "c"],
+    ] as const) {
+      const path = emptyStore();
+      exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
+      // The save is committed and syncing; then the store cannot be read.
+      const { env } = await hostStub((m) => {
+        if (m.method !== "maps.status") removeStore(path);
+        return m.method === "maps.fileInGuide" ? written({ id: NEW_ID, filed: true }) : saves(m);
+      });
+      const c = await connect({ writes: true, lane: env, storePath: path });
+      const res = await call(c, tool, {
+        ...args,
+        query: "Synthetic Café",
+        latitude: 48.1,
+        longitude: 2.2,
+      });
+      expect(res.isError, tool).toBe(false);
+      expect(res.body[key], tool).toEqual({
+        ref: `p1:${kind}:${NEW_ID.replaceAll("-", "").toLowerCase()}`,
+      });
+      expect(res.body.sync, tool).toBe(MEASURED);
+    }
+  });
+
+  it("says a source Maps replaced meanwhile was not saved, and can be repeated", async () => {
+    for (const [tool, args] of [
+      ["apple_maps_add_favorite", {}],
+      ["apple_maps_save_place", {}],
+      ["apple_maps_add_place_to_guide", { guide: "Synthetic guide" }],
+    ] as const) {
+      const path = emptyStore();
+      exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
+      const { env } = await hostStub(() => sourceGone);
+      const c = await connect({ writes: true, lane: env, storePath: path });
+      const res = await call(c, tool, {
+        ...args,
+        query: "Synthetic Café",
+        latitude: 48.1,
+        longitude: 2.2,
+      });
+      expect(res.isError, tool).toBe(true);
+      expect(res.body.error, tool).toBe(
+        "The place record Maps had filed for this place was replaced before it could be " +
+          "copied: Maps replaces its Recents as it refreshes them. Nothing was saved; repeat " +
+          "the call.",
+      );
+      expect(res.body.details, tool).toEqual({ reason: "notFound" });
+    }
+  });
+
   it("passes an incompatible lane through as the tool error's reason", async () => {
     const path = emptyStore();
     exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
@@ -704,7 +776,7 @@ describe("remove_favorite and remove_saved_place", () => {
     // A row-id ref still works when the row has an identifier.
     const res = await call(c, "apple_maps_remove_favorite", { ref: "p1:f:1", confirm: true });
     expect(sent(seen)).toEqual([{ method: "maps.removeFavorite", params: { id: FAV_ID } }]);
-    expect(res.body).toMatchObject({ removed: true, id: FAV_ID, sync: MEASURED });
+    expect(res.body).toMatchObject({ removed: true, id: FAV_ID, sync: REMOVED });
   });
 
   /*
@@ -773,7 +845,7 @@ describe("remove_favorite and remove_saved_place", () => {
       confirm: true,
     });
     expect(sent(seen)).toEqual([{ method: "maps.removeSavedPlace", params: { id: SAVED_ID } }]);
-    expect(res.body).toMatchObject({ removed: true, id: SAVED_ID, sync: MEASURED });
+    expect(res.body).toMatchObject({ removed: true, id: SAVED_ID, sync: REMOVED });
   });
 
   it("refuses a row with no identifier as notFound, without calling the lane", async () => {
@@ -864,6 +936,32 @@ describe("remove_favorite and remove_saved_place", () => {
     expect(connections()).toBe(0);
   });
 
+  it("words the unmeasured sentence as a removal too", async () => {
+    const path = emptyStore();
+    exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
+    exec(path, savedPlace(2, 48.2, 2.3, "Synthetic Bar", SAVED_ID));
+    const { env } = await hostStub((m) =>
+      written({
+        id: String(m.params.id),
+        created: false,
+        changed: ["favorite"],
+        syncMeasured: false,
+        modelVersion: "M2",
+      }),
+    );
+    const c = await connect({ writes: true, lane: env, storePath: path });
+    for (const [name, ref] of [
+      ["apple_maps_remove_favorite", "p1:f:1"],
+      ["apple_maps_remove_saved_place", "p1:c:2"],
+    ] as const) {
+      const res = await call(c, name, { ref, confirm: true });
+      expect(res.body.sync, name).toBe(
+        "Removed, but sync is not yet measured on this macOS (model M2): check the place on " +
+          "another device.",
+      );
+    }
+  });
+
   it("reports removed false when the lane changed nothing", async () => {
     const path = emptyStore();
     exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
@@ -941,6 +1039,61 @@ describe("add_place_to_guide", () => {
     expect(sent(seen)).toEqual([
       { method: "maps.fileInGuide", params: { guide: "Synthetic guide", placeId: SAVED_ID } },
     ]);
+  });
+
+  /* A chain's next branch shares the name: only the tight coordinate names the same place. */
+  it("does not file a same-named saved place ~100 m away", async () => {
+    const path = emptyStore();
+    exec(path, savedPlace(1, 48.101, 2.2, "Synthetic Café", SAVED_ID));
+    const { env, seen } = await hostStub(saves);
+    const c = await connect({
+      writes: true,
+      lane: env,
+      storePath: path,
+      openUrl: seedsAt(path, 48.1, 2.2, []),
+    });
+    await call(c, "apple_maps_add_place_to_guide", {
+      guide: "Synthetic guide",
+      query: "Synthetic Café",
+      latitude: 48.1,
+      longitude: 2.2,
+    });
+    expect(sent(seen)).toEqual([
+      {
+        method: "maps.fileInGuide",
+        params: {
+          guide: "Synthetic guide",
+          source: "recent",
+          sourceId: SEEDED_ID,
+          query: "Synthetic Café",
+          near: { latitude: 48.1, longitude: 2.2 },
+        },
+      },
+    ]);
+  });
+
+  it("answers created, true only when the call saved a new place", async () => {
+    const path = emptyStore();
+    exec(path, savedPlace(1, 48.3, 2.4, "Synthetic Bar", SAVED_ID));
+    exec(path, recent(2, 2, 48.1, 2.2, RECENT_ID));
+    const { env } = await hostStub((m) =>
+      "placeId" in m.params
+        ? written({ id: SAVED_ID, filed: true, created: false, changed: ["collections"] })
+        : written({ id: NEW_ID, filed: true, created: true, changed: ["collections"] }),
+    );
+    const c = await connect({ writes: true, lane: env, storePath: path });
+    const byRef = await call(c, "apple_maps_add_place_to_guide", {
+      guide: "Synthetic guide",
+      ref: "p1:c:1",
+    });
+    expect(byRef.body.created).toBe(false);
+    const fromQuery = await call(c, "apple_maps_add_place_to_guide", {
+      guide: "Synthetic guide",
+      query: "Synthetic Café",
+      latitude: 48.1,
+      longitude: 2.2,
+    });
+    expect(fromQuery.body.created).toBe(true);
   });
 
   it("saves and files a new place in one call, from a donor", async () => {

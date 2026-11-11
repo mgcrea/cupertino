@@ -1,3 +1,4 @@
+import { StoreLaneError } from "@mgcrea/mcp-apple-core";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
@@ -31,28 +32,33 @@ export const STORE_WRITE_TOOLS: readonly string[] = [
  * `measuredVersions`), every write seen on a Mac and an iPhone on
  * 2026-11-11, one with Maps quit and mapssyncd exporting alone (`docs/maps.md`,
  * "Measured 2026-11-11"). Elsewhere the save still happened, but nobody has
- * watched it reach another device, so the result says so.
+ * watched it reach another device, so the result says so. The two removes say
+ * it of a removal.
  */
-export const syncSentence = (w: Pick<LaneWrite, "changed" | "syncMeasured" | "modelVersion">) => {
+export const syncSentence = (
+  w: Pick<LaneWrite, "changed" | "syncMeasured" | "modelVersion">,
+  kind: "save" | "remove" = "save",
+) => {
   if (w.changed.length === 0) return "Nothing to change.";
+  const [done, how] = kind === "remove" ? ["Removed", "removes"] : ["Saved", "saves"];
   if (w.syncMeasured) {
     return (
-      "Saved the way Maps saves it. It reaches your other devices through iCloud, even with " +
+      `${done} the way Maps ${how} it. It reaches your other devices through iCloud, even with ` +
       "Maps closed."
     );
   }
   return (
-    `Saved, but sync is not yet measured on this macOS (model ${w.modelVersion ?? "unknown"}): ` +
-    "check the place on another device."
+    `${done}, but sync is not yet measured on this macOS ` +
+    `(model ${w.modelVersion ?? "unknown"}): check the place on another device.`
   );
 };
 
 /** The lane's own fields, plus the sentence. */
-const laneFields = (w: LaneWrite) => ({
+const laneFields = (w: LaneWrite, kind: "save" | "remove" = "save") => ({
   changed: w.changed,
   modelVersion: w.modelVersion,
   syncMeasured: w.syncMeasured,
-  sync: syncSentence(w),
+  sync: syncSentence(w, kind),
 });
 
 /**
@@ -150,9 +156,41 @@ const coordsOf = (
 const fromSource = (s: PlaceSource) => ({ source: s.kind, sourceId: s.id });
 
 /**
+ * A lane write that copies a source's record, with the lane's `notFound` for
+ * that source said plainly. Between `find` and the save Maps can replace the
+ * recent it filed (it does as it refreshes them), and the lane then finds no
+ * item with that identifier. Nothing was saved, and a second call finds the
+ * record Maps holds now.
+ */
+const copying = async (
+  write: Promise<LaneWrite>,
+): Promise<{ w: LaneWrite } | { refusal: ToolResult }> => {
+  try {
+    return { w: await write };
+  } catch (err) {
+    if (err instanceof StoreLaneError && err.reason === "notFound") {
+      return {
+        refusal: refuse(
+          "notFound",
+          "The place record Maps had filed for this place was replaced before it could be " +
+            "copied: Maps replaces its Recents as it refreshes them. Nothing was saved; repeat " +
+            "the call.",
+        ),
+      };
+    }
+    throw err;
+  }
+};
+
+/**
  * A place in an answer: its ref, and the item's own name and coordinate as the
  * store holds them. Fields the read-back did not find are left out, never
  * filled with what the caller asked for.
+ *
+ * The read-back comes after the lane committed the save, which is already on
+ * its way to the user's other devices, so a read that fails answers the ref
+ * alone, as one that finds nothing does, rather than an error for a write that
+ * happened.
  */
 const described = (
   client: AppleMapsClient,
@@ -160,7 +198,12 @@ const described = (
   id: string,
   stored?: StoredPlace | null,
 ) => {
-  const row = stored === undefined ? client.placeSource().describe(kind, id) : stored;
+  let row: StoredPlace | null;
+  try {
+    row = stored === undefined ? client.placeSource().describe(kind, id) : stored;
+  } catch {
+    row = null;
+  }
   return compact({
     ref: encodePlaceRef(kind, { uuid: id }),
     name: row?.name ?? undefined,
@@ -284,7 +327,9 @@ export const registerStoreWriteTools = (
           });
         }
         const s = await finder.find(near ? { query, ...near } : { query });
-        const w = await lane.addFavorite({ ...fromSource(s), query, name, near });
+        const copied = await copying(lane.addFavorite({ ...fromSource(s), query, name, near }));
+        if ("refusal" in copied) return copied.refusal;
+        const { w } = copied;
         return ok(
           compact({
             favorite: described(client, "favorite", w.id),
@@ -324,7 +369,7 @@ export const registerStoreWriteTools = (
             removed: w.changed.length > 0,
             id: w.id,
             library: libraryNote(w.changed),
-            ...laneFields(w),
+            ...laneFields(w, "remove"),
           }),
         );
       }),
@@ -366,7 +411,9 @@ export const registerStoreWriteTools = (
           });
         }
         const s = await finder.find(near ? { query, ...near } : { query });
-        const w = await lane.savePlace({ ...fromSource(s), query, name, near });
+        const copied = await copying(lane.savePlace({ ...fromSource(s), query, name, near }));
+        if ("refusal" in copied) return copied.refusal;
+        const { w } = copied;
         return ok(
           compact({
             place: described(client, "collection-item", w.id),
@@ -397,7 +444,7 @@ export const registerStoreWriteTools = (
         const target = identifierFor(client, ref, "collection-item", "removed");
         if ("refusal" in target) return target.refusal;
         const w = await lane.removeSavedPlace(target.id);
-        return ok({ removed: w.changed.length > 0, id: w.id, ...laneFields(w) });
+        return ok({ removed: w.changed.length > 0, id: w.id, ...laneFields(w, "remove") });
       }),
   );
 
@@ -444,6 +491,8 @@ export const registerStoreWriteTools = (
           ok(
             compact({
               filed: w.filed,
+              // True only when this call saved the place before filing it.
+              created: w.created,
               guide,
               place: described(client, "collection-item", w.id),
               ...laneFields(w),
@@ -462,14 +511,17 @@ export const registerStoreWriteTools = (
         if ("refusal" in coords) return coords.refusal;
         const { near } = coords;
         const finder = client.placeSource();
-        const existing = near ? finder.existingSavedPlace({ ...near, name: q }) : null;
+        // The tight coordinate alone, not the 250 m same-name match: filing is the one write
+        // here that adds to an existing place, and a chain's next branch shares its name.
+        const existing = near ? finder.existingSavedPlace(near) : null;
         if (existing) {
           return filedAnswer(await lane.fileInGuide({ guide, placeId: existing.id }), false);
         }
         const s = await finder.find(near ? { query: q, ...near } : { query: q });
         // No label: this tool takes none, so the query is sent as the query alone.
-        const w = await lane.fileInGuide({ guide, ...fromSource(s), query: q, near });
-        return filedAnswer(w, s.seeded);
+        const copied = await copying(lane.fileInGuide({ guide, ...fromSource(s), query: q, near }));
+        if ("refusal" in copied) return copied.refusal;
+        return filedAnswer(copied.w, s.seeded);
       }),
   );
 };
