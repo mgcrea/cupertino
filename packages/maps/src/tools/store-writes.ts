@@ -71,6 +71,24 @@ const SEEDS =
   "and the place also appears in the user's Recents; there is no way to have the record " +
   "without that.";
 
+/**
+ * Where an unpinned place went. Maps does not delete a pin it unpins: it moves
+ * the place into the library as a saved place (watched 2026-11-11,
+ * `docs/maps.md`), and the lane does the same. `changed` lists `savedPlace`
+ * when the lane made one, and only `favorite` when a saved place already
+ * stood at that spot.
+ */
+const libraryNote = (changed: string[]): string | undefined => {
+  if (!changed.includes("favorite")) return undefined;
+  const entirely =
+    "apple_maps_remove_saved_place removes it entirely, by its ref from " +
+    "apple_maps_list_unfiled_places.";
+  return changed.includes("savedPlace")
+    ? `Unpinned, and kept in your library as a saved place, as Maps does. ${entirely}`
+    : "Unpinned. A saved place already stood at this spot, so the place is kept in your " +
+        `library as that saved place and no second one was made. ${entirely}`;
+};
+
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true } as const;
 const REMOVE = { ...WRITE, destructiveHint: true } as const;
 
@@ -261,9 +279,12 @@ export const registerStoreWriteTools = (
     "apple_maps_remove_favorite",
     {
       description:
-        "Remove a place from Maps' favourites, by a ref from apple_maps_list_favorites. It " +
-        "does not affect Guides, Recents, or anything else that references the same place. " +
-        `${SAVED_LIKE} Needs Full Disk Access, and an explicit confirm: the removal is not ` +
+        "Unpin a place from Maps' favourites (the Pinned list), by a ref from " +
+        "apple_maps_list_favorites. As in Maps, unpinning keeps the place in the user's " +
+        "library as a saved place, in no Guide, unless one already stands there; " +
+        "apple_maps_remove_saved_place removes it entirely. Only pins: the Home, Work and " +
+        "School slots are refused. It does not touch Guides or Recents. " +
+        `${SAVED_LIKE} Needs Full Disk Access, and an explicit confirm: the unpin is not ` +
         "undoable from here.",
       inputSchema: z.object({ ref: placeRefArg, confirm: confirmArg }),
       annotations: REMOVE,
@@ -273,7 +294,14 @@ export const registerStoreWriteTools = (
         const target = identifierFor(client, ref, "favorite", "removed");
         if ("refusal" in target) return target.refusal;
         const w = await lane.removeFavorite(target.id);
-        return ok({ removed: w.changed.length > 0, id: w.id, ...laneFields(w) });
+        return ok(
+          compact({
+            removed: w.changed.length > 0,
+            id: w.id,
+            library: libraryNote(w.changed),
+            ...laneFields(w),
+          }),
+        );
       }),
   );
 
