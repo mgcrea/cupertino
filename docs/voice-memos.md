@@ -127,8 +127,9 @@ even after a favourite toggle on another memo made the app save and sync: that t
 `ATRANSACTION`/`ACHANGE` rows for the other memo, and `voicememod` uploaded only that one. The
 test memo's `ANSCKRECORDMETADATA.ZLASTEXPORTEDTRANSACTIONNUMBER` stayed at 144. The exporter uploads
 what persistent history lists, and an out-of-band write adds nothing to it. Maps' SQL inserts
-reach iCloud because Core Data reconciles a brand-new object; an update to a mirrored row gets no
-such treatment.
+do not reach iCloud either. This paragraph said they did, because Core Data reconciles a brand-new
+object. CORRECTED 2026-11-11: those inserts were never mirrored, and Maps converts them into saved
+places ([docs/maps.md](maps.md#what-maps-changes-watched-2026-11-11)).
 
 **A rename through Core Data syncs in seconds.** A Swift helper opened the store with
 `NSPersistentStoreCoordinator` and Voice Memos' own model, then saved the new title. The model was

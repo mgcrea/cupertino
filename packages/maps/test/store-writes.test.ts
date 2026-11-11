@@ -667,6 +667,12 @@ describe("remove_favorite and remove_saved_place", () => {
     const description = tools.find((t) => t.name === "apple_maps_remove_favorite")?.description;
     expect(description).toMatch(/keeps the place in the user's library as a saved place/);
     expect(description).toMatch(/apple_maps_remove_saved_place removes it entirely/);
+    // True in both cases the lane answers `["favorite"]`.
+    expect(description).toMatch(
+      /no new one is made when one already stands at that spot, or the pin carries no place record/,
+    );
+    // MapsWriter refuses anything but a pin (`type 1`).
+    expect(description).toMatch(/Only pins: the Home, Work and School slots are refused\./);
   });
 
   it("remove_favorite answers that a new saved place now holds the place", async () => {
@@ -679,10 +685,17 @@ describe("remove_favorite and remove_saved_place", () => {
     const res = await call(c, "apple_maps_remove_favorite", { ref: "p1:f:1", confirm: true });
     expect(res.body).toMatchObject({ removed: true, changed: ["favorite", "savedPlace"] });
     expect(res.body.library).toMatch(/^Unpinned, and kept in your library as a saved place/);
-    expect(res.body.library).toMatch(/apple_maps_remove_saved_place removes it entirely/);
+    expect(res.body.library).toMatch(
+      /apple_maps_remove_saved_place removes it entirely, by its ref from apple_maps_list_unfiled_places or apple_maps_list_collection_places\./,
+    );
   });
 
-  it("remove_favorite answers that the saved place already there keeps it", async () => {
+  /*
+   * `["favorite"]` alone has two causes in MapsWriter: a saved place already at
+   * that spot, or a pin with no place record or coordinate to move. The lane
+   * does not say which, so the sentence must be true of both.
+   */
+  it("remove_favorite answers that no new saved place was made, true of both causes", async () => {
     const path = emptyStore();
     exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
     const { env } = await hostStub(() =>
@@ -692,9 +705,11 @@ describe("remove_favorite and remove_saved_place", () => {
     const res = await call(c, "apple_maps_remove_favorite", { ref: "p1:f:1", confirm: true });
     expect(res.body).toMatchObject({ removed: true, changed: ["favorite"] });
     expect(res.body.library).toMatch(
-      /^Unpinned\. A saved place already stood at this spot, so the place is kept in your library as that saved place/,
+      /^Unpinned\. No new saved place was made: one already stood at this spot, or the pin carried no place record to keep\./,
     );
-    expect(res.body.library).toMatch(/apple_maps_remove_saved_place removes it entirely/);
+    expect(res.body.library).toMatch(
+      /apple_maps_remove_saved_place removes a saved place entirely, by its ref from apple_maps_list_unfiled_places or apple_maps_list_collection_places\./,
+    );
   });
 
   it("remove_saved_place sends maps.removeSavedPlace", async () => {

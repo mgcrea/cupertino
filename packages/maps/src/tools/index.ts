@@ -9,15 +9,18 @@ import { registerWriteTools } from "./writes.js";
 
 export type ToolContext = {
   /**
-   * Gates the two mutating tools, which are NOT registered when it is false —
-   * so a host that has not opted in is never told they exist.
+   * Gates the mutating tools, which are NOT registered when it is false, so a
+   * host that has not opted in is never told they exist.
    *
-   * This surface writes SQL directly into Maps' Core Data store, because Maps
-   * has no scripting dictionary and no App Intents to write through. The store
-   * is mirrored to iCloud, so a write here reaches every device on the account.
-   * `docs/maps.md` carries the measurements; `client/write.ts` carries the rule
-   * that makes it safe — never fabricate a place record, only copy one Maps
-   * wrote itself.
+   * Maps has no scripting dictionary and no App Intents to write through, and
+   * the route depends on who runs this server. Hosted by Cupertino, the five
+   * writes go through its store lane, which saves with Maps' own Core Data
+   * model; whether those saves reach the account's other devices is not yet
+   * measured. Run from npm, two tools write SQL straight into the store; the
+   * 2026-11-11 watch found those inserts never mirrored to iCloud, and saw Maps
+   * convert such favourites into saved places. `docs/maps.md` carries the
+   * measurements. Both routes keep one rule: never fabricate a place record,
+   * only copy one Maps wrote itself.
    */
   allowWrites: boolean;
 };
@@ -59,7 +62,8 @@ export const registerTools = (
   // ever refuse would tell a host about a capability it does not have.
   //
   // Behind `allowWrites` with the rest, because these press controls in a real
-  // window and their writes reach every device on the account.
+  // window, and Maps itself then saves the change into the store it mirrors to
+  // iCloud. Whether that reaches another device was never measured.
   const ax = client.axLane;
   if (ax) registerAxWriteTools(server, ax);
 };

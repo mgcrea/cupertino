@@ -435,8 +435,10 @@ call from launching Maps and dirtying Recents; the second is what makes it
 correct.
 
 **A resolved place must be checked against the coordinate asked for.** A name is
-ambiguous, and a favourite for the wrong place syncs to every device. When Maps
-answers more than ~250 m away the write is refused rather than guessed.
+ambiguous, and a favourite for the wrong place is a pin the user never asked for. (CORRECTED
+2026-11-11: this said such a favourite syncs to every device. The watch found the SQL route's
+favourites never mirrored; see the note above.) When Maps answers more than ~250 m away the
+write is refused rather than guessed.
 
 Every one of those was found against the real store while 74 offline tests passed.
 The pattern is the same each time and worth naming: **a fake that agrees with the
@@ -743,13 +745,13 @@ it to de-duplicate, to find a place record to copy, and to turn a listing's ref 
 identifier the lane fetches by. `apps/apple/Cupertino/StoreLane/MapsWriter.swift` is the writer;
 `packages/maps/src/tools/store-writes.ts` registers the tools.
 
-| Tool                            | Method                  | What the save does                                                                                                                                                                                                                                                                                              |
-| ------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apple_maps_add_favorite`       | `maps.addFavorite`      | a pin, as Maps' 851: a `FavoriteItem` with its own `MixinMapItem` holding a byte-for-byte copy of a place record Maps wrote; `type 1`, `version 2`, `source 0`, `hidden 0`, a `shortcutIdentifier` from the coordinate, and a `positionIndex` one step of 5e7 above the highest pin's                           |
-| `apple_maps_remove_favorite`    | `maps.removeFavorite`   | unpins as Maps does (856–858): a `CollectionPlaceItem` in no Guide copying the pin (`createTime`, `customName`, name, address, category, `muid`) with its own copy of the record, then the `FavoriteItem` deleted and its `MixinMapItem` by cascade. When a saved place already stands there, only the pin goes |
-| `apple_maps_save_place`         | `maps.savePlace`        | a `CollectionPlaceItem` in no Guide and its own `MixinMapItem`, as Maps' 862: `type 0`, `origin 0`, `positionIndex 0`, `droppedPinFloorOrdinal 0`                                                                                                                                                               |
-| `apple_maps_remove_saved_place` | `maps.removeSavedPlace` | the `CollectionPlaceItem` deleted, its `MixinMapItem` by cascade, and each Guide's `places` by nullify, as Maps' 867                                                                                                                                                                                            |
-| `apple_maps_add_place_to_guide` | `maps.fileInGuide`      | the `Collection` added to the item's `collections`, and `modificationTime` set on both, as Maps' 866; `placesCount` is derived. Given a `query`, the saved place is made first, in the same save                                                                                                                |
+| Tool                            | Method                  | What the save does                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------- | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apple_maps_add_favorite`       | `maps.addFavorite`      | a pin, as Maps' 851: a `FavoriteItem` with its own `MixinMapItem` holding a byte-for-byte copy of a place record Maps wrote; `type 1`, `version 2`, `source 0`, `hidden 0`, a `shortcutIdentifier` from the coordinate, and a `positionIndex` one step of 5e7 above the highest favourite's                                                                       |
+| `apple_maps_remove_favorite`    | `maps.removeFavorite`   | unpins as Maps does (856–858): a `CollectionPlaceItem` in no Guide copying the pin (`createTime`, `customName`, name, address, category, `muid`) with its own copy of the record, then the `FavoriteItem` deleted and its `MixinMapItem` by cascade. When a saved place already stands there, or the pin carries no place record or coordinate, only the pin goes |
+| `apple_maps_save_place`         | `maps.savePlace`        | a `CollectionPlaceItem` in no Guide and its own `MixinMapItem`, as Maps' 862: `type 0`, `origin 0`, `positionIndex 0`, `droppedPinFloorOrdinal 0`                                                                                                                                                                                                                 |
+| `apple_maps_remove_saved_place` | `maps.removeSavedPlace` | the `CollectionPlaceItem` deleted, its `MixinMapItem` by cascade, and each Guide's `places` by nullify, as Maps' 867                                                                                                                                                                                                                                              |
+| `apple_maps_add_place_to_guide` | `maps.fileInGuide`      | the `Collection` added to the item's `collections`, and `modificationTime` set on both, as Maps' 866; `placesCount` is derived. Given a `query`, the saved place is made first, in the same save                                                                                                                                                                  |
 
 `maps.status` answers what a write would meet, for diagnostics. A new item's display columns
 (`mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`) are copied from the item whose record
@@ -759,7 +761,9 @@ record. A recent carries only `muid`, so a place copied from a recent takes the 
 
 **Unpinning is not a delete.** As in Maps, `remove_favorite` keeps the place in the library as a
 saved place, and its answer says so in `library`. `changed` is `["favorite", "savedPlace"]` when
-the lane made the saved place, and `["favorite"]` when one already stood at that spot.
+the lane made the saved place, and `["favorite"]` when it made none: one already stood at that
+spot, or the pin carried no place record to keep. The answer cannot tell those two apart, and
+says both.
 `remove_saved_place` is what removes a place entirely.
 
 **Inputs.**

@@ -75,18 +75,21 @@ const SEEDS =
  * Where an unpinned place went. Maps does not delete a pin it unpins: it moves
  * the place into the library as a saved place (watched 2026-11-11,
  * `docs/maps.md`), and the lane does the same. `changed` lists `savedPlace`
- * when the lane made one, and only `favorite` when a saved place already
- * stood at that spot.
+ * when the lane made one. Only `favorite` has two causes the answer does not
+ * tell apart: a saved place already stood at that spot, or the pin carried no
+ * place record or coordinate to move. The sentence is true of both.
  */
 const libraryNote = (changed: string[]): string | undefined => {
   if (!changed.includes("favorite")) return undefined;
-  const entirely =
-    "apple_maps_remove_saved_place removes it entirely, by its ref from " +
-    "apple_maps_list_unfiled_places.";
+  // An existing saved place may be filed in a Guide, so both listings are named.
+  const from =
+    "by its ref from apple_maps_list_unfiled_places or apple_maps_list_collection_places.";
   return changed.includes("savedPlace")
-    ? `Unpinned, and kept in your library as a saved place, as Maps does. ${entirely}`
-    : "Unpinned. A saved place already stood at this spot, so the place is kept in your " +
-        `library as that saved place and no second one was made. ${entirely}`;
+    ? "Unpinned, and kept in your library as a saved place, as Maps does. " +
+        `apple_maps_remove_saved_place removes it entirely, ${from}`
+    : "Unpinned. No new saved place was made: one already stood at this spot, or the pin " +
+        "carried no place record to keep. apple_maps_remove_saved_place removes a saved " +
+        `place entirely, ${from}`;
 };
 
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true } as const;
@@ -281,7 +284,8 @@ export const registerStoreWriteTools = (
       description:
         "Unpin a place from Maps' favourites (the Pinned list), by a ref from " +
         "apple_maps_list_favorites. As in Maps, unpinning keeps the place in the user's " +
-        "library as a saved place, in no Guide, unless one already stands there; " +
+        "library as a saved place, in no Guide; no new one is made when one already stands " +
+        "at that spot, or the pin carries no place record. " +
         "apple_maps_remove_saved_place removes it entirely. Only pins: the Home, Work and " +
         "School slots are refused. It does not touch Guides or Recents. " +
         `${SAVED_LIKE} Needs Full Disk Access, and an explicit confirm: the unpin is not ` +

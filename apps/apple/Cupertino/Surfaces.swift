@@ -579,12 +579,17 @@ nonisolated struct Surface: Identifiable, Hashable {
       // ZLATITUDE1 (19 of 33); taking the first recognised name would report that
       // Maps holds almost no coordinates.
       //
-      // Writes are SQL into the store, because Maps has no scripting dictionary
-      // and registers no App Intents on macOS. The place record cannot be
-      // synthesised, so it is never fabricated: the place is opened through the
-      // maps:// URL scheme, Maps mints the record into Recents, and it is copied.
-      // That leaves a Recents entry, which the tools disclose. The store is
-      // CloudKit-mirrored, so a write reaches every device on the account.
+      // Maps has no scripting dictionary and registers no App Intents on macOS,
+      // so writes take one of two routes. Hosted by Cupertino, the five write
+      // tools go through this app's store lane (StoreLane/MapsWriter.swift),
+      // which saves through Core Data with Maps' own model, as a change made in
+      // Maps is; whether those saves reach other devices is not yet measured.
+      // Run from npm, two tools write SQL straight into the store, and the
+      // 2026-11-11 watch found those inserts never mirrored to iCloud. Either way
+      // the place record cannot be synthesised, so it is never fabricated: the
+      // place is opened through the maps:// URL scheme, Maps mints the record
+      // into Recents, and it is copied. That leaves a Recents entry, which the
+      // tools disclose. See docs/maps.md, "The store lane".
       bundleID: "com.apple.Maps",
       kind: .app,
       iconPath: nil,

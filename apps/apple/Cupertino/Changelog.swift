@@ -505,7 +505,7 @@ nonisolated enum Changelog {
             ordinal: 1,
             headline: "Maps' writes save through Maps' own model, in Cupertino.",
             body: [
-              "When Cupertino hosts the Maps server, `add_favorite`, `remove_favorite`, `save_place`, `remove_saved_place` and `add_place_to_guide` are saved by Cupertino.app through Core Data with Maps' own model, so each is recorded like a change made in the app. Each changes only what Maps itself changed for the same step, watched one step at a time on macOS 27.2. None of them brings Maps' window forward or presses anything any more, and `add_place_to_guide` answers `filed: true` only when reading the Guide back finds the place there. A place not yet in the store is still resolved by Maps from its name, which leaves it in your Recents. Sync to your other devices is not yet measured, and each result says so. Run from npm, the Maps server writes as before.",
+              "When Cupertino hosts the Maps server, `add_favorite`, `remove_favorite`, `save_place`, `remove_saved_place` and `add_place_to_guide` are saved by Cupertino.app through Core Data with Maps' own model, so each is recorded like a change made in the app. Each follows what Maps itself saved for the same step, watched one step at a time on macOS 27.2. None of them brings Maps' window forward or presses anything any more, and `add_place_to_guide` answers `filed: true` only when reading the Guide back finds the place there. A place not yet in the store is still resolved by Maps from its name, which leaves it in your Recents. Sync to your other devices is not yet measured, and each result says so. Run from npm, the Maps server writes as before.",
             ]),
           Entry(
             ordinal: 2,

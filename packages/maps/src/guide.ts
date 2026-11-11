@@ -51,7 +51,8 @@ own data model inside Cupertino, as a change made in the app is:
 **Unpinning is not removing.** As in Maps, \`apple_maps_remove_favorite\` keeps
 the place in the user's library as a saved place. To take a place out of Maps
 entirely, unpin it and then remove the saved place with
-\`apple_maps_remove_saved_place\`, by a ref from \`apple_maps_list_unfiled_places\`.
+\`apple_maps_remove_saved_place\`, by a ref from \`apple_maps_list_unfiled_places\`
+or \`apple_maps_list_collection_places\`.
 
 **Removes take a ref** from a listing, never a coordinate.
 \`apple_maps_add_place_to_guide\` takes a ref to a saved place, or a \`query\` to
