@@ -14,10 +14,11 @@ import Foundation
 /// param, so a reply logged or shown is safe to read.
 nonisolated enum StoreLane {
   /// The surfaces with a lane.
-  static let surfaces: Set<String> = ["voice-memos"]
+  static let surfaces: Set<String> = ["voice-memos", "maps"]
 
   /// The message every write gets while the surface's writes are off.
   static let voiceMemosWritesOff = "writes are off for Voice Memos in Cupertino"
+  static let mapsWritesOff = "writes are off for Maps in Cupertino"
 
   /// Nil to admit `borrowerId`'s server, else why not, without the `err ` prefix.
   static func admit(borrowerId: String, peerSurface: String?) -> String? {
@@ -31,7 +32,8 @@ nonisolated enum StoreLane {
   /// `allowWrites` is read per request by the caller, so switching writes off takes effect on
   /// the next line; `status` still answers while they are off.
   static func handle(
-    _ line: String, borrower: String, allowWrites: Bool, voiceMemos: VoiceMemosWriter = .live
+    _ line: String, borrower: String, allowWrites: Bool, voiceMemos: VoiceMemosWriter = .live,
+    maps: MapsWriter = .live
   ) -> String {
     var id: Any = NSNull()
     do {
@@ -58,7 +60,7 @@ nonisolated enum StoreLane {
       }
       let result = try dispatch(
         method, request["params"], borrower: borrower, allowWrites: allowWrites,
-        voiceMemos: voiceMemos)
+        voiceMemos: voiceMemos, maps: maps)
       return encode(["jsonrpc": "2.0", "id": id, "result": result])
     } catch let refusal as Refusal {
       return failure(id: id, code: refusal.code, refusal.error)
@@ -86,27 +88,75 @@ nonisolated enum StoreLane {
   }
 
   /// Each surface's method prefix. A method outside the borrower's prefix is unknown to it.
-  private static let namespaces: [String: String] = ["voice-memos": "voiceMemos."]
+  private static let namespaces: [String: String] = [
+    "voice-memos": "voiceMemos.", "maps": "maps.",
+  ]
 
-  private static let voiceMemosVerbs: Set<String> = [
-    "rename", "setFavorite", "move", "delete", "restore", "status",
+  /// Each surface's methods, named without the prefix. `status` is the one that writes nothing.
+  private static let verbs: [String: Set<String>] = [
+    "voice-memos": ["rename", "setFavorite", "move", "delete", "restore", "status"],
+    "maps": [
+      "addFavorite", "removeFavorite", "savePlace", "removeSavedPlace", "fileInGuide", "status",
+    ],
+  ]
+
+  private static let writesOff: [String: String] = [
+    "voice-memos": voiceMemosWritesOff, "maps": mapsWritesOff,
   ]
 
   private static func dispatch(
     _ method: String, _ params: Any?, borrower: String, allowWrites: Bool,
-    voiceMemos: VoiceMemosWriter
+    voiceMemos: VoiceMemosWriter, maps: MapsWriter
   ) throws -> [String: Any] {
     guard let prefix = namespaces[borrower], method.hasPrefix(prefix),
-      case let verb = String(method.dropFirst(prefix.count)), voiceMemosVerbs.contains(verb)
+      case let verb = String(method.dropFirst(prefix.count)),
+      verbs[borrower]?.contains(verb) == true, let off = writesOff[borrower]
     else {
       throw Refusal(
         code: Code.methodNotFound, error: .invalid("\(borrower) has no method \(method)"))
     }
     // Before the params are read: a malformed write is still a write.
     guard verb == "status" || allowWrites else {
-      throw StoreLaneError.writesOff(voiceMemosWritesOff)
+      throw StoreLaneError.writesOff(off)
     }
     let params = try Params(method: method, params)
+    return borrower == "maps"
+      ? try dispatchMaps(verb, params, maps) : try dispatchVoiceMemos(verb, params, voiceMemos)
+  }
+
+  private static func dispatchMaps(_ verb: String, _ params: Params, _ maps: MapsWriter) throws
+    -> [String: Any]
+  {
+    switch verb {
+    case "addFavorite":
+      return json(
+        try maps.addFavorite(
+          source: params.source("source"), sourceId: params.string("sourceId"),
+          name: params.optionalString("name"), near: params.near("near")))
+    case "savePlace":
+      return json(
+        try maps.savePlace(
+          source: params.source("source"), sourceId: params.string("sourceId"),
+          name: params.optionalString("name"), near: params.near("near")))
+    case "removeFavorite":
+      return json(try maps.removeFavorite(id: params.string("id")))
+    case "removeSavedPlace":
+      return json(try maps.removeSavedPlace(id: params.string("id")))
+    case "fileInGuide":
+      // Each read as optional here; the writer refuses both a placeId and a source, or neither.
+      return json(
+        try maps.fileInGuide(
+          guideTitle: params.string("guide"), placeId: params.optionalString("placeId"),
+          source: params.optionalSource("source"), sourceId: params.optionalString("sourceId"),
+          name: params.optionalString("name"), near: params.near("near")))
+    default:
+      return json(maps.status())
+    }
+  }
+
+  private static func dispatchVoiceMemos(
+    _ verb: String, _ params: Params, _ voiceMemos: VoiceMemosWriter
+  ) throws -> [String: Any] {
     switch verb {
     case "rename":
       return json(try voiceMemos.rename(id: params.string("id"), title: params.string("title")))
@@ -167,6 +217,46 @@ nonisolated enum StoreLane {
       default: throw StoreLaneError.invalid("\(method) needs \(name), a string or null")
       }
     }
+
+    /// Absent is nil. Null is refused: the node client leaves an absent key off the wire.
+    func optionalString(_ name: String) throws -> String? {
+      guard values[name] != nil else { return nil }
+      guard let value = values[name] as? String else {
+        throw StoreLaneError.invalid("\(method) takes \(name) as a string, or not at all")
+      }
+      return value
+    }
+
+    func source(_ name: String) throws -> MapsWriter.SourceKind {
+      guard let raw = values[name] as? String, let kind = MapsWriter.SourceKind(rawValue: raw)
+      else {
+        throw StoreLaneError.invalid(
+          "\(method) needs \(name), one of favorite, savedPlace or recent")
+      }
+      return kind
+    }
+
+    func optionalSource(_ name: String) throws -> MapsWriter.SourceKind? {
+      values[name] == nil ? nil : try source(name)
+    }
+
+    /// Absent is nil; else `{latitude, longitude}`, two numbers in degrees, in range.
+    func near(_ name: String) throws -> (Double, Double)? {
+      guard let raw = values[name] else { return nil }
+      func degrees(_ key: String, _ limit: Double) -> Double? {
+        guard let object = raw as? [String: Any], let number = object[key] as? NSNumber,
+          !isBoolean(number), case let value = number.doubleValue, value.isFinite,
+          abs(value) <= limit
+        else { return nil }
+        return value
+      }
+      guard let latitude = degrees("latitude", 90), let longitude = degrees("longitude", 180)
+      else {
+        throw StoreLaneError.invalid(
+          "\(method) takes \(name) as a latitude and a longitude in degrees, or not at all")
+      }
+      return (latitude, longitude)
+    }
   }
 
   // MARK: - Replies
@@ -176,6 +266,16 @@ nonisolated enum StoreLane {
       "id": result.id, "changed": result.changed, "modelVersion": orNull(result.modelVersion),
       "syncMeasured": result.syncMeasured,
     ]
+  }
+
+  /// `filed` only where the writer set it, fileInGuide's: lane.ts reads its absence elsewhere.
+  private static func json(_ result: MapsWriter.Result) -> [String: Any] {
+    var object: [String: Any] = [
+      "id": result.id, "changed": result.changed, "created": result.created,
+      "modelVersion": orNull(result.modelVersion), "syncMeasured": result.syncMeasured,
+    ]
+    if let filed = result.filed { object["filed"] = filed }
+    return object
   }
 
   private static func json(_ status: CoreDataStore.Status) -> [String: Any] {

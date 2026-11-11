@@ -1009,7 +1009,7 @@ struct StoreLaneCheck {
       }
       let mail = StoreLane.admit(borrowerId: "mail", peerSurface: "mail")
       try expect(mail == "'mail' has no store lane", "mail gets \(mail ?? "admitted")")
-      try expect(StoreLane.surfaces == ["voice-memos"], "surfaces is \(StoreLane.surfaces)")
+      // The whole set is asserted with Maps' door, in `mapsAdmission`.
     }
 
     check("garbageIsParseError") {

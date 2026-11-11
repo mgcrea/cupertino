@@ -366,6 +366,8 @@ extension StoreLaneCheck {
   // MARK: - The cases
 
   static func mapsCases() {
+    // The door and the namespace reach no store: they run on any machine.
+    mapsLaneDoorCases()
     guard FileManager.default.fileExists(atPath: MapsWriter.modelURL.path) else {
       print("SKIP maps: model not on this machine")
       return
@@ -1099,6 +1101,341 @@ extension StoreLaneCheck {
       try expect(
         MapsWriter.storePath == "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
         "storePath is \(MapsWriter.storePath)")
+    }
+
+    mapsLaneCases()
+  }
+}
+
+// MARK: - The lane's dispatch, for Maps
+
+extension StoreLaneCheck {
+  /// `line` through the lane as a maps server sends it, parsed. Voice Memos' writer is one over
+  /// no store, so a call that strayed into it would fail rather than touch anything.
+  static func mapsReply(
+    _ line: String, borrower: String = "maps", allowWrites: Bool = true, _ writer: MapsWriter
+  ) throws -> [String: Any] {
+    try parse(
+      StoreLane.handle(
+        line, borrower: borrower, allowWrites: allowWrites, voiceMemos: absentWriter(),
+        maps: writer))
+  }
+
+  /// A Maps writer over a store that is not there.
+  static func absentMapsWriter() -> MapsWriter {
+    MapsWriter(store: MapsWriter.store(at: scratch.appendingPathComponent("absent/MapsSync")))
+  }
+
+  /// `near` as the node client puts it on the wire.
+  static func near(_ at: (Double, Double)) -> [String: Any] {
+    ["latitude": at.0, "longitude": at.1]
+  }
+
+  /// The reply's result, checked to hold exactly the keys lane.ts reads for a write: `filed`
+  /// only where the method files.
+  static func mapsWrite(_ answer: [String: Any], _ label: String, filed: Bool = false) throws
+    -> [String: Any]
+  {
+    guard let result = answer["result"] as? [String: Any], answer["error"] == nil else {
+      throw Failure(why: "\(label) is not a result: \(answer)")
+    }
+    var keys: Set<String> = ["id", "changed", "created", "modelVersion", "syncMeasured"]
+    if filed { keys.insert("filed") }
+    try expect(Set(result.keys) == keys, "\(label) result keys are \(result.keys.sorted())")
+    try expect(
+      (result["id"] as? String).flatMap(UUID.init(uuidString:)) != nil,
+      "\(label) id is not a uuid: \(result["id"] ?? "absent")")
+    try expect(result["changed"] is [String], "\(label) changed is \(result["changed"] ?? "")")
+    try expect(isJSONBool(result["created"]), "\(label) created is not a boolean")
+    if filed { try expect(isJSONBool(result["filed"]), "\(label) filed is not a boolean") }
+    try expect(
+      result["modelVersion"] as? String == mapsChecksum(),
+      "\(label) modelVersion is \(result["modelVersion"] ?? "absent")")
+    try expect(isJSONBool(result["syncMeasured"]), "\(label) syncMeasured is not a boolean")
+    try expect(result["syncMeasured"] as? Bool == false, "\(label) syncMeasured is not false")
+    return result
+  }
+
+  static func isJSONBool(_ value: Any?) -> Bool {
+    guard let number = value as? NSNumber else { return false }
+    return CFGetTypeID(number) == CFBooleanGetTypeID()
+  }
+
+  static func uuid(_ result: [String: Any]) throws -> UUID {
+    guard let uuid = (result["id"] as? String).flatMap(UUID.init(uuidString:)) else {
+      throw Failure(why: "the result's id is not a uuid: \(result)")
+    }
+    return uuid
+  }
+
+  static func sameId(_ a: Any?, _ b: String) -> Bool {
+    (a as? String)?.lowercased() == b.lowercased()
+  }
+
+  /// The checks that reach no writer: who is admitted, and which methods a borrower has.
+  static func mapsLaneDoorCases() {
+    check("mapsAdmission") {
+      try expect(
+        StoreLane.surfaces == ["voice-memos", "maps"], "surfaces is \(StoreLane.surfaces)")
+      try expect(
+        StoreLane.admit(borrowerId: "maps", peerSurface: "maps") == nil,
+        "the maps server is refused its own lane")
+      // A voice-memos server claiming `for=maps`, another surface's, and no spawned server.
+      for peer in ["voice-memos", "mail", nil] as [String?] {
+        let refusal = StoreLane.admit(borrowerId: "maps", peerSurface: peer)
+        try expect(
+          refusal == "this connection is not a maps server",
+          "peer \(peer ?? "nil") gets \(refusal ?? "admitted")")
+      }
+      let borrowed = StoreLane.admit(borrowerId: "voice-memos", peerSurface: "maps")
+      try expect(
+        borrowed == "this connection is not a voice-memos server",
+        "a maps server claiming voice-memos gets \(borrowed ?? "admitted")")
+    }
+
+    check("mapsNamespace") {
+      for (borrower, method) in [
+        ("maps", "voiceMemos.rename"), ("maps", "voiceMemos.status"),
+        ("maps", "maps.rename"), ("maps", "maps.nope"), ("maps", "maps."),
+        ("maps", "Maps.status"), ("maps", "mapsaddFavorite"),
+        ("voice-memos", "maps.status"), ("voice-memos", "maps.addFavorite"),
+        ("voice-memos", "voiceMemos.addFavorite"), ("voice-memos", "voiceMemos.fileInGuide"),
+      ] {
+        // Writes on and well-formed params: only the namespace can refuse it.
+        let answer = try mapsReply(
+          request(
+            8, method,
+            ["id": MapsID.saved.uuidString, "title": "Synthetic", "source": "recent"]),
+          borrower: borrower, absentMapsWriter())
+        let (code, _, _) = try failure(answer)
+        try expect(code == -32601, "\(method) from \(borrower): code \(code)")
+        try expect(answer["id"] as? Int == 8, "\(method) from \(borrower): id not echoed")
+      }
+    }
+  }
+
+  /// The checks over the fixture: every method with the params the node client sends.
+  static func mapsLaneCases() {
+    let recent = MapsID.recent.uuidString.lowercased()
+    let favorite = MapsID.favorite.uuidString.lowercased()
+
+    check("mapsRoundTrip") {
+      let (writer, storeURL) = try mapsFixture("lane-round-trip")
+      let place: [String: Any] = [
+        "source": "recent", "sourceId": recent, "name": "Synthetic recent place",
+        "near": near(recentAt),
+      ]
+
+      // addFavorite, in one transaction, its request id given back as sent.
+      var text = ""
+      try expectMapsHistory(
+        storeURL, "maps.addFavorite", [inserted("FavoriteItem"), inserted("MixinMapItem")]
+      ) {
+        text = StoreLane.handle(
+          try request(51, "maps.addFavorite", place), borrower: "maps", allowWrites: true,
+          voiceMemos: absentWriter(), maps: writer)
+      }
+      try expect(
+        text.range(of: #""id":51[,}]"#, options: .regularExpression) != nil,
+        "id 51 is not echoed as given: \(text)")
+      let added = try mapsWrite(parse(text), "maps.addFavorite")
+      try expect(added["created"] as? Bool == true, "addFavorite created is not true")
+      try expect(
+        added["changed"] as? [String] == newFavoriteKeys.union(["mapItemName", "muid"]).sorted(),
+        "addFavorite changed is \(added["changed"] ?? "")")
+      let pin = try uuid(added)
+      try expect(
+        try mapsValues(storeURL, "FavoriteItem", pin)["mapItemName"] as? String
+          == "Synthetic recent place", "the pin's name did not cross the lane")
+
+      // Again: the pin already there, nothing saved.
+      try expectNoMapsHistory(storeURL, "maps.addFavorite again") {
+        let again = try mapsWrite(
+          mapsReply(request(52, "maps.addFavorite", place), writer), "addFavorite again")
+        try expect(again["created"] as? Bool == false, "addFavorite again created a pin")
+        try expect(again["changed"] as? [String] == [], "addFavorite again changed something")
+        try expect(sameId(again["id"], pin.uuidString), "addFavorite again names another pin")
+      }
+
+      // fileInGuide from a source: saved and filed in one save.
+      let fromSource = try mapsWrite(
+        mapsReply(
+          request(53, "maps.fileInGuide", place.merging(["guide": "Synthetic guide"]) { $1 }),
+          writer), "fileInGuide from a source", filed: true)
+      try expect(fromSource["created"] as? Bool == true, "fileInGuide from a source created none")
+      try expect(fromSource["filed"] as? Bool == true, "fileInGuide from a source did not file")
+      let filedPlace = try uuid(fromSource)
+      try expect(try guidesOf(storeURL, filedPlace) == ["guide"], "the new place is not filed")
+
+      // savePlace with no name and no near: both left off the wire.
+      let saved = try mapsWrite(
+        mapsReply(
+          request(54, "maps.savePlace", ["source": "favorite", "sourceId": favorite]), writer),
+        "maps.savePlace")
+      try expect(saved["created"] as? Bool == true, "savePlace created none")
+      let savedPlace = try uuid(saved)
+      let values = try mapsValues(storeURL, "CollectionPlaceItem", savedPlace)
+      try expect(
+        values["mapItemName"] as? String == "Synthetic favourite",
+        "savePlace did not keep the favourite's name: \(values["mapItemName"] ?? "nil")")
+      try expect(try guidesOf(storeURL, savedPlace) == [], "the saved place is filed")
+
+      // fileInGuide by placeId, the id spelled as node spells it: lowercase.
+      let byId = try mapsWrite(
+        mapsReply(
+          request(
+            55, "maps.fileInGuide",
+            ["guide": "Synthetic guide", "placeId": savedPlace.uuidString.lowercased()]),
+          writer), "fileInGuide by placeId", filed: true)
+      try expect(byId["created"] as? Bool == false, "fileInGuide by placeId created one")
+      try expect(byId["filed"] as? Bool == true, "fileInGuide by placeId did not file")
+      try expect(byId["changed"] as? [String] == ["collections"], "byId answered \(byId)")
+      try expect(sameId(byId["id"], savedPlace.uuidString), "fileInGuide names another place")
+      try expect(try guidesOf(storeURL, savedPlace) == ["guide"], "the place is not filed")
+
+      // removeFavorite: the library already holds the pin's spot, so nothing goes in.
+      let removed = try mapsWrite(
+        mapsReply(request(56, "maps.removeFavorite", ["id": pin.uuidString.lowercased()]), writer),
+        "maps.removeFavorite")
+      try expect(removed["changed"] as? [String] == ["favorite"], "removed answered \(removed)")
+      try expect(removed["created"] as? Bool == false, "removeFavorite created a saved place")
+      try expect(sameId(removed["id"], pin.uuidString), "removeFavorite names another pin")
+      try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "the pin is still there")
+
+      let unsaved = try mapsWrite(
+        mapsReply(
+          request(57, "maps.removeSavedPlace", ["id": savedPlace.uuidString.lowercased()]),
+          writer), "maps.removeSavedPlace")
+      try expect(unsaved["changed"] as? [String] == ["savedPlace"], "unsaved answered \(unsaved)")
+      try expect(unsaved["created"] as? Bool == false, "removeSavedPlace created something")
+      try expect(try mapsCount(storeURL, "CollectionPlaceItem") == 2, "not one place removed")
+
+      let answer = try mapsReply(request(58, "maps.status", [:]), writer)
+      guard let status = answer["result"] as? [String: Any] else {
+        throw Failure(why: "maps.status is not a result: \(answer)")
+      }
+      try expect(
+        Set(status.keys) == ["compatible", "modelVersion", "syncMeasured", "refusal"],
+        "status keys are \(status.keys.sorted())")
+      try expect(status["compatible"] as? Bool == true, "status is not compatible: \(status)")
+      try expect(status["modelVersion"] as? String == mapsChecksum(), "status version differs")
+      try expect(status["refusal"] is NSNull, "status refusal is \(status["refusal"] ?? "")")
+    }
+
+    // Every write as node sends it, and one with no params at all.
+    let writes: [(String, [String: Any])] = [
+      ("maps.addFavorite", ["source": "recent", "sourceId": recent, "near": near(recentAt)]),
+      ("maps.savePlace", ["source": "recent", "sourceId": recent, "name": "Synthetic"]),
+      ("maps.removeFavorite", ["id": favorite]),
+      ("maps.removeSavedPlace", ["id": MapsID.saved.uuidString.lowercased()]),
+      ("maps.fileInGuide", ["guide": "Synthetic guide", "placeId": favorite]),
+      ("maps.fileInGuide", ["guide": "Synthetic guide", "source": "recent", "sourceId": recent]),
+      // Refused before its params are read: a malformed write is still a write.
+      ("maps.addFavorite", [:]),
+    ]
+
+    check("mapsWritesOff") {
+      let (writer, storeURL) = try mapsFixture("lane-writes-off")
+      try expectNoMapsHistory(storeURL, "writes-off calls") {
+        for (method, params) in writes {
+          let answer = try mapsReply(request(9, method, params), allowWrites: false, writer)
+          let (code, reason, message) = try failure(answer)
+          try expect(code == -32000, "\(method) code is \(code)")
+          try expect(reason == "writesOff", "\(method) reason is \(reason ?? "nil")")
+          try expect(
+            message == "writes are off for Maps in Cupertino", "\(method) says \(message)")
+          try expect(answer["id"] as? Int == 9, "\(method) id is \(answer["id"] ?? "absent")")
+        }
+      }
+      try expect(
+        StoreLane.mapsWritesOff == "writes are off for Maps in Cupertino",
+        "mapsWritesOff is \(StoreLane.mapsWritesOff)")
+      try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "the favourite went")
+      for params in [nil, [:]] as [[String: Any]?] {
+        let answer = try mapsReply(request(10, "maps.status", params), allowWrites: false, writer)
+        guard let result = answer["result"] as? [String: Any] else {
+          throw Failure(why: "status is not a result: \(answer)")
+        }
+        try expect(result["compatible"] as? Bool == true, "status is not compatible: \(result)")
+        try expect(result["modelVersion"] as? String == mapsChecksum(), "status version differs")
+      }
+    }
+
+    check("mapsInvalidParams") {
+      let (writer, storeURL) = try mapsFixture("lane-invalid")
+      let secret = "Synthetic secret name"
+      let guide = "Synthetic guide"
+      let placeId = MapsID.saved.uuidString.lowercased()
+      let base: [String: Any] = ["source": "recent", "sourceId": recent]
+      func with(_ extra: [String: Any]) -> [String: Any] { base.merging(extra) { $1 } }
+      let cases: [(String, String, Any)] = [
+        ("addFavorite {}", "maps.addFavorite", [String: Any]()),
+        ("no sourceId", "maps.addFavorite", ["source": "recent"]),
+        ("no source", "maps.savePlace", ["sourceId": recent]),
+        ("unknown source", "maps.addFavorite", with(["source": "bogusSecret"])),
+        ("numeric source", "maps.addFavorite", with(["source": 1])),
+        ("numeric sourceId", "maps.addFavorite", with(["sourceId": 7])),
+        ("sourceId not a uuid", "maps.savePlace", with(["sourceId": "not-a-uuid-secret"])),
+        ("numeric name", "maps.addFavorite", with(["name": 7])),
+        ("null name", "maps.savePlace", with(["name": NSNull()])),
+        ("blank name", "maps.savePlace", with(["name": "  "])),
+        ("near without longitude", "maps.addFavorite", with(["near": ["latitude": 48.85]])),
+        ("near without latitude", "maps.savePlace", with(["near": ["longitude": 2.31]])),
+        (
+          "near's latitude a string", "maps.addFavorite",
+          with(["near": ["latitude": "48.85", "longitude": 2.31]])
+        ),
+        (
+          "near's latitude a boolean", "maps.addFavorite",
+          with(["near": ["latitude": true, "longitude": 2.31]])
+        ),
+        (
+          "latitude past 90", "maps.addFavorite",
+          with(["near": ["latitude": 91.5, "longitude": 2.31]])
+        ),
+        (
+          "longitude past 180", "maps.savePlace",
+          with(["near": ["latitude": 48.85, "longitude": -181.25]])
+        ),
+        ("near a string", "maps.addFavorite", with(["near": "48.85,2.31"])),
+        ("near an array", "maps.savePlace", with(["near": [48.85, 2.31]])),
+        ("null near", "maps.addFavorite", with(["near": NSNull()])),
+        ("removeFavorite {}", "maps.removeFavorite", [String: Any]()),
+        ("numeric id", "maps.removeFavorite", ["id": 7]),
+        ("id not a uuid", "maps.removeSavedPlace", ["id": "not-a-uuid-secret"]),
+        ("removeSavedPlace {}", "maps.removeSavedPlace", [String: Any]()),
+        ("fileInGuide, no guide", "maps.fileInGuide", ["placeId": placeId]),
+        ("numeric guide", "maps.fileInGuide", ["guide": 7, "placeId": placeId]),
+        ("neither placeId nor source", "maps.fileInGuide", ["guide": guide]),
+        ("both", "maps.fileInGuide", with(["guide": guide, "placeId": placeId])),
+        ("a source without its id", "maps.fileInGuide", ["guide": guide, "source": "recent"]),
+        ("a sourceId alone", "maps.fileInGuide", ["guide": guide, "sourceId": recent]),
+        ("numeric placeId", "maps.fileInGuide", ["guide": guide, "placeId": 7]),
+        (
+          "a name with a placeId", "maps.fileInGuide",
+          ["guide": guide, "placeId": placeId, "name": secret]
+        ),
+        ("params an array", "maps.removeFavorite", [placeId]),
+      ]
+      try expectNoMapsHistory(storeURL, "invalid calls") {
+        for (label, method, params) in cases {
+          let object: [String: Any] = [
+            "jsonrpc": "2.0", "id": 11, "method": method, "params": params,
+          ]
+          let data = try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+          let answer = try mapsReply(String(decoding: data, as: UTF8.self), writer)
+          let (code, reason, message) = try failure(answer)
+          try expect(code == -32000, "\(label): code \(code)")
+          try expect(reason == "invalid", "\(label): reason \(reason ?? "nil") (\(message))")
+          for value in [
+            recent, MapsID.recent.uuidString, placeId, secret, guide, "bogusSecret",
+            "not-a-uuid-secret", "48.85", "91.5", "181.25",
+          ] {
+            try expect(
+              !message.contains(value), "\(label): the message repeats a value: \(message)")
+          }
+        }
+      }
     }
   }
 }
