@@ -64,6 +64,10 @@ nonisolated enum DrivingSession {
     var connections: Set<UUID>
     /// When the last connection that drove in this session closed.
     var orphanedAt: Date?
+    /// Opened, and so far driven, only by verbs that cannot take the focus. The
+    /// first verb that does take it is still put to `DrivingPolicy.decide`, or a
+    /// background type that fell back to the front would skip the countdown.
+    var quiet: Bool = false
   }
 
   enum Prompt: Equatable, Sendable {
@@ -161,7 +165,7 @@ nonisolated enum DrivingSession {
       let front = isOpen() ? nil : frontmost()
 
       lock.lock()
-      if var session = open {
+      if var session = open, background || !session.quiet {
         let renamed = session.target != target
         session.target = target
         session.driven.insert(target)
@@ -193,7 +197,7 @@ nonisolated enum DrivingSession {
       let waiting: Pending
       switch decision {
       case .open:
-        openLocked(target, connection: connection, front: front, at: now)
+        admitLocked(target, connection: connection, front: front, at: now, background: background)
         lock.unlock()
         announce(target)
         return
@@ -218,7 +222,8 @@ nonisolated enum DrivingSession {
 
       case .countdown, .ask:
         if Thread.isMainThread {
-          openLocked(target, connection: connection, front: front, at: now)
+          admitLocked(
+            target, connection: connection, front: front, at: now, background: background)
           lock.unlock()
           announce(target)
           return
@@ -247,8 +252,9 @@ nonisolated enum DrivingSession {
         pending = nil
         switch answer {
         case .go:
-          if open == nil {
-            openLocked(target, connection: connection, front: frontNow, at: Date())
+          if open == nil || open?.quiet == true {
+            admitLocked(
+              target, connection: connection, front: frontNow, at: Date(), background: false)
           }
         case .stop:
           // Silence on a question is not a no. Nobody was there to say it.
@@ -465,6 +471,28 @@ nonisolated enum DrivingSession {
   }
 
   /// Under the lock.
+  /// Under the lock. Open a session, or let a quiet one through to a verb that
+  /// passed the decision, keeping what it already holds: who to hand back to,
+  /// what it drove, and the connections that drove in it.
+  private static func admitLocked(
+    _ target: String, connection: UUID?, front: String?, at now: Date, background: Bool
+  ) {
+    guard var session = open else {
+      openLocked(target, connection: connection, front: front, at: now)
+      open?.quiet = background
+      return
+    }
+    session.quiet = session.quiet && background
+    session.target = target
+    session.driven.insert(target)
+    session.lastCall = now
+    if let connection {
+      session.connections.insert(connection)
+      session.orphanedAt = nil
+    }
+    open = session
+  }
+
   private static func openLocked(_ target: String, connection: UUID?, front: String?, at now: Date)
   {
     let back = (front == target || front == Bundle.main.bundleIdentifier) ? nil : front

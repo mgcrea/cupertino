@@ -530,11 +530,15 @@ nonisolated enum DesktopServer {
       [
         "name": "apple_desktop_type",
         "description":
-          "Type text into whatever has keyboard focus. Sent as unicode, so accented and "
-          + "non-Latin characters arrive intact. Pass 'handle' (the field you focused) or "
-          + "'bundleId': that application is brought to the front first, and nothing is typed if "
-          + "it does not come. Without either, the text goes to the frontmost application, and is "
-          + "refused when that application is out of reach.",
+          "Type text. Sent as unicode, so accented and non-Latin characters arrive intact. Pass "
+          + "'handle' (a text field or area) to type into that field WITHOUT bringing its "
+          + "application forward: it is focused, typed into and read back (lane: background, "
+          + "verified). Only a field that did not change, or one that cannot be read back such "
+          + "as a password field, is typed again with its application brought to the front "
+          + "(lane: foreground). With 'bundleId' alone, that application is brought to the front "
+          + "and the text goes to its focused field; nothing is typed if it does not come. "
+          + "Without either, the text goes to the frontmost application, and is refused when "
+          + "that application is out of reach.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -1197,10 +1201,37 @@ nonisolated enum DesktopServer {
           return failure(id, "The 'text' argument is required.")
         }
         let owner = try sessionTarget(args, scope: scope)
+        // A handle names the field, so it can be typed into where it is, with
+        // its application left behind the person's. Only a field that did not
+        // change is typed again in front; one that took part of the text is
+        // not, or the part it took would arrive twice.
+        var background: String?
+        if let handle = args["handle"] as? String {
+          switch try AccessibilityDriver.typeInBackground(
+            text: text, handle: handle, scope: scope)
+          {
+          case .landed(let verified)?:
+            var typed: [String: Any] = [
+              "typed": text.count, "lane": "background", "verified": verified,
+            ]
+            if let owner { typed["target"] = owner }
+            if !verified {
+              typed["note"] =
+                "The field changed but does not read back the whole text, so it was not typed "
+                + "again. Read its value to see what it holds."
+            }
+            return ok(id, typed)
+          case .nothingLanded?:
+            background = "nothing landed, so it was typed with the application in front"
+          case nil:
+            background = "not a field that can be read back, so it was typed in front"
+          }
+        }
         if let owner { try bringForward(owner, verb: "text", scope: scope) }
         try AccessibilityDriver.type(text: text, scope: scope, announcing: owner)
-        var typed: [String: Any] = ["typed": text.count]
+        var typed: [String: Any] = ["typed": text.count, "lane": "foreground"]
         if let owner { typed["target"] = owner }
+        if let background { typed["background"] = background }
         return ok(id, typed)
 
       case "apple_desktop_key":

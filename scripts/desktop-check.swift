@@ -926,12 +926,15 @@ struct DesktopCheck {
 
     // The half that waits. Last, because a cancel leaves a cooldown behind that
     // refuses every admission for the rest of this process.
-    func admitOffMain(_ settings: DrivingPolicy.Settings) -> (DispatchSemaphore, () -> String) {
+    func admitOffMain(_ settings: DrivingPolicy.Settings, background: Bool = false)
+      -> (DispatchSemaphore, () -> String)
+    {
       let done = DispatchSemaphore(value: 0)
       let box = ResultBox<String>()
       Thread {
         do {
-          try DrivingSession.admit(driven, settings: settings, secondsSinceInput: 0)
+          try DrivingSession.admit(
+            driven, background: background, settings: settings, secondsSinceInput: 0)
           box.result = .success("")
         } catch {
           box.result = .success(error.localizedDescription)
@@ -956,6 +959,32 @@ struct DesktopCheck {
     check(
       "Allow lets it through",
       allowed.wait(timeout: .now() + 5) == .success && DrivingSession.target() == driven)
+    DrivingSession.release(.agent)
+
+    // A verb that cannot take the focus opens a quiet session: the card, no
+    // question. The first verb that does take the front is still asked, or a
+    // background type that fell back to the front would skip the countdown.
+    let asked = DrivingPolicy.Settings(before: .ask, countdown: 3, idleRelease: 45)
+    let (quietly, _) = admitOffMain(asked, background: true)
+    check(
+      "a background verb opens the session without asking, while somebody types",
+      quietly.wait(timeout: .now() + 2) == .success && DrivingSession.target() == driven)
+    let (alsoQuiet, _) = admitOffMain(asked, background: true)
+    check(
+      "and the next background verb goes straight in",
+      alsoQuiet.wait(timeout: .now() + 2) == .success)
+    let (inFront, _) = admitOffMain(asked)
+    check(
+      "a verb that takes the front, in a quiet session, is still asked",
+      inFront.wait(timeout: .now() + 0.4) == .timedOut)
+    DrivingSession.respond(.go)
+    check(
+      "and goes through once allowed",
+      inFront.wait(timeout: .now() + 5) == .success && DrivingSession.target() == driven)
+    let (thenFront, _) = admitOffMain(asked)
+    check(
+      "after which the session is a full one and asks nothing more",
+      thenFront.wait(timeout: .now() + 2) == .success)
     DrivingSession.release(.agent)
 
     let (cancelled, cancelMessage) = admitOffMain(
