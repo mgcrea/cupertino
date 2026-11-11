@@ -1413,6 +1413,51 @@ though a field's action on Return may differ), Chromium and Electron fields, Web
 input methods. Each of these is covered by the read-back. The cost is that such a field comes
 forward as before, not that text is lost.
 
+## A channel into our own apps, 2026-11-11
+
+Typing is the only verb that works from outside without the front. A click posted to a pid
+arrives and does nothing, and a shortcut is ignored, so for our own apps the input goes in from
+the inside instead. swift-support-kit's `SupportKitDriving` opens a channel in a Debug build
+launched with `-DrivingChannel YES`. The channel is a directory in the app's own temporary
+directory, holding a commands file Cupertino appends to and an events file the app answers in.
+The app delivers each command to its own windows with `NSWindow.sendEvent`. It is compiled only
+in DEBUG (a Release object holds no channel symbol) because it bypasses the Accessibility
+permission. Cupertino never links it: the Shell window takes only a hardware click, and an input
+channel inside Cupertino would be a way round that.
+
+`apple_desktop_launch` with `channel: true` passes the argument and says whether a channel
+opened. After that, `AppChannel.find` matches the running app's pid to a directory whose `ready`
+names that pid, which leaves out a crashed app's stale directory and a reused pid. Click, drag
+(within the app), hover, key (when every modifier has a menu meaning) and type with that
+`bundleId` then go through it. They answer `lane: "channel"` with what the app hit and what holds
+its focus. They are admitted as background, so no countdown is shown, and nothing is brought
+forward or checked against the window server's stacking: the app hit-tests its own windows, so a
+covered window still takes the click. An application without a channel is driven exactly as
+before.
+
+`make channel-check` builds a fixture app from swift-support-kit's sources and registers it with
+Launch Services, so `apple_desktop_launch` can start it by bundle id. It then drives the fixture
+through both `AppChannel` and the server's verbs. 20/20 passed on 2026-11-11 while Olivier
+worked. The fixture never became active, and the app in front stayed in front. The check found
+two defects, both fixed in swift-support-kit before this was written:
+
+- **The ack came before a SwiftUI button had acted.** A click queues its up, and a SwiftUI button
+  acts on the up, which the app's event loop reaches after a plain `DispatchQueue.main.async`.
+  So a button whose action held the main thread for 3 s was acknowledged at once. The ack now
+  waits for a marker event queued behind the up, and the stall is reported as "did not answer
+  the click within 2 s".
+- **Cmd-A selected nothing.** An inactive app has no key window, so the menu's own validation
+  finds no target and disables Select All. The item is now found whatever the validation says,
+  then validated against the window's first responder.
+
+`channel-check` is not a gate, because CI has no swift-support-kit checkout. Set `SUPPORT_KIT` to
+one (it defaults to `~/Projects/swift-support-kit`).
+
+Not measured: hover (whether a `mouseMoved` delivered this way fires a tracking area or
+`onContinuousHover`), scroll, right-click menus (the ack goes out before the menu opens, because
+the menu's loop holds the mouse-down), a drag that needs real time between steps (the steps are
+queued all at once), and a sandboxed app's container from a Cupertino without Full Disk Access.
+
 ## Still open
 
 - **An application that takes the front when launched behind.** `launch` hands the front back when

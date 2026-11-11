@@ -298,6 +298,7 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
@@ -326,6 +327,7 @@ background-type-live: ## Type into a TextEdit started behind, through this check
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
@@ -345,6 +347,57 @@ background-type-live: ## Type into a TextEdit started behind, through this check
 		apps/apple/Cupertino/BridgeProtocol.swift scripts/background-type-live.swift
 	@apps/apple/.build/background-type-live
 
+# swift-support-kit's checkout, for its SupportKitDriving sources. Cupertino itself never links that
+# product; only the fixture below does.
+SUPPORT_KIT ?= $(HOME)/Projects/swift-support-kit
+CHANNEL_FIXTURE := apps/apple/.build/channel-fixture/CupertinoChannelFixture.app
+
+channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; it never comes forward (by hand)
+	@# Not a gate: CI has no swift-support-kit checkout. It posts nothing to the
+	@# session, so it is safe while someone works. The fixture is registered
+	@# with Launch Services so apple_desktop_launch can start it by bundle id.
+	@if [ ! -d "$(SUPPORT_KIT)/Sources/SupportKitDriving" ]; then \
+		echo "channel-check: $(SUPPORT_KIT)/Sources/SupportKitDriving is missing; set SUPPORT_KIT to a swift-support-kit checkout"; \
+		exit 1; \
+	fi
+	@mkdir -p $(CHANNEL_FIXTURE)/Contents/MacOS
+	@swiftc -O -DDEBUG -swift-version 6 -parse-as-library \
+		-o $(CHANNEL_FIXTURE)/Contents/MacOS/CupertinoChannelFixture \
+		$(SUPPORT_KIT)/Sources/SupportKitDriving/*.swift scripts/channel-fixture.swift
+	@printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
+		'<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+		'<plist version="1.0"><dict>' \
+		'<key>CFBundleIdentifier</key><string>io.mgcrea.channel-fixture</string>' \
+		'<key>CFBundleExecutable</key><string>CupertinoChannelFixture</string>' \
+		'<key>CFBundleName</key><string>Channel Fixture</string>' \
+		'<key>CFBundlePackageType</key><string>APPL</string>' \
+		'</dict></plist>' > $(CHANNEL_FIXTURE)/Contents/Info.plist
+	@codesign --force --sign - $(CHANNEL_FIXTURE) 2>/dev/null
+	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f $(CHANNEL_FIXTURE)
+	@swiftc -O -o apps/apple/.build/channel-check \
+		apps/apple/Cupertino/InProcessRPC.swift \
+		apps/apple/Cupertino/InProcessCalls.swift \
+		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AppChannel.swift \
+		apps/apple/Cupertino/MailComposerText.swift \
+		apps/apple/Cupertino/MailComposer.swift \
+		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/ShellInput.swift \
+		apps/apple/Cupertino/DriveActivity.swift \
+		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
+		apps/apple/Cupertino/NoticeStyle.swift \
+		apps/apple/Cupertino/NoticeSounds.swift \
+		apps/apple/Cupertino/DrivingSession.swift \
+		apps/apple/Cupertino/VisibleTools.swift \
+		apps/apple/Cupertino/DrivingOverlay.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/AppInfo.swift \
+		apps/apple/Cupertino/LogStore.swift \
+		apps/apple/Cupertino/InstallLocation.swift \
+		apps/apple/Cupertino/BridgeProtocol.swift scripts/channel-check.swift
+	@apps/apple/.build/channel-check
+
 mail-composer-check: ## Assert the Mail composer's text matching, handle registry and Mail-only verbs
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/mail-composer-check \
@@ -353,6 +406,7 @@ mail-composer-check: ## Assert the Mail composer's text matching, handle registr
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
@@ -382,6 +436,7 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
@@ -537,6 +592,7 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
@@ -650,6 +706,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/SoundCapture.swift \
 		apps/apple/Cupertino/SoundDevices.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \
 		apps/apple/Cupertino/SimulatorServer.swift \
@@ -1505,7 +1562,7 @@ clean: ## Remove the app build output
 	@rm -rf apps/apple/.build
 
 .PHONY: help build app run install build-release install-release install-from uninstall stop \
-	dev-config smoke wiring-check screen-check sound-check shell-check shell-window-check desktop-check mail-composer-check simulator-check \
+	dev-config smoke wiring-check screen-check sound-check shell-check shell-window-check desktop-check background-type-live channel-check mail-composer-check simulator-check \
 	simulator-spike dispatch-check unit store-lane-check chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \

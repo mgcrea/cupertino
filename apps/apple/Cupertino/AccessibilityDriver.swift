@@ -2292,9 +2292,9 @@ nonisolated enum AccessibilityDriver {
   ///
   /// Blocks for up to `timeout`, so it runs on a connection's own thread like
   /// every other verb here.
-  static func launch(bundleId: String, scope: Scope, timeout: TimeInterval = 10) throws
-    -> Launched
-  {
+  static func launch(
+    bundleId: String, scope: Scope, timeout: TimeInterval = 10, arguments: [String] = []
+  ) throws -> Launched {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     if (try? app(forBundleId: bundleId)) != nil { return Launched(launched: false) }
     guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
@@ -2320,6 +2320,7 @@ nonisolated enum AccessibilityDriver {
     config.activates = false
     config.addsToRecentItems = false
     config.promptsUserIfNeeded = false
+    config.arguments = arguments
     let done = DispatchSemaphore(value: 0)
     let box = ResultBox<Void>()
     NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in

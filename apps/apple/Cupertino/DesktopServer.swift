@@ -607,10 +607,21 @@ nonisolated enum DesktopServer {
           + "keeps their keyboard, and ui_tree, press and the other element verbs reach it there. "
           + "Waits until it answers, up to 10 s. An application already running is left alone "
           + "and answers launched: false. Takes a bundle identifier and nothing else: no "
-          + "documents or URLs. To bring it forward afterwards, apple_desktop_activate.",
+          + "documents or URLs. To bring it forward afterwards, apple_desktop_activate. With "
+          + "channel: true, a Debug build of an app that links swift-support-kit's "
+          + "SupportKitDriving opens a driving channel: click, drag, hover, key and type with its "
+          + "bundleId then reach its own windows without bringing it forward (lane: channel), "
+          + "shortcuts included. Any other app ignores it and answers channel: false.",
         "inputSchema": [
           "type": "object",
-          "properties": ["bundleId": launchBundleIdProperty],
+          "properties": [
+            "bundleId": launchBundleIdProperty,
+            "channel": [
+              "type": "boolean",
+              "description":
+                "Open a SupportKitDriving channel in a Debug build of one of our apps.",
+            ],
+          ],
           "required": ["bundleId"],
         ],
         "annotations": [
@@ -1080,6 +1091,18 @@ nonisolated enum DesktopServer {
         } else {
           button = .left
         }
+        // One of our Debug builds with a channel takes the click in its own
+        // window, wherever that window is: nothing is brought forward.
+        if let named = args["bundleId"] as? String, let channel = channel(for: named) {
+          let ack = try throughChannel(
+            channel, owner: named,
+            ["verb": "click", "x": x, "y": y, "button": button.rawValue], scope: scope)
+          var clicked = channelFields(ack)
+          clicked["clicked"] = [x, y]
+          clicked["target"] = named
+          if button != .left { clicked["button"] = button.rawValue }
+          return ok(id, clicked)
+        }
         // A point has no owner, so the caller names one. Brought forward first
         // because a click lands on whatever window is on top at that point, and
         // the person at the keyboard may have put their own there since.
@@ -1129,6 +1152,27 @@ nonisolated enum DesktopServer {
               + "handle: its point is re-read at call time.")
         }
         let durationMs = min(5000, max(16, (args["durationMs"] as? Int) ?? 400))
+        // A drag inside one of our Debug builds with a channel. A drop on
+        // another application needs the window server's drag session, so that
+        // goes the old way.
+        let pressOwner = start.owner ?? args["bundleId"] as? String
+        if let pressOwner, end.owner == nil || end.owner == pressOwner,
+          let channel = channel(for: pressOwner)
+        {
+          let ack = try throughChannel(
+            channel, owner: pressOwner,
+            [
+              "verb": "drag", "from": [start.point.x, start.point.y],
+              "to": [end.point.x, end.point.y], "durationMs": durationMs,
+            ], scope: scope)
+          var dragged = channelFields(ack)
+          dragged["dragged"] = [
+            "from": [start.point.x, start.point.y], "to": [end.point.x, end.point.y],
+          ]
+          dragged["durationMs"] = durationMs
+          dragged["target"] = pressOwner
+          return ok(id, dragged)
+        }
         // The press decides which application is driven: a handle names its own,
         // as for hover, and a point is checked as a click's is.
         let owner: String
@@ -1168,6 +1212,10 @@ nonisolated enum DesktopServer {
           let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
           target = live.point
           owner = live.bundleId
+          if let channel = channel(for: owner) {
+            return try hoverThroughChannel(
+              channel, owner: owner, at: target, durationMs: durationMs, id: id, scope: scope)
+          }
           // A hover reaches only the frontmost application, so posting into an
           // app that is behind sweeps the pointer across somebody else's window
           // and reports a success that never happened. Refused rather than
@@ -1175,6 +1223,10 @@ nonisolated enum DesktopServer {
           try bringForward(owner, verb: "hover", scope: scope)
         } else if let x = args["x"] as? Double, let y = args["y"] as? Double {
           target = CGPoint(x: x, y: y)
+          if let named = args["bundleId"] as? String, let channel = channel(for: named) {
+            return try hoverThroughChannel(
+              channel, owner: named, at: target, durationMs: durationMs, id: id, scope: scope)
+          }
           owner = try pointOwner(args, at: target, verb: "hover", scope: scope)
         } else {
           return failure(
@@ -1227,6 +1279,16 @@ nonisolated enum DesktopServer {
             background = "not a field that can be read back, so it was typed in front"
           }
         }
+        // One of our Debug builds with a channel types into its own focused
+        // field. Reached with a handle only when the field could not be read
+        // back, and then it was focused above.
+        if let owner, let channel = channel(for: owner) {
+          let ack = try throughChannel(channel, owner: owner, ["verb": "type", "text": text], scope: scope)
+          var typed = channelFields(ack)
+          typed["typed"] = text.count
+          typed["target"] = owner
+          return ok(id, typed)
+        }
         if let owner { try bringForward(owner, verb: "text", scope: scope) }
         try AccessibilityDriver.type(text: text, scope: scope, announcing: owner)
         var typed: [String: Any] = ["typed": text.count, "lane": "foreground"]
@@ -1253,6 +1315,31 @@ nonisolated enum DesktopServer {
           modifiers = []
         }
         let owner = try sessionTarget(args, scope: scope)
+        // Through a channel the app matches a shortcut against its own menu,
+        // which is what an app in the background cannot do with a posted key.
+        // The channel's names are command, shift, option and control; fn has no
+        // menu meaning and goes the old way.
+        let channelModifiers = modifiers.compactMap { name -> String? in
+          switch name.lowercased() {
+          case "command", "cmd": "command"
+          case "shift": "shift"
+          case "option", "alt": "option"
+          case "control", "ctrl": "control"
+          default: nil
+          }
+        }
+        if let owner, channelModifiers.count == modifiers.count,
+          let channel = channel(for: owner)
+        {
+          let ack = try throughChannel(
+            channel, owner: owner, ["verb": "key", "key": key, "modifiers": channelModifiers],
+            scope: scope)
+          var sent = channelFields(ack)
+          sent["key"] = key
+          sent["modifiers"] = modifiers
+          sent["target"] = owner
+          return ok(id, sent)
+        }
         if let owner { try bringForward(owner, verb: "key", scope: scope) }
         try AccessibilityDriver.key(key, modifiers: modifiers, scope: scope, announcing: owner)
         var sent: [String: Any] = ["key": key, "modifiers": modifiers]
@@ -1316,13 +1403,39 @@ nonisolated enum DesktopServer {
         guard let bundleId = args["bundleId"] as? String else {
           return failure(id, "The 'bundleId' argument is required.")
         }
-        let launched = try AccessibilityDriver.launch(bundleId: bundleId, scope: scope)
+        let wantsChannel = args["channel"] as? Bool ?? false
+        let launched = try AccessibilityDriver.launch(
+          bundleId: bundleId, scope: scope,
+          arguments: wantsChannel ? ["-DrivingChannel", "YES"] : [])
         guard launched.launched else {
-          return ok(id, ["bundleId": bundleId, "launched": false, "note": "Already running."])
+          var note = "Already running."
+          if wantsChannel {
+            note +=
+              channel(for: bundleId) != nil
+              ? " It already has a driving channel."
+              : " A channel opens only at launch: quit it and launch it again with channel: true."
+          }
+          return ok(id, ["bundleId": bundleId, "launched": false, "note": note])
         }
         var body: [String: Any] = [
           "bundleId": bundleId, "launched": true, "ready": launched.ready,
         ]
+        if wantsChannel {
+          // The app opens its channel from its own launch code, which can trail
+          // the window that made `ready` true.
+          var opened = channel(for: bundleId) != nil
+          let deadline = Date().addingTimeInterval(2)
+          while !opened && Date() < deadline {
+            usleep(50_000)
+            opened = channel(for: bundleId) != nil
+          }
+          body["channel"] = opened
+          if !opened {
+            body["channelNote"] =
+              "No driving channel opened. Only a Debug build that links SupportKitDriving and "
+              + "calls Driving.startIfRequested() at launch has one; it is driven as before."
+          }
+        }
         if let windows = launched.windows { body["windows"] = windows }
         if launched.tookFront {
           body["tookFront"] = true
@@ -1844,6 +1957,55 @@ nonisolated enum DesktopServer {
         "\(owner) did not come to the front, so nothing was posted — the \(verb) would have "
           + "landed in whatever is frontmost, which is someone else's window.")
     }
+  }
+
+  // ─── a channel into one of our own Debug builds ────────────────────────────
+
+  /// The `SupportKitDriving` channel `owner`'s process opened, if it is a Debug
+  /// build of one of our apps launched with one (`apple_desktop_launch` with
+  /// `channel: true`). Nil for every other application, which is driven as
+  /// before.
+  private static func channel(for owner: String?) -> AppChannel? {
+    owner.flatMap(AppChannel.find(bundleId:))
+  }
+
+  /// One verb through the channel. Admitted as background, so no countdown:
+  /// the app delivers it to its own windows, so it reaches neither the
+  /// person's keyboard nor their cursor. The scope still applies, and the app
+  /// hit-tests its own windows, which is why no point is checked here.
+  private static func throughChannel(
+    _ channel: AppChannel, owner: String, _ command: [String: Any],
+    scope: AccessibilityDriver.Scope, timeout: TimeInterval = AppChannel.ackTimeout
+  ) throws -> [String: Any] {
+    guard scope.admits(owner) else { throw AccessibilityDriver.Failure.outOfScope(owner) }
+    try DrivingSession.admit(owner, background: true)
+    DriveActivity.record(owner)
+    return try channel.send(command, timeout: timeout)
+  }
+
+  /// A hover takes as long as it sweeps, so its ack is waited on for that long
+  /// beyond the usual window.
+  private static func hoverThroughChannel(
+    _ channel: AppChannel, owner: String, at point: CGPoint, durationMs: Int, id: Any?,
+    scope: AccessibilityDriver.Scope
+  ) throws -> String {
+    let ack = try throughChannel(
+      channel, owner: owner,
+      ["verb": "hover", "x": point.x, "y": point.y, "durationMs": durationMs], scope: scope,
+      timeout: AppChannel.ackTimeout + Double(durationMs) / 1000)
+    var hovered = channelFields(ack)
+    hovered["hovered"] = [point.x, point.y]
+    hovered["durationMs"] = durationMs
+    return ok(id, hovered)
+  }
+
+  /// What a channel verb answers beyond the verb's own fields.
+  private static func channelFields(_ ack: [String: Any]) -> [String: Any] {
+    var fields: [String: Any] = ["lane": "channel"]
+    for key in ["hit", "identifier", "responder", "note"] {
+      if let value = ack[key] as? String, !value.isEmpty { fields[key] = value }
+    }
+    return fields
   }
 
   // ─── diagnostics ───────────────────────────────────────────────────────────
