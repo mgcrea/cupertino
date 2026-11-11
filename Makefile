@@ -304,6 +304,7 @@ desktop-check: ## Assert the in-process desktop server speaks MCP and cannot dri
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
@@ -328,6 +329,7 @@ mail-composer-check: ## Assert the Mail composer's text matching, handle registr
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
@@ -360,6 +362,7 @@ simulator-check: ## Assert the in-process simulator server speaks MCP, answers i
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
@@ -383,6 +386,7 @@ simulator-spike: ## Drive a booted Simulator through the Accessibility lane, by 
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
@@ -513,6 +517,7 @@ dispatch-check: ## Assert each in-process surface is served by ITS OWN server
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \
@@ -537,6 +542,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/VisibleTools.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
 		apps/apple/Cupertino/ShellPolicy.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/ServerResolution.swift \
@@ -624,6 +630,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \
+		apps/apple/Cupertino/BackgroundTyping.swift \
 		apps/apple/Cupertino/NoticeStyle.swift \
 		apps/apple/Cupertino/NoticeSounds.swift \
 		apps/apple/Cupertino/DrivingSession.swift \

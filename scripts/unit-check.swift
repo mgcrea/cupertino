@@ -924,6 +924,38 @@ struct UnitCheck {
       "the longest countdown ends inside the active window",
       TimeInterval(DrivingPolicy.countdownRange.upperBound) < DrivingPolicy.activeWindow)
 
+    print("\nBackground typing: whether text posted to a field in the background landed")
+
+    // The read-back decides between answering and typing again in front, so a
+    // wrong "nothing landed" types the text twice.
+    check(
+      "an empty field that now holds the text landed",
+      BackgroundTyping.verdict(before: "", after: "abc", typed: "abc") == .landed(verified: true))
+    check(
+      "text appended after what was there landed",
+      BackgroundTyping.verdict(before: "x", after: "xabc", typed: "abc")
+        == .landed(verified: true))
+    check(
+      "appended to identical text still counts the new copy",
+      BackgroundTyping.verdict(before: "abc", after: "abcabc", typed: "abc")
+        == .landed(verified: true))
+    check(
+      "an unchanged field is nothing landed, even when it already holds the text",
+      BackgroundTyping.verdict(before: "abc", after: "abc", typed: "abc") == .nothingLanded)
+    check(
+      "a field that took part of it landed, unverified, so it is not typed again",
+      BackgroundTyping.verdict(before: "", after: "ab", typed: "abcdef")
+        == .landed(verified: false))
+    check(
+      "a secure field is never typed in the background: its value cannot be read back",
+      !BackgroundTyping.eligible(role: "AXTextField", subrole: "AXSecureTextField", value: ""))
+    check(
+      "a text area with a string value is",
+      BackgroundTyping.eligible(role: "AXTextArea", subrole: nil, value: "hi"))
+    check(
+      "an element with no string value is not",
+      !BackgroundTyping.eligible(role: "AXWebArea", subrole: nil, value: nil))
+
     // Stored the way the Settings row writes them, and the way a launch argument
     // arrives: `NSArgumentDomain` hands back strings.
     let suite = "cupertino-unit-driving-\(UUID().uuidString)"
