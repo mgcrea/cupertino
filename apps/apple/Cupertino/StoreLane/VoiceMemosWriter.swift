@@ -54,11 +54,22 @@ nonisolated struct VoiceMemosWriter: Sendable {
     audioFuture?.allowsExternalBinaryDataStorage = true
   }
 
+  /// Every property this writer reads, sets or fetches by, per entity. The opener refuses a
+  /// model without one (`CoreDataStore.requires`), so another macOS's Voice Memos model is
+  /// reported incompatible rather than raising mid-write.
+  static let needs: [String: [String]] = [
+    "CloudRecording": [
+      "uniqueID", "encryptedTitle", "customLabelForSorting", "flags", "sharedFlags",
+      "evictionDate", "folder",
+    ],
+    "Folder": ["uuid"],
+  ]
+
   /// The opener over the store at `storeURL`, with Voice Memos' model and patch.
   static func store(at storeURL: URL) -> CoreDataStore {
     CoreDataStore(
       modelURL: modelURL, storeURL: storeURL, patch: patch, measuredVersions: measuredVersions,
-      versionKey: CoreDataStore.currentVersionName)
+      versionKey: CoreDataStore.currentVersionName, app: "Voice Memos", requires: needs)
   }
 
   static let live = VoiceMemosWriter(

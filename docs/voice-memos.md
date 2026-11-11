@@ -221,8 +221,9 @@ admits it only from the Voice Memos server it spawned itself. The app then:
    `/System/iOSSupport/System/Library/PrivateFrameworks/VoiceMemos.framework/Versions/A/Resources/`,
    and sets `allowsExternalBinaryDataStorage` on `CloudRecording.audioFuture`, as the app does at
    runtime;
-2. refuses with `incompatible` unless the store's metadata matches that model, and never migrates
-   the store;
+2. refuses with `incompatible` unless that model has every attribute and relationship the writer
+   names ("this macOS's Voice Memos model lacks …", naming each) and the store's metadata matches
+   it, and never migrates the store;
 3. opens a coordinator for this call alone, with history tracking and remote-change notifications
    on and migration off;
 4. fetches the recording by the `id` the read tools return (`uniqueID`), and a folder by its

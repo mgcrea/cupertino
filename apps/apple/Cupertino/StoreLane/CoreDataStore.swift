@@ -5,9 +5,9 @@ import Foundation
 /// persistent history the app's iCloud exporter reads, and never migrates the store.
 ///
 /// The steps, in the order the design gives them: load the model and copy it, apply the
-/// surface's measured runtime patch, refuse unless the store's metadata is compatible with the
-/// patched model, then open with history tracking and remote-change notifications on and
-/// migration off. A coordinator is opened per call and dropped after it, so the app never holds
+/// surface's measured runtime patch, refuse unless the patched model has every property the
+/// writer names and the store's metadata is compatible with it, then open with history tracking
+/// and remote-change notifications on and migration off. A coordinator is opened per call and dropped after it, so the app never holds
 /// Apple's store open between writes.
 nonisolated struct CoreDataStore: Sendable {
   /// What diagnostics reports before anyone writes.
@@ -29,16 +29,26 @@ nonisolated struct CoreDataStore: Sendable {
   /// Reads the model's version from the `.momd` at `modelURL`. Which key names it is the
   /// writer's call: Apple's models do not all carry the same one.
   let versionKey: @Sendable (URL) -> String?
+  /// The app whose model this is, as a refusal names it ("Maps").
+  let app: String
+  /// Every property the writer names, by entity: an attribute or relationship, or a key path
+  /// through to-one relationships (`mapItem.latitude`) as a predicate uses it. Asking an object
+  /// for a key its entity lacks raises an Objective-C exception Swift cannot catch, which would
+  /// abort the app, so a model without one is refused before anything is opened.
+  let requires: [String: [String]]
 
   init(
     modelURL: URL, storeURL: URL, patch: @escaping @Sendable (NSManagedObjectModel) -> Void,
-    measuredVersions: Set<String>, versionKey: @escaping @Sendable (URL) -> String?
+    measuredVersions: Set<String>, versionKey: @escaping @Sendable (URL) -> String?,
+    app: String, requires: [String: [String]]
   ) {
     self.modelURL = modelURL
     self.storeURL = storeURL
     self.patch = patch
     self.measuredVersions = measuredVersions
     self.versionKey = versionKey
+    self.app = app
+    self.requires = requires
   }
 
   /// The `.momd`'s current version name, as Voice Memos' `VersionInfo.plist` gives it.
@@ -136,6 +146,14 @@ nonisolated struct CoreDataStore: Sendable {
   private static func fetchOne(
     _ entity: String, key: String, matching value: NSObject, in context: NSManagedObjectContext
   ) throws -> NSManagedObject {
+    // A fetch on a key the entity lacks raises in Objective-C, which Swift cannot catch. Both
+    // are the writer's constants, never a caller's value, so the message may name them.
+    guard
+      NSEntityDescription.entity(forEntityName: entity, in: context)?.propertiesByName[key]
+        != nil
+    else {
+      throw StoreLaneError.failed("this model has no \(entity).\(key) to fetch by")
+    }
     let request = NSFetchRequest<NSManagedObject>(entityName: entity)
     request.predicate = NSPredicate(format: "%K == %@", key, value)
     // Two is enough to tell one from several.
@@ -161,6 +179,12 @@ nonisolated struct CoreDataStore: Sendable {
       throw StoreLaneError.failed("the model did not load from \(modelURL.path)")
     }
     patch(model)
+    // Before anything is opened: a write that asked for a missing key would raise, not throw.
+    let lacking = Self.lacks(model, requires)
+    guard lacking.isEmpty else {
+      throw StoreLaneError.incompatible(
+        "this macOS's \(app) model lacks \(lacking.joined(separator: ", "))")
+    }
     // Checked first: adding a store at a missing path would create an empty one.
     guard FileManager.default.fileExists(atPath: storeURL.path) else {
       throw StoreLaneError.notFound("no store at \(storeURL.path)")
@@ -186,6 +210,24 @@ nonisolated struct CoreDataStore: Sendable {
           + "and the lane does not migrate it")
     }
     return (model, configuration)
+  }
+
+  /// `Entity.property` for each of `requires` that `model` lacks, sorted. A key path's every
+  /// step but the last must be a relationship, read on to its destination entity.
+  static func lacks(_ model: NSManagedObjectModel, _ requires: [String: [String]]) -> [String] {
+    requires.flatMap { entity, paths in
+      paths.filter { path in
+        var current = model.entitiesByName[entity]
+        let steps = path.split(separator: ".").map(String.init)
+        for (index, step) in steps.enumerated() {
+          guard let property = current?.propertiesByName[step] else { return true }
+          if index == steps.count - 1 { break }
+          guard let relationship = property as? NSRelationshipDescription else { return true }
+          current = relationship.destinationEntity
+        }
+        return steps.isEmpty
+      }.map { "\(entity).\($0)" }
+    }.sorted()
   }
 
   /// The entities whose hash differs from the store's, and any the store has that the model

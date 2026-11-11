@@ -345,38 +345,22 @@ extension StoreLaneCheck {
     (at.0 + metres / 111_195, at.1)
   }
 
-  /// What the writer and the fixture touch. A model without one of these (another macOS's Maps)
-  /// cannot exercise the writer, so the group skips rather than fails.
-  static let mapsNeeds: [String: [String]] = [
-    "FavoriteItem": [
-      "identifier", "createTime", "modificationTime", "mapItemLastRefreshed", "latitude",
-      "longitude", "mapItemName", "mapItemAddress", "mapItemCategory", "muid",
-      "shortcutIdentifier", "positionIndex", "type", "version", "source", "hidden", "customName",
-      "originatingAddressString", "mapItem",
-    ],
-    "CollectionPlaceItem": [
-      "identifier", "createTime", "modificationTime", "mapItemLastRefreshed", "latitude",
-      "longitude", "mapItemName", "mapItemAddress", "mapItemCategory", "muid", "type", "origin",
-      "positionIndex", "droppedPinFloorOrdinal", "customName", "droppedPinCoordinate",
-      "placeItemNote", "originalIdentifier", "mapItem", "collections",
-    ],
-    "HistoryPlaceItem": [
-      "identifier", "createTime", "modificationTime", "latitude", "longitude", "muid", "mapItem",
-    ],
-    "MixinMapItem": [
-      "mapItemStorage", "latitude", "longitude", "createTime", "modificationTime",
-      "favoriteItem", "collectionPlaceItem", "historyPlaceItem",
-    ],
-    "Collection": [
-      "identifier", "title", "createTime", "modificationTime", "places", "placesCount",
-    ],
+  /// What the fixture and the checks touch beyond the writer's own `MapsWriter.needs`: the
+  /// columns the watch saw nil on a new item, the record's inverses the history labels walk, and
+  /// a Guide's derived count.
+  static let mapsFixtureNeeds: [String: [String]] = [
+    "FavoriteItem": ["originatingAddressString"],
+    "CollectionPlaceItem": ["droppedPinCoordinate", "placeItemNote", "originalIdentifier"],
+    "HistoryPlaceItem": ["createTime", "modificationTime", "muid"],
+    "MixinMapItem": ["favoriteItem", "collectionPlaceItem", "historyPlaceItem"],
+    "Collection": ["createTime", "places", "placesCount"],
   ]
 
+  /// `Entity.property` for each property the writer or the fixture needs that `model` lacks. A
+  /// model without one (another macOS's Maps) cannot exercise the writer, so the group skips
+  /// rather than fails; `mapsModelLackingAProperty` holds the writer's refusal of it.
   static func mapsLacks(_ model: NSManagedObjectModel) -> [String] {
-    mapsNeeds.flatMap { entity, names in
-      let properties = model.entitiesByName[entity]?.propertiesByName ?? [:]
-      return names.filter { properties[$0] == nil }.map { "\(entity).\($0)" }
-    }.sorted()
+    CoreDataStore.lacks(model, MapsWriter.needs.merging(mapsFixtureNeeds) { $0 + $1 })
   }
 
   /// The `.momd`'s checksum for `DataModel_0_0_1`, read here rather than through the opener.
@@ -1294,6 +1278,89 @@ extension StoreLaneCheck {
       try expect(
         MapsWriter.storePath == "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
         "storePath is \(MapsWriter.storePath)")
+    }
+
+    // A store-compatible model without a property the writer names (as another macOS's might
+    // drop one): refused before any write, where a write would otherwise raise past Swift and
+    // abort the app.
+    check("mapsModelLackingAProperty") {
+      let dir = try folder("maps-lacking")
+      let model = try mapsModel()
+      try removeAttribute("customName", from: "FavoriteItem", in: model)
+      let modelURL = dir.appendingPathComponent("DataModel_0_0_1.mom")
+      try writeMom(model, to: modelURL)
+      let storeURL = dir.appendingPathComponent("MapsSync_0.0.1")
+      try makeMapsStore(at: storeURL, model: model)
+      func writer(_ requires: [String: [String]]) -> MapsWriter {
+        MapsWriter(
+          store: CoreDataStore(
+            modelURL: modelURL, storeURL: storeURL, patch: { _ in },
+            measuredVersions: MapsWriter.measuredVersions,
+            versionKey: CoreDataStore.versionChecksum("DataModel_0_0_1"), app: "Maps",
+            requires: requires))
+      }
+      // The store matches this model: only the missing property can refuse it.
+      var without = MapsWriter.needs
+      without["FavoriteItem"]?.removeAll { $0 == "customName" }
+      let matching = writer(without).status()
+      try expect(matching.compatible, "the fixture is refused for another reason: \(matching)")
+      let lacking = writer(MapsWriter.needs)
+      let expected = "this macOS's Maps model lacks FavoriteItem.customName"
+      let status = lacking.status()
+      try expect(!status.compatible, "status() calls the model compatible")
+      try expect(status.refusal == expected, "status() refusal is \(status.refusal ?? "nil")")
+      let transactions = { try history(storeURL, model: model) { _, _ in "" }.count }
+      let before = try transactions()
+      let recent = MapsID.recent.uuidString
+      let writes: [(String, () throws -> Void)] = [
+        (
+          "addFavorite",
+          {
+            _ = try lacking.addFavorite(
+              source: .recent, sourceId: recent, query: "Synthetic query",
+              name: "Synthetic label", near: nil)
+          }
+        ),
+        ("removeFavorite", { _ = try lacking.removeFavorite(id: MapsID.favorite.uuidString) }),
+        (
+          "savePlace",
+          {
+            _ = try lacking.savePlace(
+              source: .recent, sourceId: recent, query: "Synthetic query", name: nil, near: nil)
+          }
+        ),
+        ("removeSavedPlace", { _ = try lacking.removeSavedPlace(id: MapsID.saved.uuidString) }),
+        (
+          "fileInGuide by placeId",
+          {
+            _ = try lacking.fileInGuide(
+              guideTitle: "Synthetic guide", placeId: MapsID.saved.uuidString, source: nil,
+              sourceId: nil, query: nil, name: nil, near: nil)
+          }
+        ),
+        (
+          "fileInGuide from a source",
+          {
+            _ = try lacking.fileInGuide(
+              guideTitle: "Synthetic guide", placeId: nil, source: .recent, sourceId: recent,
+              query: "Synthetic query", name: nil, near: nil)
+          }
+        ),
+      ]
+      for (label, call) in writes {
+        let message = try expectRefusal("incompatible", label, call)
+        try expect(message == expected, "\(label) says \(message)")
+      }
+      let answer = try mapsReply(request(62, "maps.status"), lacking)
+      let result = answer["result"] as? [String: Any]
+      try expect(
+        result?["compatible"] as? Bool == false && result?["refusal"] as? String == expected,
+        "the lane's status answers \(answer)")
+      try expect(try transactions() == before, "the refused writes saved history")
+      let favorites = try reading(storeURL, model: model) {
+        try $0.count(for: NSFetchRequest<NSManagedObject>(entityName: "FavoriteItem"))
+      }
+      try expect(favorites == 1, "\(favorites) favourites after the refused writes")
     }
 
     mapsLaneCases()

@@ -75,12 +75,37 @@ nonisolated struct MapsWriter: Sendable {
   /// "Measured 2026-11-11").
   static let measuredVersions: Set<String> = ["CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk="]
 
+  /// Every property this writer reads, sets or fetches by, per entity, key paths as its
+  /// predicates walk them. The opener refuses a model without one (`CoreDataStore.requires`),
+  /// so another macOS's Maps model is reported incompatible rather than raising mid-write. A
+  /// source's display columns are read only where its entity has them, so they are not here
+  /// for `HistoryPlaceItem`.
+  static let needs: [String: [String]] = [
+    "FavoriteItem": [
+      "identifier", "createTime", "modificationTime", "mapItemLastRefreshed", "latitude",
+      "longitude", "mapItemName", "mapItemAddress", "mapItemCategory", "muid", "customName",
+      "shortcutIdentifier", "positionIndex", "type", "version", "source", "hidden", "mapItem",
+      "mapItem.latitude", "mapItem.longitude",
+    ],
+    "CollectionPlaceItem": [
+      "identifier", "createTime", "modificationTime", "mapItemLastRefreshed", "latitude",
+      "longitude", "mapItemName", "mapItemAddress", "mapItemCategory", "muid", "customName",
+      "type", "origin", "positionIndex", "droppedPinFloorOrdinal", "mapItem", "mapItem.latitude",
+      "mapItem.longitude", "collections",
+    ],
+    "HistoryPlaceItem": ["identifier", "latitude", "longitude", "mapItem"],
+    "MixinMapItem": [
+      "mapItemStorage", "latitude", "longitude", "createTime", "modificationTime",
+    ],
+    "Collection": ["identifier", "title", "modificationTime"],
+  ]
+
   /// The opener over the store at `storeURL`, with Maps' model. Maps needs no patch, and its
   /// `.momd` names no current version, so the version is the model's checksum.
   static func store(at storeURL: URL) -> CoreDataStore {
     CoreDataStore(
       modelURL: modelURL, storeURL: storeURL, patch: { _ in }, measuredVersions: measuredVersions,
-      versionKey: CoreDataStore.versionChecksum("DataModel_0_0_1"))
+      versionKey: CoreDataStore.versionChecksum("DataModel_0_0_1"), app: "Maps", requires: needs)
   }
 
   static let live = MapsWriter(
