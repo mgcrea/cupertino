@@ -22,9 +22,10 @@ import Foundation
 ///   `modificationTime` on both. `placesCount` is derived from `places`.
 ///
 /// Only Maps can mint a place record, so a new item's record is only ever copied, byte for byte,
-/// from one already in the store. The display columns (`mapItemName`, `mapItemAddress`,
-/// `mapItemCategory`, `muid`) are copied from the source item when it has them and left nil
-/// otherwise: Maps renders a missing one from the record.
+/// from one already in the store, with `createTime` and `modificationTime` at now as each record
+/// Maps inserted had (the 2026-11-11 live check found the lane's without them). The display
+/// columns (`mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`) are copied from the source
+/// item when it has them and left nil otherwise: Maps renders a missing one from the record.
 ///
 /// Every fetch is scoped to the entity the id is meant to name, so a favourite's id never deletes
 /// a saved place. Messages never repeat a value the caller passed.
@@ -358,13 +359,18 @@ nonisolated struct MapsWriter: Sendable {
 
   // MARK: - Helpers
 
+  /// A new `MixinMapItem` with `storage`'s bytes and that coordinate, and `createTime` and
+  /// `modificationTime` at now, as Maps set them on every record it inserted (850, 851, 857, 862).
   private static func insertRecord(
     _ storage: Data, latitude: Any?, longitude: Any?, in context: NSManagedObjectContext
   ) -> NSManagedObject {
+    let now = Date()
     let record = NSEntityDescription.insertNewObject(forEntityName: "MixinMapItem", into: context)
     record.setValue(storage, forKey: "mapItemStorage")
     record.setValue(latitude, forKey: "latitude")
     record.setValue(longitude, forKey: "longitude")
+    record.setValue(now, forKey: "createTime")
+    record.setValue(now, forKey: "modificationTime")
     return record
   }
 

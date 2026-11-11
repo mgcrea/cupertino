@@ -188,6 +188,33 @@ extension StoreLaneCheck {
     }
   }
 
+  /// What a record the writer inserts holds: the source record's bytes and coordinate, and
+  /// `createTime` and `modificationTime` at now, as Maps set them on every record it inserted
+  /// (850, 851, 857, 862 in the watch). The live check found the lane's 869 without them.
+  static let newRecordKeys: Set<String> = [
+    "mapItemStorage", "latitude", "longitude", "createTime", "modificationTime",
+  ]
+
+  /// `entity` `uuid`'s record holds exactly `newRecordKeys`, both times now.
+  static func expectNewRecord(_ storeURL: URL, _ entity: String, _ uuid: UUID) throws {
+    let values = try maps(storeURL) { context -> [String: Any] in
+      guard
+        let record = try mapsRow(entity, uuid, in: context).value(forKey: "mapItem")
+          as? NSManagedObject
+      else { throw Failure(why: "the new \(entity) has no record") }
+      return record.entity.attributesByName.keys.reduce(into: [:]) { values, key in
+        if let value = record.value(forKey: key) { values[key] = value }
+      }
+    }
+    try expect(Set(values.keys) == newRecordKeys, "the record holds \(values.keys.sorted())")
+    for key in ["createTime", "modificationTime"] {
+      let date = values[key] as? Date
+      try expect(
+        date.map { abs($0.timeIntervalSinceNow) < 60 } == true,
+        "the record's \(key) is \(date as Any), not now")
+    }
+  }
+
   /// Inserts `entity` with `values` straight into the fixture, and a record with `record`'s
   /// bytes and coordinate when given; returns nothing the writer saw.
   static func mapsInsert(
@@ -337,8 +364,8 @@ extension StoreLaneCheck {
       "identifier", "createTime", "modificationTime", "latitude", "longitude", "muid", "mapItem",
     ],
     "MixinMapItem": [
-      "mapItemStorage", "latitude", "longitude", "favoriteItem", "collectionPlaceItem",
-      "historyPlaceItem",
+      "mapItemStorage", "latitude", "longitude", "createTime", "modificationTime",
+      "favoriteItem", "collectionPlaceItem", "historyPlaceItem",
     ],
     "Collection": [
       "identifier", "title", "createTime", "modificationTime", "places", "placesCount",
@@ -427,6 +454,7 @@ extension StoreLaneCheck {
       }
       let record = try mapsRecord(storeURL, "FavoriteItem", id)
       try expect(record == syntheticRecord(1), "the record is not the recent's bytes")
+      try expectNewRecord(storeURL, "FavoriteItem", id)
       let recordAt = try mapsRecordAt(storeURL, "FavoriteItem", id)
       try expect(
         recordAt.0 == recentRecordAt.0 && recordAt.1 == recentRecordAt.1,
@@ -570,6 +598,7 @@ extension StoreLaneCheck {
       try expect(
         try mapsRecord(storeURL, "CollectionPlaceItem", placeID) == syntheticRecord(2),
         "the saved place's record is not the pin's bytes")
+      try expectNewRecord(storeURL, "CollectionPlaceItem", placeID)
       try expect(try guidesOf(storeURL, placeID).isEmpty, "the saved place is in a Guide")
       try expect(try mapsCount(storeURL, "MixinMapItem") == 3, "the record count moved")
     }
@@ -645,6 +674,7 @@ extension StoreLaneCheck {
       try expect(
         try mapsRecord(storeURL, "CollectionPlaceItem", id) == syntheticRecord(2),
         "the record is not the favourite's bytes")
+      try expectNewRecord(storeURL, "CollectionPlaceItem", id)
       try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "the favourite went")
       // A saved place from itself, and the same favourite again: already there.
       let own = try writer.savePlace(
@@ -763,6 +793,7 @@ extension StoreLaneCheck {
       try expect(
         try mapsRecord(storeURL, "CollectionPlaceItem", id) == syntheticRecord(1),
         "the record is not the recent's bytes")
+      try expectNewRecord(storeURL, "CollectionPlaceItem", id)
     }
 
     check("removeFavoriteRefusesSlots") {
