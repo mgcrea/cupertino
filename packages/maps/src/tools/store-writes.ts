@@ -131,8 +131,8 @@ const nameArg = z
   .min(1)
   .optional()
   .describe(
-    "A label of your own, saved as the place's custom name, which Maps shows instead of the " +
-      "place's name. Left out, the place keeps the name Maps gives it.",
+    "A label of your own, saved as the place's custom name, which the listings show before " +
+      "the place's own. Left out, the place keeps the name Maps gives it.",
   );
 
 /** A refusal decided here, before the lane is called, in the lane's own vocabulary. */
