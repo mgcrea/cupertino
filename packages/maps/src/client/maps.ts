@@ -5,6 +5,7 @@ import { MapsAxLane } from "./ax.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import { MapsStoreUnavailableError } from "./errors.js";
 import { locateStore, type LocateResult } from "./locate.js";
+import { PlaceSourceFinder } from "./place-source.js";
 import { encodeCollectionRef, encodePlaceRef, type PlaceKind } from "./ref.js";
 import type { EntityKey } from "./store.js";
 import { openStore, type CollectionRow, type MapsStore, type PlaceRow } from "./store.js";
@@ -148,6 +149,23 @@ export class AppleMapsClient {
       throw new MapsStoreUnavailableError(located.reason ?? "Maps' store could not be opened.");
     }
     return new MapsWriter({
+      storePath: located.storePath,
+      seedTimeoutMs: this.#config.seedTimeoutMs,
+      ...(openUrl ? { openUrl } : {}),
+    });
+  }
+
+  /**
+   * A read-only finder of place records for the store lane, bound to the
+   * located store, or an error explaining why not. It writes nothing: the lane
+   * does the writing, through Maps' own model.
+   */
+  placeSource(openUrl?: OpenUrl): PlaceSourceFinder {
+    const located = this.located();
+    if (!located.readable || !located.storePath) {
+      throw new MapsStoreUnavailableError(located.reason ?? "Maps' store could not be opened.");
+    }
+    return new PlaceSourceFinder({
       storePath: located.storePath,
       seedTimeoutMs: this.#config.seedTimeoutMs,
       ...(openUrl ? { openUrl } : {}),
