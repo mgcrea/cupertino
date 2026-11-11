@@ -29,7 +29,13 @@ export type LaneStatus = {
 export type PlaceFrom = {
   source: SourceKind;
   sourceId: string;
-  /** The label to save under. */
+  /**
+   * What the caller searched Maps for. The app shows it as the place's name
+   * only when the source has none of its own (a recent), until a device
+   * refreshes the place; it never becomes a label.
+   */
+  query: string;
+  /** The caller's own label, only when they gave one: the app saves it as `customName`. */
   name?: string | undefined;
   /** The caller's coordinate, when given: the app refuses a record far from it. */
   near?: { latitude: number; longitude: number } | undefined;
@@ -43,6 +49,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const placeParams = (p: PlaceFrom): Record<string, unknown> => ({
   source: p.source,
   sourceId: p.sourceId,
+  query: p.query,
   ...(p.name !== undefined ? { name: p.name } : {}),
   ...(p.near ? { near: { latitude: p.near.latitude, longitude: p.near.longitude } } : {}),
 });

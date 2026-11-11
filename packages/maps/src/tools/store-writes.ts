@@ -120,6 +120,14 @@ const latitudeArg = z
   .optional()
   .describe("Latitude, when known: makes the match exact and can skip asking Maps.");
 const longitudeArg = z.number().min(-180).max(180).optional().describe("Longitude, when known.");
+const nameArg = z
+  .string()
+  .min(1)
+  .optional()
+  .describe(
+    "A label of your own, saved as the place's custom name, which Maps shows instead of the " +
+      "place's name. Left out, the place keeps the name Maps gives it.",
+  );
 
 /** A refusal decided here, before the lane is called, in the lane's own vocabulary. */
 const refuse = (reason: "invalid" | "notFound", message: string) => fail(message, { reason });
@@ -252,12 +260,14 @@ export const registerStoreWriteTools = (
         query: queryArg,
         latitude: latitudeArg,
         longitude: longitudeArg,
-        name: z.string().min(1).optional().describe("Label to save it under. Defaults to `query`."),
+        name: nameArg,
       }),
       annotations: WRITE,
     },
     async ({ query, latitude, longitude, name }) =>
       wrapResult(async () => {
+        // What the place is called here, for the read-only de-duplication alone: the lane is
+        // sent `name` only when the caller gave one.
         const label = name ?? query;
         const coords = coordsOf(latitude, longitude);
         if ("refusal" in coords) return coords.refusal;
@@ -274,7 +284,7 @@ export const registerStoreWriteTools = (
           });
         }
         const s = await finder.find(near ? { query, ...near } : { query });
-        const w = await lane.addFavorite({ ...fromSource(s), name: label, near });
+        const w = await lane.addFavorite({ ...fromSource(s), query, name, near });
         return ok(
           compact({
             favorite: described(client, "favorite", w.id),
@@ -332,12 +342,14 @@ export const registerStoreWriteTools = (
         query: queryArg,
         latitude: latitudeArg,
         longitude: longitudeArg,
-        name: z.string().min(1).optional().describe("Label to save it under. Defaults to `query`."),
+        name: nameArg,
       }),
       annotations: WRITE,
     },
     async ({ query, latitude, longitude, name }) =>
       wrapResult(async () => {
+        // What the place is called here, for the read-only de-duplication alone: the lane is
+        // sent `name` only when the caller gave one.
         const label = name ?? query;
         const coords = coordsOf(latitude, longitude);
         if ("refusal" in coords) return coords.refusal;
@@ -354,7 +366,7 @@ export const registerStoreWriteTools = (
           });
         }
         const s = await finder.find(near ? { query, ...near } : { query });
-        const w = await lane.savePlace({ ...fromSource(s), name: label, near });
+        const w = await lane.savePlace({ ...fromSource(s), query, name, near });
         return ok(
           compact({
             place: described(client, "collection-item", w.id),
@@ -445,17 +457,18 @@ export const registerStoreWriteTools = (
           return filedAnswer(await lane.fileInGuide({ guide, placeId: target.id }), false);
         }
 
-        const name = query as string;
+        const q = query as string;
         const coords = coordsOf(latitude, longitude);
         if ("refusal" in coords) return coords.refusal;
         const { near } = coords;
         const finder = client.placeSource();
-        const existing = near ? finder.existingSavedPlace({ ...near, name }) : null;
+        const existing = near ? finder.existingSavedPlace({ ...near, name: q }) : null;
         if (existing) {
           return filedAnswer(await lane.fileInGuide({ guide, placeId: existing.id }), false);
         }
-        const s = await finder.find(near ? { query: name, ...near } : { query: name });
-        const w = await lane.fileInGuide({ guide, ...fromSource(s), name, near });
+        const s = await finder.find(near ? { query: q, ...near } : { query: q });
+        // No label: this tool takes none, so the query is sent as the query alone.
+        const w = await lane.fileInGuide({ guide, ...fromSource(s), query: q, near });
         return filedAnswer(w, s.seeded);
       }),
   );

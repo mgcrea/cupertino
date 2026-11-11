@@ -414,10 +414,11 @@ describe("add_favorite", () => {
     expect(sent(seen)).toEqual([
       {
         method: "maps.addFavorite",
+        // No name was given: the query goes as the query, never as a label.
         params: {
           source: "recent",
           sourceId: RECENT_ID,
-          name: "Synthetic Café",
+          query: "Synthetic Café",
           near: { latitude: 48.1, longitude: 2.2 },
         },
       },
@@ -438,6 +439,37 @@ describe("add_favorite", () => {
         sync: MEASURED,
       },
     });
+  });
+
+  it("sends an explicit name as the label, beside the query", async () => {
+    const path = emptyStore();
+    exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
+    const { env, seen } = await hostStub(saves);
+    const c = await connect({ writes: true, lane: env, storePath: path });
+    for (const tool of ["apple_maps_add_favorite", "apple_maps_save_place"]) {
+      await call(c, tool, {
+        query: "Synthetic Café",
+        name: "Synthetic label",
+        latitude: 48.1,
+        longitude: 2.2,
+      });
+    }
+    expect(sent(seen).map((m) => m.params)).toEqual([
+      {
+        source: "recent",
+        sourceId: RECENT_ID,
+        query: "Synthetic Café",
+        name: "Synthetic label",
+        near: { latitude: 48.1, longitude: 2.2 },
+      },
+      {
+        source: "recent",
+        sourceId: RECENT_ID,
+        query: "Synthetic Café",
+        name: "Synthetic label",
+        near: { latitude: 48.1, longitude: 2.2 },
+      },
+    ]);
   });
 
   it("returns an existing favourite without calling the lane, under its own name", async () => {
@@ -501,7 +533,7 @@ describe("add_favorite", () => {
     expect(sent(seen)).toEqual([
       {
         method: "maps.addFavorite",
-        params: { source: "recent", sourceId: SEEDED_ID, name: "Synthetic Tower" },
+        params: { source: "recent", sourceId: SEEDED_ID, query: "Synthetic Tower" },
       },
     ]);
     expect(res.body.recentsNote).toMatch(/Recents/);
@@ -608,7 +640,7 @@ describe("save_place", () => {
         params: {
           source: "favorite",
           sourceId: FAV_ID,
-          name: "Synthetic Café",
+          query: "Synthetic Café",
           near: { latitude: 48.1, longitude: 2.2 },
         },
       },
@@ -929,7 +961,7 @@ describe("add_place_to_guide", () => {
           guide: "Synthetic guide",
           source: "recent",
           sourceId: RECENT_ID,
-          name: "Synthetic Café",
+          query: "Synthetic Café",
           near: { latitude: 48.1, longitude: 2.2 },
         },
       },

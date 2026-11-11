@@ -25,7 +25,9 @@ import Foundation
 /// from one already in the store, with `createTime` and `modificationTime` at now as each record
 /// Maps inserted had (the 2026-11-11 live check found the lane's without them). The display
 /// columns (`mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`) are copied from the source
-/// item when it has them and left nil otherwise: Maps renders a missing one from the record.
+/// item when it has them and left nil otherwise: Maps renders a missing one from the record. A
+/// source with no `mapItemName` (a recent) gets the caller's query there as a placeholder, and a
+/// label the caller chose goes in `customName`, never in `mapItemName`.
 ///
 /// Every fetch is scoped to the entity the id is meant to name, so a favourite's id never deletes
 /// a saved place. Messages never repeat a value the caller passed.
@@ -104,9 +106,10 @@ nonisolated struct MapsWriter: Sendable {
   // MARK: - Writes
 
   func addFavorite(
-    source: SourceKind, sourceId: String, name: String?, near: (Double, Double)?
+    source: SourceKind, sourceId: String, query: String, name: String?, near: (Double, Double)?
   ) throws -> Result {
     let sourceUUID = try Self.uuid(sourceId)
+    let query = try Self.validText(query, "query")
     let name = try name.map(Self.validName)
     let near = try near.map(Self.validCoordinate)
     let (id, changed, created) = try store.write { context in
@@ -120,7 +123,7 @@ nonisolated struct MapsWriter: Sendable {
       let identifier = UUID()
       let favorite = NSEntityDescription.insertNewObject(
         forEntityName: "FavoriteItem", into: context)
-      var values = place.displayColumns(name: name)
+      var values = place.displayColumns(query: query, name: name)
       values["identifier"] = identifier
       values["createTime"] = now
       values["modificationTime"] = now
@@ -192,9 +195,10 @@ nonisolated struct MapsWriter: Sendable {
   }
 
   func savePlace(
-    source: SourceKind, sourceId: String, name: String?, near: (Double, Double)?
+    source: SourceKind, sourceId: String, query: String, name: String?, near: (Double, Double)?
   ) throws -> Result {
     let sourceUUID = try Self.uuid(sourceId)
+    let query = try Self.validText(query, "query")
     let name = try name.map(Self.validName)
     let near = try near.map(Self.validCoordinate)
     let (id, changed, created) = try store.write { context in
@@ -202,7 +206,7 @@ nonisolated struct MapsWriter: Sendable {
       if let existing = try Self.item("CollectionPlaceItem", at: place.coordinate, in: context) {
         return (Self.text(try Self.identifier(of: existing)), [String](), false)
       }
-      let (item, changed) = Self.insertSavedPlace(place, name: name, in: context)
+      let (item, changed) = Self.insertSavedPlace(place, query: query, name: name, in: context)
       return (Self.text(try Self.identifier(of: item)), changed, true)
     }
     return result(id: id, changed: changed, created: created)
@@ -221,26 +225,28 @@ nonisolated struct MapsWriter: Sendable {
   /// first from `source`/`sourceId` (or the saved place already at its spot), in the same save.
   func fileInGuide(
     guideTitle: String, placeId: String?, source: SourceKind?, sourceId: String?,
-    name: String?, near: (Double, Double)?
+    query: String?, name: String?, near: (Double, Double)?
   ) throws -> Result {
     guard !guideTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
       throw StoreLaneError.invalid("the Guide title is empty")
     }
     enum Target {
       case place(UUID)
-      case source(SourceKind, UUID, String?, Coordinate?)
+      case source(SourceKind, UUID, query: String, name: String?, Coordinate?)
     }
     let target: Target
     switch (placeId, source, sourceId) {
     case (let placeId?, .none, .none):
-      guard name == nil, near == nil else {
-        throw StoreLaneError.invalid("a name or a coordinate goes with a source, not a placeId")
+      guard query == nil, name == nil, near == nil else {
+        throw StoreLaneError.invalid(
+          "a query, a name or a coordinate goes with a source, not a placeId")
       }
       target = .place(try Self.uuid(placeId))
     case (.none, let source?, let sourceId?):
+      guard let query else { throw StoreLaneError.invalid("a source needs its query") }
       target = .source(
-        source, try Self.uuid(sourceId), try name.map(Self.validName),
-        try near.map(Self.validCoordinate))
+        source, try Self.uuid(sourceId), query: try Self.validText(query, "query"),
+        name: try name.map(Self.validName), try near.map(Self.validCoordinate))
     default:
       throw StoreLaneError.invalid("name either a placeId, or a source and its sourceId")
     }
@@ -251,12 +257,12 @@ nonisolated struct MapsWriter: Sendable {
       switch target {
       case .place(let uuid):
         item = try CoreDataStore.fetchOne("CollectionPlaceItem", uuid: uuid, in: context)
-      case .source(let source, let uuid, let name, let near):
+      case .source(let source, let uuid, let query, let name, let near):
         let place = try Place(source, uuid, near: near, in: context)
         if let existing = try Self.item("CollectionPlaceItem", at: place.coordinate, in: context) {
           item = existing
         } else {
-          item = Self.insertSavedPlace(place, name: name, in: context).item
+          item = Self.insertSavedPlace(place, query: query, name: name, in: context).item
           created = true
         }
       }
@@ -337,16 +343,20 @@ nonisolated struct MapsWriter: Sendable {
       item.entity.attributesByName[key] == nil ? nil : item.value(forKey: key)
     }
 
-    /// The display columns a new item copies, and `customName` when the caller's name is not
-    /// the one the new item would show without it. A source with no `mapItemName` (a recent)
-    /// takes the caller's name there instead.
-    func displayColumns(name: String?) -> [String: Any] {
+    /// The display columns a new item copies, and `customName` for the caller's own label.
+    ///
+    /// `mapItemName` is the place's, and belongs to whichever device refreshes the place next
+    /// (the 870 import replaced the lane's): the source's own, or for a source with none (a
+    /// recent) the query, as a placeholder until then. A label the caller chose is `customName`,
+    /// which no refresh touches, set only when the caller gave one and it differs from that
+    /// `mapItemName`; the query never becomes one.
+    func displayColumns(query: String, name: String?) -> [String: Any] {
       var values: [String: Any] = [:]
       for key in ["mapItemAddress", "mapItemCategory", "muid"] {
         if let value = value(key) { values[key] = value }
       }
-      let mapItemName = value("mapItemName") as? String ?? name
-      if let mapItemName { values["mapItemName"] = mapItemName }
+      let mapItemName = value("mapItemName") as? String ?? query
+      values["mapItemName"] = mapItemName
       if let name, name != mapItemName { values["customName"] = name }
       return values
     }
@@ -378,12 +388,12 @@ nonisolated struct MapsWriter: Sendable {
 
   /// A saved place in no Guide, as Maps' 862 saved it; returns it and the attributes it holds.
   private static func insertSavedPlace(
-    _ place: Place, name: String?, in context: NSManagedObjectContext
+    _ place: Place, query: String, name: String?, in context: NSManagedObjectContext
   ) -> (item: NSManagedObject, changed: [String]) {
     let now = Date()
     let item = NSEntityDescription.insertNewObject(
       forEntityName: "CollectionPlaceItem", into: context)
-    var values = place.displayColumns(name: name)
+    var values = place.displayColumns(query: query, name: name)
     values["identifier"] = UUID()
     values["createTime"] = now
     values["modificationTime"] = now
@@ -538,13 +548,18 @@ nonisolated struct MapsWriter: Sendable {
 
   /// Trimmed, 1 to 500 characters, one line.
   static func validName(_ name: String) throws -> String {
-    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !trimmed.isEmpty else { throw StoreLaneError.invalid("the name is empty") }
+    try validText(name, "name")
+  }
+
+  /// `text` trimmed, 1 to 500 characters, one line; a refusal names `what`, never the text.
+  static func validText(_ text: String, _ what: String) throws -> String {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { throw StoreLaneError.invalid("the \(what) is empty") }
     guard trimmed.count <= maxNameLength else {
-      throw StoreLaneError.invalid("the name is longer than \(maxNameLength) characters")
+      throw StoreLaneError.invalid("the \(what) is longer than \(maxNameLength) characters")
     }
     guard !trimmed.contains(where: \.isNewline) else {
-      throw StoreLaneError.invalid("the name has a line break")
+      throw StoreLaneError.invalid("the \(what) has a line break")
     }
     return trimmed
   }

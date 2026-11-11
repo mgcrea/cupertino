@@ -417,20 +417,23 @@ extension StoreLaneCheck {
         storeURL, "addFavorite", [inserted("FavoriteItem"), inserted("MixinMapItem")]
       ) {
         result = try writer.addFavorite(
-          source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
-          near: recentAt)
+          source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic recent place",
+          name: nil, near: recentAt)
       }
       guard let result else { throw Failure(why: "addFavorite returned nothing") }
       try expect(result.created, "created is false")
       try expect(result.filed == nil, "filed is \(String(describing: result.filed))")
       let id = try uuid(result)
       let values = try mapsValues(storeURL, "FavoriteItem", id)
-      // A recent has only `muid` among the display columns: the name is the caller's, and the
-      // address and category stay nil.
+      // A recent has only `muid` among the display columns: the query stands in as
+      // `mapItemName` until a device refreshes the place, the address and category stay nil, and
+      // with no name given there is no `customName`.
       let keys = newFavoriteKeys.union(["mapItemName", "muid"])
       try expect(Set(values.keys) == keys, "the favourite holds \(values.keys.sorted())")
       try expect(result.changed == keys.sorted(), "changed is \(result.changed)")
-      try expect(values["mapItemName"] as? String == "Synthetic recent place", "mapItemName")
+      try expect(
+        values["mapItemName"] as? String == "Synthetic recent place",
+        "mapItemName is \(values["mapItemName"] ?? "nil"), not the query")
       try expect(int(values, "muid") == 1001, "muid is \(int(values, "muid") ?? -1)")
       try expect(int(values, "type") == 1, "type is \(int(values, "type") ?? -1)")
       try expect(int(values, "version") == 2, "version is \(int(values, "version") ?? -1)")
@@ -468,20 +471,21 @@ extension StoreLaneCheck {
     check("addFavoriteIsIdempotent") {
       let (writer, storeURL) = try mapsFixture("add-favorite-again")
       let first = try writer.addFavorite(
-        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
-        near: nil)
+        source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic recent place",
+        name: nil, near: nil)
       var again: MapsWriter.Result?
       try expectNoMapsHistory(storeURL, "a second addFavorite") {
         again = try writer.addFavorite(
-          source: .recent, sourceId: MapsID.recent.uuidString, name: "Another name",
-          near: recentAt)
+          source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+          name: "Another name", near: recentAt)
       }
       try expect(again?.id == first.id, "the second call answers \(again?.id ?? "nil")")
       try expect(again?.created == false, "the second call created one")
       try expect(again?.changed == [], "the second call changed \(again?.changed ?? [])")
       // The fixture favourite, from itself: already there.
       let own = try writer.addFavorite(
-        source: .favorite, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+        source: .favorite, sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+        name: nil, near: nil)
       try expect(
         own.id.lowercased() == MapsID.favorite.uuidString.lowercased() && !own.created,
         "the favourite from itself answers \(own)")
@@ -493,15 +497,15 @@ extension StoreLaneCheck {
       try expectNoMapsHistory(storeURL, "a far addFavorite") {
         try expectRefusal("invalid", "300 m away") {
           _ = try writer.addFavorite(
-            source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
-            near: north(of: recentAt, metres: 300))
+            source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic recent place",
+            name: nil, near: north(of: recentAt, metres: 300))
         }
       }
       try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "a favourite was saved")
       // 200 m is within Maps' usual drift.
       let close = try writer.addFavorite(
-        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
-        near: north(of: recentAt, metres: 200))
+        source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic recent place",
+        name: nil, near: north(of: recentAt, metres: 200))
       try expect(close.created, "200 m away was not saved")
     }
 
@@ -516,7 +520,8 @@ extension StoreLaneCheck {
       // Past Int64 by the step: one above the maximum instead.
       try setPosition(Int64.max - 1_000)
       let near = try writer.addFavorite(
-        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic", near: nil)
+        source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+        name: "Synthetic", near: nil)
       let position = int(try mapsValues(storeURL, "FavoriteItem", try uuid(near)), "positionIndex")
       try expect(position == Int64.max - 999, "positionIndex is \(position ?? -1)")
       // No room at all: refused, nothing saved.
@@ -525,7 +530,8 @@ extension StoreLaneCheck {
       try expectNoMapsHistory(storeURL, "an addFavorite past Int64") {
         try expectRefusal("failed", "positionIndex at Int64.max") {
           _ = try writer.addFavorite(
-            source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic", near: nil)
+            source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+            name: "Synthetic", near: nil)
         }
       }
     }
@@ -648,8 +654,8 @@ extension StoreLaneCheck {
         storeURL, "savePlace", [inserted("CollectionPlaceItem"), inserted("MixinMapItem")]
       ) {
         result = try writer.savePlace(
-          source: .favorite, sourceId: MapsID.favorite.uuidString, name: "Synthetic favourite",
-          near: favoriteAt)
+          source: .favorite, sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+          name: "Synthetic favourite", near: favoriteAt)
       }
       guard let result else { throw Failure(why: "savePlace returned nothing") }
       try expect(result.created, "created is false")
@@ -678,21 +684,22 @@ extension StoreLaneCheck {
       try expect(try mapsCount(storeURL, "FavoriteItem") == 1, "the favourite went")
       // A saved place from itself, and the same favourite again: already there.
       let own = try writer.savePlace(
-        source: .savedPlace, sourceId: MapsID.saved.uuidString, name: "Synthetic own name",
-        near: nil)
+        source: .savedPlace, sourceId: MapsID.saved.uuidString, query: "Synthetic query",
+        name: "Synthetic own name", near: nil)
       try expect(
         own.id.lowercased() == MapsID.saved.uuidString.lowercased() && !own.created,
         "the fixture's saved place, from itself, answers \(own)")
       let other = try writer.savePlace(
-        source: .favorite, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+        source: .favorite, sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+        name: nil, near: nil)
       try expect(other.id == result.id && !other.created, "a second save answers \(other)")
     }
 
     check("savePlaceKeepsCallersName") {
       let (writer, storeURL) = try mapsFixture("save-place-name")
       let result = try writer.savePlace(
-        source: .favorite, sourceId: MapsID.favorite.uuidString, name: "  Synthetic own name ",
-        near: nil)
+        source: .favorite, sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+        name: "  Synthetic own name ", near: nil)
       let values = try mapsValues(storeURL, "CollectionPlaceItem", try uuid(result))
       try expect(
         values["customName"] as? String == "Synthetic own name",
@@ -700,6 +707,88 @@ extension StoreLaneCheck {
       try expect(
         values["mapItemName"] as? String == "Synthetic favourite", "mapItemName is not copied")
       try expect(result.changed.contains("customName"), "changed is \(result.changed)")
+    }
+
+    // `mapItemName` belongs to whichever device refreshes the place next (the 870 import replaced
+    // the lane's), so a label the caller chose lives in `customName`, and the query is only the
+    // placeholder a recent's copy shows until then.
+    check("recentWithNameKeepsItAsCustomName") {
+      let calls: [(String, String, (MapsWriter) throws -> MapsWriter.Result)] = [
+        (
+          "addFavorite", "FavoriteItem",
+          {
+            try $0.addFavorite(
+              source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+              name: "Synthetic label", near: nil)
+          }
+        ),
+        (
+          "savePlace", "CollectionPlaceItem",
+          {
+            try $0.savePlace(
+              source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+              name: "Synthetic label", near: nil)
+          }
+        ),
+        (
+          "fileInGuide", "CollectionPlaceItem",
+          {
+            try $0.fileInGuide(
+              guideTitle: "Synthetic guide", placeId: nil, source: .recent,
+              sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+              name: "Synthetic label", near: nil)
+          }
+        ),
+      ]
+      for (label, entity, call) in calls {
+        let (writer, storeURL) = try mapsFixture("label-recent-\(label)")
+        let result = try call(writer)
+        try expect(result.created, "\(label) created nothing")
+        let values = try mapsValues(storeURL, entity, try uuid(result))
+        try expect(
+          values["customName"] as? String == "Synthetic label",
+          "\(label): customName is \(values["customName"] ?? "nil")")
+        try expect(
+          values["mapItemName"] as? String == "Synthetic query",
+          "\(label): mapItemName is \(values["mapItemName"] ?? "nil"), not the query")
+        if label != "fileInGuide" {
+          try expect(result.changed.contains("customName"), "\(label) changed \(result.changed)")
+        }
+      }
+    }
+
+    check("donorWithoutNameSetsNoCustomName") {
+      let calls: [(String, (MapsWriter) throws -> MapsWriter.Result)] = [
+        (
+          "savePlace",
+          {
+            try $0.savePlace(
+              source: .favorite, sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+              name: nil, near: nil)
+          }
+        ),
+        (
+          "fileInGuide",
+          {
+            try $0.fileInGuide(
+              guideTitle: "Synthetic guide", placeId: nil, source: .favorite,
+              sourceId: MapsID.favorite.uuidString, query: "Synthetic query", name: nil,
+              near: nil)
+          }
+        ),
+      ]
+      for (label, call) in calls {
+        let (writer, storeURL) = try mapsFixture("label-donor-\(label)")
+        let result = try call(writer)
+        try expect(result.created, "\(label) created nothing")
+        let values = try mapsValues(storeURL, "CollectionPlaceItem", try uuid(result))
+        try expect(
+          values["customName"] == nil,
+          "\(label): the query became a customName: \(values["customName"] ?? "")")
+        try expect(
+          values["mapItemName"] as? String == "Synthetic favourite",
+          "\(label): mapItemName is \(values["mapItemName"] ?? "nil"), not the favourite's")
+      }
     }
 
     check("removeSavedPlace") {
@@ -729,8 +818,8 @@ extension StoreLaneCheck {
     check("fileInGuideByPlaceId") {
       let (writer, storeURL) = try mapsFixture("file-by-id")
       let saved = try writer.savePlace(
-        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic recent place",
-        near: nil)
+        source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic recent place",
+        name: nil, near: nil)
       let placeID = try uuid(saved)
       var result: MapsWriter.Result?
       try expectMapsHistory(
@@ -743,7 +832,7 @@ extension StoreLaneCheck {
       ) {
         result = try writer.fileInGuide(
           guideTitle: "Synthetic guide", placeId: saved.id, source: nil, sourceId: nil,
-          name: nil, near: nil)
+          query: nil, name: nil, near: nil)
       }
       try expect(result?.filed == true, "filed is \(String(describing: result?.filed))")
       try expect(result?.changed == ["collections"], "changed is \(result?.changed ?? [])")
@@ -758,8 +847,8 @@ extension StoreLaneCheck {
         var again: MapsWriter.Result?
         try expectNoMapsHistory(storeURL, label) {
           again = try writer.fileInGuide(
-            guideTitle: "Synthetic guide", placeId: id, source: nil, sourceId: nil, name: nil,
-            near: nil)
+            guideTitle: "Synthetic guide", placeId: id, source: nil, sourceId: nil, query: nil,
+            name: nil, near: nil)
         }
         try expect(again?.changed == [], "\(label) changed \(again?.changed ?? [])")
         try expect(again?.filed == true, "\(label) filed is \(String(describing: again?.filed))")
@@ -778,7 +867,8 @@ extension StoreLaneCheck {
       ) {
         result = try writer.fileInGuide(
           guideTitle: "Synthetic guide", placeId: nil, source: .recent,
-          sourceId: MapsID.recent.uuidString, name: "Synthetic recent place", near: recentAt)
+          sourceId: MapsID.recent.uuidString, query: "Synthetic recent place", name: nil,
+          near: recentAt)
       }
       guard let result else { throw Failure(why: "fileInGuide returned nothing") }
       try expect(result.created, "created is false")
@@ -822,7 +912,8 @@ extension StoreLaneCheck {
       try mapsInsert(
         storeURL, "CollectionPlaceItem", ["identifier": west], record: (7, (51.50072, -0.12454)))
       let result = try writer.addFavorite(
-        source: .savedPlace, sourceId: west.uuidString, name: "Synthetic", near: nil)
+        source: .savedPlace, sourceId: west.uuidString, query: "Synthetic query", name: "Synthetic",
+        near: nil)
       let values = try mapsValues(storeURL, "FavoriteItem", try uuid(result))
       try expect(
         values["shortcutIdentifier"] as? String == "51.50070,-0.12450",
@@ -839,7 +930,8 @@ extension StoreLaneCheck {
       var saved: MapsWriter.Result?
       try expectNoMapsHistory(storeURL, "savePlace onto a record-only saved place") {
         saved = try writer.savePlace(
-          source: .recent, sourceId: MapsID.recent.uuidString, name: nil, near: nil)
+          source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query", name: nil,
+          near: nil)
       }
       try expect(
         saved?.id == recordOnly.uuidString.lowercased() && saved?.created == false,
@@ -852,7 +944,8 @@ extension StoreLaneCheck {
           "longitude": recentRecordAt.1,
         ])
       let pinned = try writer.addFavorite(
-        source: .recent, sourceId: MapsID.recent.uuidString, name: "Synthetic", near: nil)
+        source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+        name: "Synthetic", near: nil)
       try expect(pinned.created, "the slot was taken for a pin")
       // A row with no identifier there cannot be named: failed, not the caller's mistake.
       let (other, otherURL) = try mapsFixture("same-spot-unnamed")
@@ -862,7 +955,8 @@ extension StoreLaneCheck {
       try expectNoMapsHistory(otherURL, "savePlace onto an unnamed saved place") {
         try expectRefusal("failed", "an unnamed saved place") {
           _ = try other.savePlace(
-            source: .recent, sourceId: MapsID.recent.uuidString, name: nil, near: nil)
+            source: .recent, sourceId: MapsID.recent.uuidString, query: "Synthetic query",
+            name: nil, near: nil)
         }
       }
     }
@@ -874,7 +968,8 @@ extension StoreLaneCheck {
       try expectNoMapsHistory(storeURL, "addFavorite from a (0, 0) record") {
         try expectRefusal("notFound", "a (0, 0) record") {
           _ = try writer.addFavorite(
-            source: .recent, sourceId: zero.uuidString, name: "Synthetic", near: nil)
+            source: .recent, sourceId: zero.uuidString, query: "Synthetic query", name: "Synthetic",
+            near: nil)
         }
       }
     }
@@ -882,7 +977,8 @@ extension StoreLaneCheck {
     check("fileInGuideFilesTheSavedPlaceThere") {
       let (writer, storeURL) = try mapsFixture("file-onto-saved")
       let saved = try writer.savePlace(
-        source: .favorite, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+        source: .favorite, sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+        name: nil, near: nil)
       let placeID = try uuid(saved)
       var result: MapsWriter.Result?
       try expectMapsHistory(
@@ -896,7 +992,8 @@ extension StoreLaneCheck {
       ) {
         result = try writer.fileInGuide(
           guideTitle: "Synthetic guide", placeId: nil, source: .favorite,
-          sourceId: MapsID.favorite.uuidString, name: "Synthetic favourite", near: favoriteAt)
+          sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+          name: "Synthetic favourite", near: favoriteAt)
       }
       try expect(result?.id == saved.id, "id is \(result?.id ?? "nil"), not the saved place")
       try expect(result?.created == false, "created is true")
@@ -912,7 +1009,7 @@ extension StoreLaneCheck {
         let message = try expectRefusal("invalid", "Synthetic twin") {
           _ = try writer.fileInGuide(
             guideTitle: "Synthetic twin", placeId: MapsID.saved.uuidString, source: nil,
-            sourceId: nil, name: nil, near: nil)
+            sourceId: nil, query: nil, name: nil, near: nil)
         }
         for twin in [MapsID.twinA, MapsID.twinB] {
           try expect(
@@ -929,7 +1026,8 @@ extension StoreLaneCheck {
         let message = try expectRefusal("invalid", "Synthetic none") {
           _ = try writer.fileInGuide(
             guideTitle: "Synthetic none", placeId: nil, source: .recent,
-            sourceId: MapsID.recent.uuidString, name: "Synthetic recent place", near: nil)
+            sourceId: MapsID.recent.uuidString, query: "Synthetic recent place", name: nil,
+            near: nil)
         }
         for guide in [MapsID.guide, MapsID.twinA, MapsID.twinB] {
           try expect(
@@ -952,7 +1050,7 @@ extension StoreLaneCheck {
             {
               _ = try writer.fileInGuide(
                 guideTitle: "Synthetic guide", placeId: place, source: .recent, sourceId: recent,
-                name: nil, near: nil)
+                query: "Synthetic query", name: nil, near: nil)
             }
           ),
           (
@@ -960,7 +1058,7 @@ extension StoreLaneCheck {
             {
               _ = try writer.fileInGuide(
                 guideTitle: "Synthetic guide", placeId: nil, source: nil, sourceId: nil,
-                name: nil, near: nil)
+                query: nil, name: nil, near: nil)
             }
           ),
           (
@@ -968,7 +1066,7 @@ extension StoreLaneCheck {
             {
               _ = try writer.fileInGuide(
                 guideTitle: "Synthetic guide", placeId: nil, source: .recent, sourceId: nil,
-                name: nil, near: nil)
+                query: "Synthetic query", name: nil, near: nil)
             }
           ),
           (
@@ -976,14 +1074,30 @@ extension StoreLaneCheck {
             {
               _ = try writer.fileInGuide(
                 guideTitle: "Synthetic guide", placeId: place, source: nil, sourceId: nil,
-                name: "Synthetic", near: nil)
+                query: nil, name: "Synthetic", near: nil)
+            }
+          ),
+          (
+            "a query with a placeId",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: place, source: nil, sourceId: nil,
+                query: "Synthetic query", name: nil, near: nil)
+            }
+          ),
+          (
+            "a source without its query",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: nil, source: .recent, sourceId: recent,
+                query: nil, name: "Synthetic", near: nil)
             }
           ),
           (
             "a blank Guide title",
             {
               _ = try writer.fileInGuide(
-                guideTitle: "  ", placeId: place, source: nil, sourceId: nil, name: nil,
+                guideTitle: "  ", placeId: place, source: nil, sourceId: nil, query: nil, name: nil,
                 near: nil)
             }
           ),
@@ -1002,26 +1116,33 @@ extension StoreLaneCheck {
         let calls: [(String, () throws -> Void)] = [
           (
             "addFavorite from a gone recent",
-            { _ = try writer.addFavorite(source: .recent, sourceId: gone, name: nil, near: nil) }
+            {
+              _ = try writer.addFavorite(
+                source: .recent, sourceId: gone, query: "Synthetic query", name: nil, near: nil)
+            }
           ),
           (
             "savePlace from a gone recent",
-            { _ = try writer.savePlace(source: .recent, sourceId: gone, name: nil, near: nil) }
+            {
+              _ = try writer.savePlace(
+                source: .recent, sourceId: gone, query: "Synthetic query", name: nil, near: nil)
+            }
           ),
           (
             // Entity-scoped: a favourite's id does not name a saved place.
             "savePlace from the favourite, called a saved place",
             {
               _ = try writer.savePlace(
-                source: .savedPlace, sourceId: MapsID.favorite.uuidString, name: nil, near: nil)
+                source: .savedPlace, sourceId: MapsID.favorite.uuidString, query: "Synthetic query",
+                name: nil, near: nil)
             }
           ),
           (
             "a recent with no record",
             {
               _ = try writer.addFavorite(
-                source: .recent, sourceId: MapsID.bareRecent.uuidString, name: "Synthetic",
-                near: nil)
+                source: .recent, sourceId: MapsID.bareRecent.uuidString, query: "Synthetic query",
+                name: "Synthetic", near: nil)
             }
           ),
           ("removeFavorite of nothing", { _ = try writer.removeFavorite(id: gone) }),
@@ -1039,7 +1160,7 @@ extension StoreLaneCheck {
             {
               _ = try writer.fileInGuide(
                 guideTitle: "Synthetic guide", placeId: gone, source: nil, sourceId: nil,
-                name: nil, near: nil)
+                query: nil, name: nil, near: nil)
             }
           ),
         ]
@@ -1058,11 +1179,17 @@ extension StoreLaneCheck {
         let calls: [(String, () throws -> Void)] = [
           (
             "addFavorite",
-            { _ = try writer.addFavorite(source: .recent, sourceId: bad, name: nil, near: nil) }
+            {
+              _ = try writer.addFavorite(
+                source: .recent, sourceId: bad, query: "Synthetic query", name: nil, near: nil)
+            }
           ),
           (
             "savePlace",
-            { _ = try writer.savePlace(source: .recent, sourceId: bad, name: nil, near: nil) }
+            {
+              _ = try writer.savePlace(
+                source: .recent, sourceId: bad, query: "Synthetic query", name: nil, near: nil)
+            }
           ),
           ("removeFavorite", { _ = try writer.removeFavorite(id: bad) }),
           ("removeSavedPlace", { _ = try writer.removeSavedPlace(id: "") }),
@@ -1071,7 +1198,7 @@ extension StoreLaneCheck {
             {
               _ = try writer.fileInGuide(
                 guideTitle: "Synthetic guide", placeId: bad, source: nil, sourceId: nil,
-                name: nil, near: nil)
+                query: nil, name: nil, near: nil)
             }
           ),
           (
@@ -1079,32 +1206,61 @@ extension StoreLaneCheck {
             {
               _ = try writer.fileInGuide(
                 guideTitle: "Synthetic guide", placeId: nil, source: .recent, sourceId: bad,
-                name: nil, near: nil)
+                query: "Synthetic query", name: nil, near: nil)
             }
           ),
           (
             "a blank name",
-            { _ = try writer.addFavorite(source: .recent, sourceId: recent, name: " ", near: nil) }
+            {
+              _ = try writer.addFavorite(
+                source: .recent, sourceId: recent, query: "Synthetic query", name: " ", near: nil)
+            }
           ),
           (
             "a name with a line break",
             {
               _ = try writer.savePlace(
-                source: .recent, sourceId: recent, name: "a\nb", near: nil)
+                source: .recent, sourceId: recent, query: "Synthetic query", name: "a\nb", near: nil
+              )
+            }
+          ),
+          (
+            "a blank query",
+            {
+              _ = try writer.addFavorite(
+                source: .recent, sourceId: recent, query: "  ", name: nil, near: nil)
+            }
+          ),
+          (
+            "a query with a line break",
+            {
+              _ = try writer.fileInGuide(
+                guideTitle: "Synthetic guide", placeId: nil, source: .recent, sourceId: recent,
+                query: "a\nb", name: nil, near: nil)
+            }
+          ),
+          (
+            "a query over 500 characters",
+            {
+              _ = try writer.savePlace(
+                source: .recent, sourceId: recent, query: String(repeating: "q", count: 501),
+                name: nil, near: nil)
             }
           ),
           (
             "a latitude past 90",
             {
               _ = try writer.addFavorite(
-                source: .recent, sourceId: recent, name: nil, near: (91, 2))
+                source: .recent, sourceId: recent, query: "Synthetic query", name: nil,
+                near: (91, 2))
             }
           ),
           (
             "a NaN longitude",
             {
               _ = try writer.savePlace(
-                source: .recent, sourceId: recent, name: nil, near: (48, .nan))
+                source: .recent, sourceId: recent, query: "Synthetic query", name: nil,
+                near: (48, .nan))
             }
           ),
         ]
@@ -1260,8 +1416,9 @@ extension StoreLaneCheck {
 
     check("mapsRoundTrip") {
       let (writer, storeURL) = try mapsFixture("lane-round-trip")
+      // As node sends a call that gave no name: the query, and no `name` key.
       let place: [String: Any] = [
-        "source": "recent", "sourceId": recent, "name": "Synthetic recent place",
+        "source": "recent", "sourceId": recent, "query": "Synthetic recent place",
         "near": near(recentAt),
       ]
 
@@ -1283,9 +1440,11 @@ extension StoreLaneCheck {
         added["changed"] as? [String] == newFavoriteKeys.union(["mapItemName", "muid"]).sorted(),
         "addFavorite changed is \(added["changed"] ?? "")")
       let pin = try uuid(added)
+      let pinValues = try mapsValues(storeURL, "FavoriteItem", pin)
       try expect(
-        try mapsValues(storeURL, "FavoriteItem", pin)["mapItemName"] as? String
-          == "Synthetic recent place", "the pin's name did not cross the lane")
+        pinValues["mapItemName"] as? String == "Synthetic recent place",
+        "the query did not cross the lane as the placeholder name")
+      try expect(pinValues["customName"] == nil, "no name was sent, yet the pin has a customName")
 
       // Again: the pin already there, nothing saved.
       try expectNoMapsHistory(storeURL, "maps.addFavorite again") {
@@ -1309,7 +1468,9 @@ extension StoreLaneCheck {
       // savePlace with no name and no near: both left off the wire.
       let saved = try mapsWrite(
         mapsReply(
-          request(54, "maps.savePlace", ["source": "favorite", "sourceId": favorite]), writer),
+          request(
+            54, "maps.savePlace",
+            ["source": "favorite", "sourceId": favorite, "query": "Synthetic query"]), writer),
         "maps.savePlace")
       try expect(saved["created"] as? Bool == true, "savePlace created none")
       let savedPlace = try uuid(saved)
@@ -1365,8 +1526,8 @@ extension StoreLaneCheck {
       try expect(status["refusal"] is NSNull, "status refusal is \(status["refusal"] ?? "")")
     }
 
-    // `near` and `name` reach the writer: dropping either in the dispatch turns a check off, or
-    // saves a place under another label, with every reply still well formed.
+    // `near`, `query` and `name` reach the writer: dropping one in the dispatch turns a check
+    // off, or saves a place under another label, with every reply still well formed.
     check("mapsNearAndNameCrossTheLane") {
       let (writer, storeURL) = try mapsFixture("lane-near-name")
       // In range, and 1 km from the recent's record: the writer's 250 m guard refuses it.
@@ -1375,11 +1536,16 @@ extension StoreLaneCheck {
       let places = try mapsCount(storeURL, "CollectionPlaceItem")
       try expectNoMapsHistory(storeURL, "a far near") {
         for (method, params) in [
-          ("maps.addFavorite", ["source": "recent", "sourceId": recent, "near": far]),
-          ("maps.savePlace", ["source": "recent", "sourceId": recent, "near": far]),
+          (
+            "maps.addFavorite", ["source": "recent", "sourceId": recent, "query": "Q", "near": far]
+          ),
+          ("maps.savePlace", ["source": "recent", "sourceId": recent, "query": "Q", "near": far]),
           (
             "maps.fileInGuide",
-            ["guide": "Synthetic guide", "source": "recent", "sourceId": recent, "near": far]
+            [
+              "guide": "Synthetic guide", "source": "recent", "sourceId": recent, "query": "Q",
+              "near": far,
+            ]
           ),
         ] as [(String, [String: Any])] {
           let (code, reason, message) = try failure(mapsReply(request(12, method, params), writer))
@@ -1391,25 +1557,32 @@ extension StoreLaneCheck {
       try expect(try mapsCount(storeURL, "FavoriteItem") == favorites, "a favourite was saved")
       try expect(try mapsCount(storeURL, "CollectionPlaceItem") == places, "a place was saved")
 
-      // The caller's name, read back from the place each call saved.
+      // The caller's query and name, read back from the place each call saved. A recent has no
+      // name of its own, so the query stands in as `mapItemName` and the name is the custom one.
       let filed = try mapsWrite(
         mapsReply(
           request(
             13, "maps.fileInGuide",
             [
               "guide": "Synthetic guide", "source": "recent", "sourceId": recent,
-              "name": "Synthetic filed name",
+              "query": "Synthetic filed query", "name": "Synthetic filed name",
             ]), writer), "fileInGuide with a name", filed: true)
       try expect(filed["created"] as? Bool == true, "fileInGuide with a name created none")
-      let filedName = try mapsValues(storeURL, "CollectionPlaceItem", uuid(filed))["mapItemName"]
+      let filedValues = try mapsValues(storeURL, "CollectionPlaceItem", uuid(filed))
       try expect(
-        filedName as? String == "Synthetic filed name",
-        "the filed place is named \(filedName ?? "nil")")
+        filedValues["mapItemName"] as? String == "Synthetic filed query",
+        "the filed place's mapItemName is \(filedValues["mapItemName"] ?? "nil")")
+      try expect(
+        filedValues["customName"] as? String == "Synthetic filed name",
+        "the filed place's customName is \(filedValues["customName"] ?? "nil")")
       let saved = try mapsWrite(
         mapsReply(
           request(
             14, "maps.savePlace",
-            ["source": "favorite", "sourceId": favorite, "name": "Synthetic saved name"]),
+            [
+              "source": "favorite", "sourceId": favorite, "query": "Synthetic saved query",
+              "name": "Synthetic saved name",
+            ]),
           writer), "savePlace with a name")
       try expect(saved["created"] as? Bool == true, "savePlace with a name created none")
       // The favourite has a name of its own, so the caller's is the custom one.
@@ -1424,12 +1597,21 @@ extension StoreLaneCheck {
 
     // Every write as node sends it, and one with no params at all.
     let writes: [(String, [String: Any])] = [
-      ("maps.addFavorite", ["source": "recent", "sourceId": recent, "near": near(recentAt)]),
-      ("maps.savePlace", ["source": "recent", "sourceId": recent, "name": "Synthetic"]),
+      (
+        "maps.addFavorite",
+        ["source": "recent", "sourceId": recent, "query": "Synthetic", "near": near(recentAt)]
+      ),
+      (
+        "maps.savePlace",
+        ["source": "recent", "sourceId": recent, "query": "Synthetic", "name": "Synthetic"]
+      ),
       ("maps.removeFavorite", ["id": favorite]),
       ("maps.removeSavedPlace", ["id": MapsID.saved.uuidString.lowercased()]),
       ("maps.fileInGuide", ["guide": "Synthetic guide", "placeId": favorite]),
-      ("maps.fileInGuide", ["guide": "Synthetic guide", "source": "recent", "sourceId": recent]),
+      (
+        "maps.fileInGuide",
+        ["guide": "Synthetic guide", "source": "recent", "sourceId": recent, "query": "Synthetic"]
+      ),
       // Refused before its params are read: a malformed write is still a write.
       ("maps.addFavorite", [:]),
     ]
@@ -1464,9 +1646,10 @@ extension StoreLaneCheck {
     check("mapsInvalidParams") {
       let (writer, storeURL) = try mapsFixture("lane-invalid")
       let secret = "Synthetic secret name"
+      let secretQuery = "Synthetic secret query"
       let guide = "Synthetic guide"
       let placeId = MapsID.saved.uuidString.lowercased()
-      let base: [String: Any] = ["source": "recent", "sourceId": recent]
+      let base: [String: Any] = ["source": "recent", "sourceId": recent, "query": secretQuery]
       func with(_ extra: [String: Any]) -> [String: Any] { base.merging(extra) { $1 } }
       let cases: [(String, String, Any)] = [
         ("addFavorite {}", "maps.addFavorite", [String: Any]()),
@@ -1479,6 +1662,19 @@ extension StoreLaneCheck {
         ("numeric name", "maps.addFavorite", with(["name": 7])),
         ("null name", "maps.savePlace", with(["name": NSNull()])),
         ("blank name", "maps.savePlace", with(["name": "  "])),
+        ("no query", "maps.addFavorite", ["source": "recent", "sourceId": recent]),
+        ("savePlace, no query", "maps.savePlace", ["source": "recent", "sourceId": recent]),
+        ("numeric query", "maps.addFavorite", with(["query": 7])),
+        ("null query", "maps.savePlace", with(["query": NSNull()])),
+        ("blank query", "maps.addFavorite", with(["query": "  "])),
+        (
+          "fileInGuide source, no query", "maps.fileInGuide",
+          ["guide": guide, "source": "recent", "sourceId": recent]
+        ),
+        (
+          "a query with a placeId", "maps.fileInGuide",
+          ["guide": guide, "placeId": placeId, "query": secretQuery]
+        ),
         ("near without longitude", "maps.addFavorite", with(["near": ["latitude": 48.85]])),
         ("near without latitude", "maps.savePlace", with(["near": ["longitude": 2.31]])),
         (
@@ -1528,7 +1724,7 @@ extension StoreLaneCheck {
           try expect(code == -32000, "\(label): code \(code)")
           try expect(reason == "invalid", "\(label): reason \(reason ?? "nil") (\(message))")
           for value in [
-            recent, MapsID.recent.uuidString, placeId, secret, guide, "bogusSecret",
+            recent, MapsID.recent.uuidString, placeId, secret, secretQuery, guide, "bogusSecret",
             "not-a-uuid-secret", "48.85", "91.5", "181.25",
           ] {
             try expect(

@@ -140,23 +140,27 @@ nonisolated enum StoreLane {
       return json(
         try maps.addFavorite(
           source: params.source("source"), sourceId: params.string("sourceId"),
-          name: params.optionalString("name"), near: params.near("near")))
+          query: params.string("query"), name: params.optionalString("name"),
+          near: params.near("near")))
     case "savePlace":
       return json(
         try maps.savePlace(
           source: params.source("source"), sourceId: params.string("sourceId"),
-          name: params.optionalString("name"), near: params.near("near")))
+          query: params.string("query"), name: params.optionalString("name"),
+          near: params.near("near")))
     case "removeFavorite":
       return json(try maps.removeFavorite(id: params.string("id")))
     case "removeSavedPlace":
       return json(try maps.removeSavedPlace(id: params.string("id")))
     case "fileInGuide":
-      // Each read as optional here; the writer refuses both a placeId and a source, or neither.
+      // Each read as optional here; the writer refuses both a placeId and a source, or neither,
+      // and a source without its query.
       return json(
         try maps.fileInGuide(
           guideTitle: params.string("guide"), placeId: params.optionalString("placeId"),
           source: params.optionalSource("source"), sourceId: params.optionalString("sourceId"),
-          name: params.optionalString("name"), near: params.near("near")))
+          query: params.optionalString("query"), name: params.optionalString("name"),
+          near: params.near("near")))
     case "status":
       return json(maps.status())
     default:

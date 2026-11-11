@@ -778,8 +778,12 @@ inserts holds the copied record's bytes and coordinate, and `createTime` and `mo
 now, as each of Maps' own did (the live check below found them missing, since fixed). A new item's
 display columns (`mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`) are copied from the
 item whose record it copies, when that item has them, and left nil otherwise: Maps renders a
-missing one from the record. A recent carries only `muid`, so a place copied from a recent takes the caller's name as
-`mapItemName`. A label that differs from the name the item would show goes in `customName`.
+missing one from the record. `mapItemName` is the place's, and whichever device refreshes the
+place next rewrites it (870 and 880, below). A recent carries only `muid`, so a place copied from
+a recent takes the caller's `query` as `mapItemName`, a placeholder until that refresh. A `name`
+the caller gave is their own label, and goes in `customName`, the column the read tools show
+first and neither import touched, unless it is the `mapItemName` already; the query never becomes
+a `customName`.
 
 **Unpinning is not a delete.** As in Maps, `remove_favorite` keeps the place in the library as a
 saved place, and its answer says so in `library`. `changed` is `["favorite", "savedPlace"]` when
@@ -791,7 +795,8 @@ says both.
 **Inputs.**
 
 - `add_favorite` and `save_place` take `query`, the place's name as typed into Maps' search field,
-  `latitude` and `longitude` when known (both or neither), and an optional `name` to save under.
+  `latitude` and `longitude` when known (both or neither), and an optional `name`, a label of the
+  caller's own, saved as `customName`.
 - `remove_favorite` takes a `ref` from `list_favorites` and `confirm: true`.
 - `remove_saved_place` takes a `ref` from `list_unfiled_places` or `list_collection_places` and
   `confirm: true`. The retired Accessibility route took a query and a coordinate instead. A coordinate
@@ -812,8 +817,8 @@ says both.
    read-only until a recent with a record appears, or gives up after
    `APPLE_MAPS_SEED_TIMEOUT_MS` (30 s) with nothing changed;
 3. sends one JSON-RPC request over Cupertino's socket, with the identifier of the item that owns
-   the record, the label, and the caller's coordinate. A remove names the item's own identifier
-   and seeds nothing.
+   the record, the `query`, the caller's `name` only when they gave one, and the caller's
+   coordinate. A remove names the item's own identifier and seeds nothing.
 
 The app admits the request only from the Maps server it spawned. It loads
 `DataModel_0_0_1.momd` from `MapsSync.framework`, which matches the live store with no patch,
@@ -832,13 +837,13 @@ saves nothing and answers `changed: []` and `filed: true`.
 
 **Refusals** carry their reason in the tool error's `details.reason`:
 
-| Reason         | When                                                                                                                                                                                                                                                                                                                                                                                                    |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `invalid`      | half a coordinate; a malformed ref, or one of the wrong kind; both `ref` and `query`, or neither; a place Maps resolved more than about 250 m from the coordinate asked for; a favourite that is not a pin, so the Home, Work and School slots cannot be unpinned; a Guide title that matches no Guide, or several (named by identifier); a name that is empty, over 500 characters or has a line break |
-| `notFound`     | a ref that matches no item, or names one with no identifier; an identifier the app does not find exactly once, such as a recent Maps has since replaced; a source with no place record or no coordinate                                                                                                                                                                                                 |
-| `incompatible` | the store no longer matches Maps' model, as after a macOS update that changes it. The tools stay registered and refuse, diagnostics says so first, and there is no fallback to another route                                                                                                                                                                                                            |
-| `writesOff`    | Maps' writes were switched off in Cupertino while the session ran                                                                                                                                                                                                                                                                                                                                       |
-| `failed`       | a Core Data fetch or save failed                                                                                                                                                                                                                                                                                                                                                                        |
+| Reason         | When                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid`      | half a coordinate; a malformed ref, or one of the wrong kind; both `ref` and `query`, or neither; a place Maps resolved more than about 250 m from the coordinate asked for; a favourite that is not a pin, so the Home, Work and School slots cannot be unpinned; a Guide title that matches no Guide, or several (named by identifier); a name or query that is empty, over 500 characters or has a line break |
+| `notFound`     | a ref that matches no item, or names one with no identifier; an identifier the app does not find exactly once, such as a recent Maps has since replaced; a source with no place record or no coordinate                                                                                                                                                                                                          |
+| `incompatible` | the store no longer matches Maps' model, as after a macOS update that changes it. The tools stay registered and refuse, diagnostics says so first, and there is no fallback to another route                                                                                                                                                                                                                     |
+| `writesOff`    | Maps' writes were switched off in Cupertino while the session ran                                                                                                                                                                                                                                                                                                                                                |
+| `failed`       | a Core Data fetch or save failed                                                                                                                                                                                                                                                                                                                                                                                 |
 
 A refusal can also carry one of the connection's own reasons. Every check runs before anything is
 saved.
@@ -890,8 +895,13 @@ and an iPhone:
 
 **Two imports came back from iCloud.** At 870 and 880, `mapssyncd` imported (author
 `NSCloudKitMirroringDelegate.import`) `mapItemName`, `mapItemAddress` and `mapItemCategory` onto
-the lane's pin and saved place: another device filled in the display columns the lane had left
-empty, because the recent it copied from carried none.
+the lane's pin and saved place: another device refreshed the place, replacing the `mapItemName`
+the lane had set (the caller's label, there the query, since the recent it copied from carried no
+name) with Maps' own, and filling in the address and category the lane had left empty. So
+`mapItemName` is not the lane's to keep. Since then the lane sets it only to the source's own
+name, or to the query as a placeholder for that refresh to replace, and puts a label the caller
+chose in `customName`, which neither import touched. Whether a later refresh ever rewrites
+`customName` has not been watched.
 
 **One gap, fixed.** The `MixinMapItem` the lane inserted at 869 had `createTime` and
 `modificationTime` nil, where Maps sets both to now on every `MixinMapItem` it inserts (850, 851,
