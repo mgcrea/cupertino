@@ -14,7 +14,7 @@ nonisolated struct CoreDataStore: Sendable {
   struct Status: Equatable {
     /// The patched model is compatible with the store's metadata.
     var compatible: Bool
-    /// The `.momd`'s current version name, nil without a `VersionInfo.plist`.
+    /// The model's version as the writer's `versionKey` reads it, nil when it reads none.
     var modelVersion: String?
     /// `modelVersion` is one whose sync was measured on two devices.
     var syncMeasured: Bool
@@ -26,15 +26,33 @@ nonisolated struct CoreDataStore: Sendable {
   let storeURL: URL
   let patch: @Sendable (NSManagedObjectModel) -> Void
   let measuredVersions: Set<String>
+  /// Reads the model's version from the `.momd` at `modelURL`. Which key names it is the
+  /// writer's call: Apple's models do not all carry the same one.
+  let versionKey: @Sendable (URL) -> String?
 
   init(
     modelURL: URL, storeURL: URL, patch: @escaping @Sendable (NSManagedObjectModel) -> Void,
-    measuredVersions: Set<String>
+    measuredVersions: Set<String>, versionKey: @escaping @Sendable (URL) -> String?
   ) {
     self.modelURL = modelURL
     self.storeURL = storeURL
     self.patch = patch
     self.measuredVersions = measuredVersions
+    self.versionKey = versionKey
+  }
+
+  /// The `.momd`'s current version name, as Voice Memos' `VersionInfo.plist` gives it.
+  static let currentVersionName: @Sendable (URL) -> String? = { modelURL in
+    versionInfo(modelURL)?["NSManagedObjectModel_CurrentVersionName"] as? String
+  }
+
+  /// `versionName`'s checksum, for a `.momd` whose `VersionInfo.plist` names no current version
+  /// (Maps'). The checksum changes whenever that version's model does.
+  static func versionChecksum(_ versionName: String) -> @Sendable (URL) -> String? {
+    { modelURL in
+      let checksums = versionInfo(modelURL)?["NSManagedObjectModel_VersionChecksums"]
+      return (checksums as? [String: Any])?[versionName] as? String
+    }
   }
 
   /// Exactly these: no migration of Apple's store, ever, and history on so the save is exported.
@@ -51,7 +69,7 @@ nonisolated struct CoreDataStore: Sendable {
   static let transactionAuthor = "cupertino"
 
   func status() -> Status {
-    let version = modelVersion()
+    let version = versionKey(modelURL)
     let measured = version.map { measuredVersions.contains($0) } ?? false
     do {
       _ = try prepare()
@@ -102,6 +120,21 @@ nonisolated struct CoreDataStore: Sendable {
   /// The one object of `entity` whose `key` equals `value`; `.notFound` for none or several.
   static func fetchOne(
     _ entity: String, key: String, value: String, in context: NSManagedObjectContext
+  ) throws -> NSManagedObject {
+    try fetchOne(entity, key: key, matching: value as NSString, in: context)
+  }
+
+  /// The one object of `entity` whose UUID `key` equals `uuid`, as Maps names its objects;
+  /// `.notFound` for none or several.
+  static func fetchOne(
+    _ entity: String, uuid: UUID, key: String = "identifier", in context: NSManagedObjectContext
+  ) throws -> NSManagedObject {
+    try fetchOne(entity, key: key, matching: uuid as NSUUID, in: context)
+  }
+
+  /// Both overloads' one-exactly rule, over any value a predicate can compare.
+  private static func fetchOne(
+    _ entity: String, key: String, matching value: NSObject, in context: NSManagedObjectContext
   ) throws -> NSManagedObject {
     let request = NSFetchRequest<NSManagedObject>(entityName: entity)
     request.predicate = NSPredicate(format: "%K == %@", key, value)
@@ -167,14 +200,14 @@ nonisolated struct CoreDataStore: Sendable {
     return Set(differs).union(missing).sorted()
   }
 
-  /// `modelURL/VersionInfo.plist`'s current version name.
-  private func modelVersion() -> String? {
+  /// `modelURL/VersionInfo.plist`, nil without one (a bare `.mom`).
+  private static func versionInfo(_ modelURL: URL) -> [String: Any]? {
     let info = modelURL.appendingPathComponent("VersionInfo.plist")
     guard let data = try? Data(contentsOf: info),
       let plist = try? PropertyListSerialization.propertyList(from: data, format: nil)
         as? [String: Any]
     else { return nil }
-    return plist["NSManagedObjectModel_CurrentVersionName"] as? String
+    return plist
   }
 
   /// A thrown error as the lane reports it: its own errors as they are, anything else as failed.

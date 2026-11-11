@@ -57,7 +57,8 @@ nonisolated struct VoiceMemosWriter: Sendable {
   /// The opener over the store at `storeURL`, with Voice Memos' model and patch.
   static func store(at storeURL: URL) -> CoreDataStore {
     CoreDataStore(
-      modelURL: modelURL, storeURL: storeURL, patch: patch, measuredVersions: measuredVersions)
+      modelURL: modelURL, storeURL: storeURL, patch: patch, measuredVersions: measuredVersions,
+      versionKey: CoreDataStore.currentVersionName)
   }
 
   static let live = VoiceMemosWriter(

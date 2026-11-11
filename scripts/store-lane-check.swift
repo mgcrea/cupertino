@@ -5,8 +5,9 @@ import Foundation
 /// Apple store.
 ///
 /// A standalone `swiftc` binary for the reason `unit-check.swift` gives. Every store here is
-/// built from a model made in code (entity `Thing`, string attributes `key` and `name`), in a
-/// fresh temporary folder, so nothing touches a real Apple app's data.
+/// built from a model made in code (entity `Thing`, string attributes `key` and `name`, or
+/// `Gadget`, named by a UUID), in a fresh temporary folder, so nothing touches a real Apple
+/// app's data.
 ///
 /// The things worth holding still, all silent when they go wrong: a store the model does not
 /// match being migrated rather than refused, a write that lands without the persistent history
@@ -71,13 +72,19 @@ struct StoreLaneCheck {
   }
 
   /// A versioned `.momd`: the `.mom` plus the `VersionInfo.plist` naming the current version.
-  static func writeMomd(_ model: NSManagedObjectModel, version: String, to url: URL) throws {
+  /// With `checksum`, the plist also carries `version`'s checksum; with `namesCurrent` false it
+  /// leaves the current version name out, as Maps' `.momd` does.
+  static func writeMomd(
+    _ model: NSManagedObjectModel, version: String, to url: URL, checksum: String? = nil,
+    namesCurrent: Bool = true
+  ) throws {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     try writeMom(model, to: url.appendingPathComponent("\(version).mom"))
-    let info: [String: Any] = [
-      "NSManagedObjectModel_CurrentVersionName": version,
-      "NSManagedObjectModel_VersionHashes": [version: model.entityVersionHashesByName],
+    var info: [String: Any] = [
+      "NSManagedObjectModel_VersionHashes": [version: model.entityVersionHashesByName]
     ]
+    if namesCurrent { info["NSManagedObjectModel_CurrentVersionName"] = version }
+    if let checksum { info["NSManagedObjectModel_VersionChecksums"] = [version: checksum] }
     let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
     try plist.write(to: url.appendingPathComponent("VersionInfo.plist"))
   }
@@ -127,10 +134,50 @@ struct StoreLaneCheck {
   }
 
   static func opener(
-    _ modelURL: URL, _ storeURL: URL, measured: Set<String> = []
+    _ modelURL: URL, _ storeURL: URL, measured: Set<String> = [],
+    versionKey: @escaping @Sendable (URL) -> String? = CoreDataStore.currentVersionName
   ) -> CoreDataStore {
     CoreDataStore(
-      modelURL: modelURL, storeURL: storeURL, patch: { _ in }, measuredVersions: measured)
+      modelURL: modelURL, storeURL: storeURL, patch: { _ in }, measuredVersions: measured,
+      versionKey: versionKey)
+  }
+
+  /// `Gadget`: a UUID attribute `identifier` and a string `name`, as Maps names its objects.
+  static func gadgetModel() -> NSManagedObjectModel {
+    let identifier = NSAttributeDescription()
+    identifier.name = "identifier"
+    identifier.attributeType = .UUIDAttributeType
+    identifier.isOptional = true
+    let name = NSAttributeDescription()
+    name.name = "name"
+    name.attributeType = .stringAttributeType
+    name.isOptional = true
+    let entity = NSEntityDescription()
+    entity.name = "Gadget"
+    entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
+    entity.properties = [identifier, name]
+    let model = NSManagedObjectModel()
+    model.entities = [entity]
+    return model
+  }
+
+  /// A store of `Gadget`s, one per `(identifier, name)` pair.
+  static func makeGadgetStore(
+    at url: URL, model: NSManagedObjectModel, gadgets: [(UUID, String)]
+  ) throws {
+    let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+    let store = try coordinator.addPersistentStore(type: .sqlite, at: url, options: storeOptions)
+    let context = NSManagedObjectContext(.privateQueue)
+    context.persistentStoreCoordinator = coordinator
+    try context.performAndWait {
+      for (identifier, name) in gadgets {
+        let gadget = NSEntityDescription.insertNewObject(forEntityName: "Gadget", into: context)
+        gadget.setValue(identifier, forKey: "identifier")
+        gadget.setValue(name, forKey: "name")
+      }
+      try context.save()
+    }
+    try coordinator.remove(store)
   }
 
   /// Sets `k1`'s name through the opener.
@@ -747,7 +794,8 @@ struct StoreLaneCheck {
       let unpatched = VoiceMemosWriter(
         store: CoreDataStore(
           modelURL: VoiceMemosWriter.modelURL, storeURL: storeURL, patch: { _ in },
-          measuredVersions: VoiceMemosWriter.measuredVersions))
+          measuredVersions: VoiceMemosWriter.measuredVersions,
+          versionKey: CoreDataStore.currentVersionName))
       let message = try expectRefusal("incompatible", "the unpatched model") {
         _ = try unpatched.rename(id: "R-ONE", title: "Synthetic renamed")
       }
@@ -863,6 +911,71 @@ struct StoreLaneCheck {
           guard case .notFound = error else {
             throw Failure(why: "\(label) matches threw \(error.reason), not notFound")
           }
+        }
+      }
+    }
+
+    check("versionKeyIsPerWriter") {
+      // Maps' `.momd` names no current version, only a checksum per version.
+      let dir = try folder("version-key")
+      let storeURL = dir.appendingPathComponent("Things.sqlite")
+      let momdURL = dir.appendingPathComponent("Thing.momd")
+      let checksum = "CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk="
+      try makeStore(at: storeURL, model: modelA)
+      try writeMomd(
+        modelA, version: "DataModel_0_0_1", to: momdURL, checksum: checksum, namesCurrent: false)
+      let byChecksum = opener(
+        momdURL, storeURL, measured: [checksum],
+        versionKey: CoreDataStore.versionChecksum("DataModel_0_0_1")
+      ).status()
+      try expect(
+        byChecksum
+          == CoreDataStore.Status(
+            compatible: true, modelVersion: checksum, syncMeasured: true, refusal: nil),
+        "by checksum: \(byChecksum)")
+      let byName = opener(momdURL, storeURL, measured: [checksum]).status()
+      try expect(
+        byName.modelVersion == nil && !byName.syncMeasured && byName.compatible,
+        "by current name: \(byName)")
+      // A checksum key for a version the plist does not list reads as no version.
+      let otherVersion = opener(
+        momdURL, storeURL, measured: [checksum],
+        versionKey: CoreDataStore.versionChecksum("DataModel_0_0_2")
+      ).status()
+      try expect(
+        otherVersion.modelVersion == nil && !otherVersion.syncMeasured,
+        "another version's checksum: \(otherVersion)")
+    }
+
+    check("fetchOneByUUID") {
+      let dir = try folder("fetch-uuid")
+      let storeURL = dir.appendingPathComponent("Gadgets.sqlite")
+      let modelURL = dir.appendingPathComponent("Gadget.mom")
+      let model = gadgetModel()
+      let one = UUID()
+      let twice = UUID()
+      try makeGadgetStore(
+        at: storeURL, model: model,
+        gadgets: [(one, "Alpha"), (twice, "Beta"), (twice, "Beta again"), (UUID(), "Gamma")])
+      try writeMom(model, to: modelURL)
+      let store = opener(modelURL, storeURL)
+      let name = try store.write { context in
+        try CoreDataStore.fetchOne("Gadget", uuid: one, in: context).value(forKey: "name")
+          as? String
+      }
+      try expect(name == "Alpha", "one match reads \(name ?? "nil"), not Alpha")
+      for (uuid, label, found) in [(UUID(), "zero", "none"), (twice, "two", "more than one")] {
+        do {
+          try store.write { context in
+            _ = try CoreDataStore.fetchOne("Gadget", uuid: uuid, in: context)
+          }
+          throw Failure(why: "\(label) matches did not throw")
+        } catch let error as StoreLaneError {
+          guard case .notFound(let message) = error else {
+            throw Failure(why: "\(label) matches threw \(error.reason), not notFound")
+          }
+          let expected = "expected one Gadget with that identifier, found \(found)"
+          try expect(message == expected, "\(label) matches say \(message.debugDescription)")
         }
       }
     }
