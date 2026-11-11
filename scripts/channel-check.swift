@@ -119,6 +119,30 @@ struct ChannelCheck {
       AppChannel.find(pid: getpid(), in: [plant(pid: getpid() + 0, readyPid: getpid())]) != nil)
     try? FileManager.default.removeItem(at: scratch)
 
+    // Any process of this user can write this user's temporary directory. A
+    // channel planted there for an app Cupertino did not launch with one must
+    // not be believed, or the agent's keystrokes, a password included, would
+    // be written to a file the planter reads.
+    if let finder = NSRunningApplication.runningApplications(
+      withBundleIdentifier: "com.apple.finder"
+    ).first {
+      let planted = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appendingPathComponent("SupportKitDriving/\(finder.processIdentifier)")
+      try? FileManager.default.createDirectory(at: planted, withIntermediateDirectories: true)
+      try? "{\"kind\":\"ready\",\"pid\":\(finder.processIdentifier),\"version\":1}\n".write(
+        to: planted.appendingPathComponent("events.jsonl"), atomically: true, encoding: .utf8)
+      FileManager.default.createFile(
+        atPath: planted.appendingPathComponent("commands.jsonl").path, contents: nil)
+      check(
+        "a channel planted for an app Cupertino did not launch with one is not believed",
+        AppChannel.find(bundleId: "com.apple.finder") == nil)
+      let clicked = call("apple_desktop_click", ["x": -9000, "y": -9000, "bundleId": "com.apple.finder"])
+      check("and a verb to that app does not go through it", clicked["lane"] as? String != "channel")
+      try? FileManager.default.removeItem(at: planted)
+    } else {
+      check("Finder is running, to plant a channel for", false)
+    }
+
     print("\nlaunching the fixture with a channel")
     if let stale = NSRunningApplication.runningApplications(withBundleIdentifier: fixture).first {
       stale.forceTerminate()

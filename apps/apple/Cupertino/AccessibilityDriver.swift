@@ -2951,7 +2951,7 @@ nonisolated enum AccessibilityDriver {
   /// The read-back is what makes the fallback safe, and `BackgroundTyping`
   /// holds its rules: a field that changed at all is not typed again.
   static func typeInBackground(text: String, handle: String, scope: Scope) throws
-    -> BackgroundTyping.Verdict?
+    -> (verdict: BackgroundTyping.Verdict, before: String)?
   {
     guard isTrusted() else { throw Failure.notTrusted }
     let entry = try resolveEntry(handle, scope: scope)
@@ -2965,10 +2965,18 @@ nonisolated enum AccessibilityDriver {
     else { return nil }
     var pid: pid_t = 0
     guard AXUIElementGetPid(field, &pid) == .success else { return nil }
+    // Into the app the person is in, this would move their caret and mix with
+    // their keystrokes without a warning: that is the front path's job, with
+    // its countdown.
+    guard DrivingPolicy.isBackground(target: entry.bundleId, frontmost: frontmostBundleId())
+    else { return nil }
 
     try DrivingSession.admit(entry.bundleId, background: true)
     DriveActivity.record(entry.bundleId)
     guard (try? takeFocus(field, in: entry.bundleId, handle: handle)) == true else { return nil }
+    // Read after the focus, which can select the whole field: typing then
+    // replaces the selection, and the range moving is how that shows.
+    let selectionBefore = selectedRange(field)
 
     let source = CGEventSource(stateID: .hidSystemState)
     for chunk in text.chunked(into: 20) {
@@ -2991,10 +2999,38 @@ nonisolated enum AccessibilityDriver {
     var verdict = BackgroundTyping.Verdict.nothingLanded
     repeat {
       usleep(25_000)
-      let after = (copy(field, kAXValueAttribute as String) as? String) ?? before
-      verdict = BackgroundTyping.verdict(before: before, after: after, typed: text)
+      // A failed read is nil, which the verdict takes as unknown, never as
+      // nothing landed.
+      let after = copy(field, kAXValueAttribute as String) as? String
+      verdict = BackgroundTyping.verdict(
+        before: before, after: after, typed: text,
+        selectionMoved: selectionBefore.flatMap { was in selectedRange(field).map { $0 != was } }
+          ?? false)
     } while verdict != .landed(verified: true) && Date() < deadline
-    return verdict
+    return (verdict, before)
+  }
+
+  /// A field's selected range as (location, length), or nil when unreadable.
+  private struct TextRange: Equatable {
+    let location: Int
+    let length: Int
+  }
+
+  private static func selectedRange(_ field: AXUIElement) -> TextRange? {
+    guard let raw = copy(field, kAXSelectedTextRangeAttribute as String),
+      CFGetTypeID(raw) == AXValueGetTypeID()
+    else { return nil }
+    var range = CFRange()
+    guard AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+    return TextRange(location: range.location, length: range.length)
+  }
+
+  /// A field's string value, read again before typing in front what did not
+  /// land in the background: keys the app had not yet handled when the
+  /// read-back gave up would otherwise arrive twice.
+  static func stringValue(handle: String, scope: Scope) -> String? {
+    guard let entry = try? resolveEntry(handle, scope: scope) else { return nil }
+    return copy(entry.element, kAXValueAttribute as String) as? String
   }
 
   /// A named key with modifiers — what `type` cannot express.

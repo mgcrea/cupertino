@@ -892,6 +892,17 @@ struct UnitCheck {
       decide(counting, idle: 0.5, background: true) == .open)
     check(
       "and is not asked about either", decide(asking, idle: 0, background: true) == .open)
+    // Background means behind the person's app. Typing into the app they are
+    // typing in moves their caret and mixes keystrokes, whatever the lane.
+    check(
+      "an application behind the one in front is driven in the background",
+      DrivingPolicy.isBackground(target: "com.apple.TextEdit", frontmost: "com.microsoft.VSCode"))
+    check(
+      "the application in front is not",
+      !DrivingPolicy.isBackground(target: "com.apple.mail", frontmost: "com.apple.mail"))
+    check(
+      "and an unreadable front counts as in front, which errs toward the countdown",
+      !DrivingPolicy.isBackground(target: "com.apple.mail", frontmost: nil))
     check(
       "but a recent no still outranks it",
       decide(counting, idle: 0, declinedUntil: noon.addingTimeInterval(10), background: true)
@@ -946,6 +957,16 @@ struct UnitCheck {
       "a field that took part of it landed, unverified, so it is not typed again",
       BackgroundTyping.verdict(before: "", after: "ab", typed: "abcdef")
         == .landed(verified: false))
+    // Focusing an NSTextField through AX selects all of it, so typing the text
+    // it already holds replaces it with itself: the value reads the same, and
+    // only the selection says anything happened.
+    check(
+      "identical text replacing a selection landed, because the selection moved",
+      BackgroundTyping.verdict(before: "abc", after: "abc", typed: "abc", selectionMoved: true)
+        == .landed(verified: true))
+    check(
+      "a value that could not be read is not taken for nothing landed",
+      BackgroundTyping.verdict(before: "x", after: nil, typed: "abc") == .landed(verified: false))
     check(
       "a secure field is never typed in the background: its value cannot be read back",
       !BackgroundTyping.eligible(role: "AXTextField", subrole: "AXSecureTextField", value: ""))

@@ -33,12 +33,44 @@ nonisolated struct AppChannel {
     return find(pid: pid, in: candidates.map { $0.appendingPathComponent("SupportKitDriving/\(pid)") })
   }
 
-  /// The channel of the running application `bundleId`, if it opened one.
+  /// The channel of the running application `bundleId`, if THIS Cupertino
+  /// launched it with one.
+  ///
+  /// Only a launch is trusted. A channel is a directory any process of this
+  /// user can write: the per-user temporary directory is shared by every
+  /// unsandboxed process. Believing whatever is there would let a process with
+  /// no grant at all plant one for Safari and read the agent's keystrokes off
+  /// it, a password included, since a secure field is exactly what the
+  /// background lane hands on. So `register` records the process
+  /// `apple_desktop_launch` started, with its launch date, and only that
+  /// process, still alive and never replaced by a reused pid, has a channel.
   static func find(bundleId: String) -> AppChannel? {
     guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
     else { return nil }
+    lock.lock()
+    let launched = registry[app.processIdentifier]
+    lock.unlock()
+    guard let launched, launched.bundleId == bundleId, launched.launchDate == app.launchDate
+    else { return nil }
     return find(pid: app.processIdentifier, bundleId: bundleId)
   }
+
+  /// Record the process `apple_desktop_launch` just started with
+  /// `-DrivingChannel YES`, so its channel is believed.
+  static func register(bundleId: String) {
+    guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
+    else { return }
+    lock.lock()
+    registry = registry.filter { pid, _ in kill(pid, 0) == 0 || errno == EPERM }
+    registry[app.processIdentifier] = Launched(bundleId: bundleId, launchDate: app.launchDate)
+    lock.unlock()
+  }
+
+  private struct Launched {
+    let bundleId: String
+    let launchDate: Date?
+  }
+  private nonisolated(unsafe) static var registry: [pid_t: Launched] = [:]
 
   /// `directories` are channel directories themselves, for `channel-check`.
   static func find(pid: pid_t, in directories: [URL]) -> AppChannel? {

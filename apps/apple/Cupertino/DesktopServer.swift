@@ -555,8 +555,10 @@ nonisolated enum DesktopServer {
         "description":
           "Send one named key with optional modifiers — return, tab, escape, an arrow, a "
           + "function key. Anything typeable should go through apple_desktop_type instead. Pass "
-          + "'handle' or 'bundleId' exactly as for apple_desktop_type: that application is brought "
-          + "to the front first, and no key is sent if it does not come.",
+          + "'handle' or 'bundleId': that application is brought to the front first, and no key "
+          + "is sent if it does not come. Unlike apple_desktop_type, a key always needs the front, "
+          + "except into an app launched with channel: true. After a background type, name the "
+          + "application again here, or the key goes to whatever is in front.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -1258,31 +1260,48 @@ nonisolated enum DesktopServer {
         // change is typed again in front; one that took part of the text is
         // not, or the part it took would arrive twice.
         var background: String?
+        func landedInBackground(_ verified: Bool, late: Bool = false) -> String {
+          var typed: [String: Any] = [
+            "typed": text.count, "lane": "background", "verified": verified,
+          ]
+          if let owner { typed["target"] = owner }
+          if late {
+            typed["note"] =
+              "The field changed after the read-back gave up, so it was not typed again. Read "
+              + "its value to see what it holds."
+          } else if !verified {
+            typed["note"] =
+              "The field changed but does not read back the whole text, so it was not typed "
+              + "again. Read its value to see what it holds."
+          }
+          return ok(id, typed)
+        }
+        // Keys the app had not handled when the read-back gave up arrive
+        // later; a field that has changed since is not typed into again.
+        var landedLate: () -> Bool = { false }
         if let handle = args["handle"] as? String {
           switch try AccessibilityDriver.typeInBackground(
             text: text, handle: handle, scope: scope)
           {
-          case .landed(let verified)?:
-            var typed: [String: Any] = [
-              "typed": text.count, "lane": "background", "verified": verified,
-            ]
-            if let owner { typed["target"] = owner }
-            if !verified {
-              typed["note"] =
-                "The field changed but does not read back the whole text, so it was not typed "
-                + "again. Read its value to see what it holds."
+          case let attempt? where attempt.verdict != .nothingLanded:
+            if case .landed(let verified) = attempt.verdict { return landedInBackground(verified) }
+          case let attempt?:
+            background = "nothing landed, so it was typed again"
+            landedLate = {
+              AccessibilityDriver.stringValue(handle: handle, scope: scope)
+                .map { $0 != attempt.before } ?? true
             }
-            return ok(id, typed)
-          case .nothingLanded?:
-            background = "nothing landed, so it was typed with the application in front"
           case nil:
-            background = "not a field that can be read back, so it was typed in front"
+            background =
+              "not typed in the background: the field cannot be read back, would not take the "
+              + "focus, or its application is the one in front"
           }
         }
         // One of our Debug builds with a channel types into its own focused
-        // field. Reached with a handle only when the field could not be read
-        // back, and then it was focused above.
+        // field. Reached with a handle only when the background type did not
+        // land, and then the field was focused above.
         if let owner, let channel = channel(for: owner) {
+          if landedLate() { return landedInBackground(false, late: true) }
           let ack = try throughChannel(channel, owner: owner, ["verb": "type", "text": text], scope: scope)
           var typed = channelFields(ack)
           typed["typed"] = text.count
@@ -1290,6 +1309,8 @@ nonisolated enum DesktopServer {
           return ok(id, typed)
         }
         if let owner { try bringForward(owner, verb: "text", scope: scope) }
+        // Read again after the front came, the longest the app has had.
+        if landedLate() { return landedInBackground(false, late: true) }
         try AccessibilityDriver.type(text: text, scope: scope, announcing: owner)
         var typed: [String: Any] = ["typed": text.count, "lane": "foreground"]
         if let owner { typed["target"] = owner }
@@ -1421,6 +1442,9 @@ nonisolated enum DesktopServer {
           "bundleId": bundleId, "launched": true, "ready": launched.ready,
         ]
         if wantsChannel {
+          // Only a process launched here with the argument is believed to have
+          // a channel: see `AppChannel.find(bundleId:)`.
+          AppChannel.register(bundleId: bundleId)
           // The app opens its channel from its own launch code, which can trail
           // the window that made `ready` true.
           var opened = channel(for: bundleId) != nil
@@ -1978,7 +2002,12 @@ nonisolated enum DesktopServer {
     scope: AccessibilityDriver.Scope, timeout: TimeInterval = AppChannel.ackTimeout
   ) throws -> [String: Any] {
     guard scope.admits(owner) else { throw AccessibilityDriver.Failure.outOfScope(owner) }
-    try DrivingSession.admit(owner, background: true)
+    // Background only while the app is behind the person's: in front, the
+    // command lands where they are typing, so it gets the countdown.
+    try DrivingSession.admit(
+      owner,
+      background: DrivingPolicy.isBackground(
+        target: owner, frontmost: AccessibilityDriver.frontmostBundleId()))
     DriveActivity.record(owner)
     return try channel.send(command, timeout: timeout)
   }
@@ -2089,7 +2118,8 @@ nonisolated enum DesktopServer {
       Reading and driving macOS applications through the Accessibility API. Prefer
       `apple_desktop_press` with a handle from `ui_tree` or `find_elements` over clicking a point,
       and `apple_desktop_press_menu` over clicking the menu bar. Neither brings the application
-      forward; only click, hover, drag, type and key do.
+      forward; click, hover, drag and key do, and so does type unless it is given the field's
+      `handle`, which types into that field where it is.
       `apple_desktop_launch` starts an application that is not running, behind the one in front.
 
       Driving is a session the person at the keyboard can see. The first driving call while they
@@ -2227,6 +2257,22 @@ nonisolated enum DesktopServer {
       nothing is posted and the call says so. Leave it out and the event goes to whatever
       is frontmost, and is refused when that is out of this surface's reach. A click or a
       hover at a point is also refused unless the point is on a window of that application.
+
+      **`apple_desktop_type` with a `handle` does not bring anything forward.** It types into
+      that field where it is, behind the person's application, and reads it back
+      (`lane: background`). So the application you typed into is NOT in front afterwards:
+      name it again (`bundleId`) on the `key` that follows, a Return to submit, say, or the
+      key goes to the person's application. Only a field that cannot be read back, a password
+      field, one that took nothing, or one in the application already in front, comes forward
+      as before (`lane: foreground`).
+
+      ## Our own Debug builds
+
+      `apple_desktop_launch` with `channel: true` opens a driving channel in a Debug build that
+      links swift-support-kit's SupportKitDriving. Click, drag, hover, key and type with its
+      `bundleId` then reach its own windows without it coming forward, shortcuts and covered
+      windows included (`lane: channel`). Only a process Cupertino launched that way has one:
+      after the app or Cupertino restarts, launch it again with `channel: true`.
 
       ## Dragging
 

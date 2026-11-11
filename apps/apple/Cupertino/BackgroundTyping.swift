@@ -25,8 +25,18 @@ nonisolated enum BackgroundTyping {
     case nothingLanded
   }
 
-  static func verdict(before: String, after: String, typed: String) -> Verdict {
-    guard after != before else { return .nothingLanded }
+  /// `after` is nil when the value could not be read: unknown is not
+  /// "nothing", so it is never a reason to type again. `selectionMoved` is
+  /// whether the field's selected range changed: focusing an NSTextField
+  /// through AX selects all of it, so typing the text it already holds
+  /// replaces it with itself and only the selection shows it.
+  static func verdict(before: String, after: String?, typed: String, selectionMoved: Bool = false)
+    -> Verdict
+  {
+    guard let after else { return .landed(verified: false) }
+    guard after != before else {
+      return selectionMoved ? .landed(verified: after.contains(typed)) : .nothingLanded
+    }
     let verified =
       !typed.isEmpty && occurrences(of: typed, in: after) > occurrences(of: typed, in: before)
     return .landed(verified: verified)
