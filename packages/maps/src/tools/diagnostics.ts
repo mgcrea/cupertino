@@ -49,7 +49,7 @@ export const buildDiagnostics = async (
   const writeLane = await writeLaneStatus(client);
   const allowWrites = client.config.allowWrites;
   /** The route `tools/index.ts` registered, so this report cannot disagree with it. */
-  const route = hosted ? "store lane" : "sql";
+  const route = !allowWrites ? "off" : hosted ? "store lane" : "sql";
   const tools = !allowWrites
     ? []
     : hosted
@@ -87,16 +87,27 @@ export const buildDiagnostics = async (
             "registers no App Intents on macOS, so run from npm there is no lane where the app " +
             "performs the write on our behalf. Hosted by Cupertino, the writes go through its " +
             "store lane instead.",
-        seeding:
-          "A place is only real to Maps if it carries a ZMAPITEMSTORAGE blob, which this repo " +
-          "cannot generate. Opening maps://?q=<name>&ll=<lat>,<lon> through LaunchServices makes " +
-          "Maps mint one, and that record is copied. The place is therefore left in Recents " +
-          "whether or not the favourite is kept, and resolving it can take tens of seconds.",
-        blastRadius:
-          "The store is mirrored by NSPersistentCloudKitContainer, and mirroring does not wait " +
-          "to be told. A malformed row is not a local mistake: it reaches every device on the " +
-          "account as soon as Maps next runs. Hence the rule in client/write.ts — never " +
-          "fabricate a place record, only ever copy one Maps wrote.",
+        seeding: hosted
+          ? "A place is only real to Maps if it carries a ZMAPITEMSTORAGE record, which nothing " +
+            "here can generate. When no record is already in the store near the coordinate, " +
+            "this server opens maps://?q=<query> (the name alone, no coordinate) through " +
+            "LaunchServices and waits, read-only, for the recent Maps files with a record; the " +
+            "lane then copies that record. The place is therefore left in Recents, and " +
+            "resolving it can take tens of seconds."
+          : "A place is only real to Maps if it carries a ZMAPITEMSTORAGE blob, which this repo " +
+            "cannot generate. Opening maps://?q=<name>&ll=<lat>,<lon> through LaunchServices " +
+            "makes Maps mint one, and that record is copied. The place is therefore left in " +
+            "Recents whether or not the favourite is kept, and resolving it can take tens of " +
+            "seconds.",
+        blastRadius: hosted
+          ? "The store is mirrored by NSPersistentCloudKitContainer, so a write reaches every " +
+            "device on the account. Each one is saved by Cupertino through Maps' own model, " +
+            "never as SQL, and only ever copies a place record Maps minted; a model that does " +
+            "not match the store is refused as incompatible rather than opened."
+          : "The store is mirrored by NSPersistentCloudKitContainer, and mirroring does not " +
+            "wait to be told. A malformed row is not a local mistake: it reaches every device " +
+            "on the account as soon as Maps next runs. Hence the rule in client/write.ts — " +
+            "never fabricate a place record, only ever copy one Maps wrote.",
         tools,
       },
       writeLane,

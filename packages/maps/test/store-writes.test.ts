@@ -205,6 +205,17 @@ const saves = (m: Request): Reply => {
   return written();
 };
 
+/**
+ * As `saves`, and the write lands in the synthetic store first, as the app's
+ * save would, so the tool's read-back has a row to describe.
+ */
+const savesInto =
+  (path: string, sql: string) =>
+  (m: Request): Reply => {
+    if (m.method !== "maps.status") exec(path, sql);
+    return saves(m);
+  };
+
 // ── the server ───────────────────────────────────────────────────────────────
 
 const connect = async (opts: {
@@ -242,6 +253,16 @@ const call = async (c: Client, name: string, args: Record<string, unknown>) => {
     isError: res.isError === true,
     body: JSON.parse(res.content.map((x) => x.text).join("")) as Record<string, unknown>,
   };
+};
+
+/** A call whose answer may not be JSON (an input the schema rejects), or may throw. */
+const rawCall = async (c: Client, name: string, args: Record<string, unknown>) => {
+  try {
+    const res = (await c.callTool({ name, arguments: args })) as Result;
+    return { isError: res.isError === true };
+  } catch {
+    return { isError: true };
+  }
 };
 
 const MEASURED = "Saved the way Maps saves it. It reaches your other devices through iCloud.";
@@ -360,7 +381,10 @@ describe("add_favorite", () => {
   it("copies a record already in the store, sending maps.addFavorite", async () => {
     const path = emptyStore();
     exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
-    const { env, seen } = await hostStub(saves);
+    // The app writes the favourite at the record's coordinate, a metre from the caller's.
+    const { env, seen } = await hostStub(
+      savesInto(path, favorite(50, 48.100003, 2.200003, "Synthetic Café", NEW_ID)),
+    );
     const c = await connect({ writes: true, lane: env, storePath: path });
     const res = await call(c, "apple_maps_add_favorite", {
       query: "Synthetic Café",
@@ -385,8 +409,8 @@ describe("add_favorite", () => {
         favorite: {
           ref: `p1:f:${NEW_ID.replaceAll("-", "").toLowerCase()}`,
           name: "Synthetic Café",
-          latitude: 48.1,
-          longitude: 2.2,
+          latitude: 48.100003,
+          longitude: 2.200003,
         },
         created: true,
         changed: ["favorite"],
@@ -397,9 +421,10 @@ describe("add_favorite", () => {
     });
   });
 
-  it("returns an existing favourite without calling the lane", async () => {
+  it("returns an existing favourite without calling the lane, under its own name", async () => {
     const path = emptyStore();
-    exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
+    // A metre away and saved under another name: the coordinate alone makes it this place.
+    exec(path, favorite(1, 48.100004, 2.200004, "Stored Name", FAV_ID));
     const { env, seen, connections } = await hostStub(saves);
     const c = await connect({ writes: true, lane: env, storePath: path });
     const res = await call(c, "apple_maps_add_favorite", {
@@ -410,7 +435,12 @@ describe("add_favorite", () => {
     expect(connections()).toBe(0);
     expect(seen).toEqual([]);
     expect(res.body).toMatchObject({
-      favorite: { ref: `p1:f:${FAV_ID.replaceAll("-", "")}` },
+      favorite: {
+        ref: `p1:f:${FAV_ID.replaceAll("-", "")}`,
+        name: "Stored Name",
+        latitude: 48.100004,
+        longitude: 2.200004,
+      },
       created: false,
       changed: [],
       sync: "Nothing to change.",
@@ -433,6 +463,8 @@ describe("add_favorite", () => {
     });
     expect(connections()).toBe(0);
     expect(res.body.created).toBe(false);
+    // The favourite's own coordinate, ~100 m from the caller's, not the caller's.
+    expect(res.body.favorite).toMatchObject({ name: "Home-ish", latitude: 48.101, longitude: 2.2 });
   });
 
   it("seeds when nothing is known, and says the place is now in Recents", async () => {
@@ -454,12 +486,18 @@ describe("add_favorite", () => {
       },
     ]);
     expect(res.body.recentsNote).toMatch(/Recents/);
-    expect(res.body.favorite).toMatchObject({ latitude: 51.5007, longitude: -0.1246 });
+    // The stub app wrote nothing to the store, so there is nothing to describe: no guess.
+    expect(res.body.favorite).toEqual({
+      ref: `p1:f:${NEW_ID.replaceAll("-", "").toLowerCase()}`,
+    });
   });
 
-  it("reports the lane's own idempotence as already existing", async () => {
+  it("reports the lane's own idempotence as already existing, as the item stands", async () => {
     const path = emptyStore();
     exec(path, recent(1, 1, 48.1, 2.2, RECENT_ID));
+    // Not found by the caller's coordinate and name, but the app's check at the
+    // resolved coordinate finds it: the answer is that favourite, under its own name.
+    exec(path, favorite(2, 48.1012, 2.2012, "Stored Name", FAV_ID));
     const { env } = await hostStub(() => written({ id: FAV_ID, created: false, changed: [] }));
     const c = await connect({ writes: true, lane: env, storePath: path });
     const res = await call(c, "apple_maps_add_favorite", {
@@ -468,7 +506,12 @@ describe("add_favorite", () => {
       longitude: 2.2,
     });
     expect(res.body).toMatchObject({
-      favorite: { ref: `p1:f:${FAV_ID.replaceAll("-", "")}` },
+      favorite: {
+        ref: `p1:f:${FAV_ID.replaceAll("-", "")}`,
+        name: "Stored Name",
+        latitude: 48.1012,
+        longitude: 2.2012,
+      },
       created: false,
       sync: "Nothing to change.",
     });
@@ -531,7 +574,9 @@ describe("save_place", () => {
   it("sends maps.savePlace, donor first, and answers with a saved-place ref", async () => {
     const path = emptyStore();
     exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
-    const { env, seen } = await hostStub(saves);
+    const { env, seen } = await hostStub(
+      savesInto(path, savedPlace(50, 48.1, 2.2, "Synthetic Café", NEW_ID)),
+    );
     const c = await connect({ writes: true, lane: env, storePath: path });
     const res = await call(c, "apple_maps_save_place", {
       query: "Synthetic Café",
@@ -570,7 +615,12 @@ describe("save_place", () => {
     });
     expect(connections()).toBe(0);
     expect(res.body).toMatchObject({
-      place: { ref: `p1:c:${SAVED_ID.replaceAll("-", "")}` },
+      place: {
+        ref: `p1:c:${SAVED_ID.replaceAll("-", "")}`,
+        name: "Synthetic Café",
+        latitude: 48.1,
+        longitude: 2.2,
+      },
       saved: true,
       alreadySaved: true,
       created: false,
@@ -653,6 +703,69 @@ describe("remove_favorite and remove_saved_place", () => {
     expect(connections()).toBe(0);
   });
 
+  it("refuses a uuid ref that matches no row as notFound, naming the miss", async () => {
+    const { env, connections } = await hostStub(saves);
+    const c = await connect({ writes: true, lane: env });
+    const fav = await call(c, "apple_maps_remove_favorite", {
+      ref: `p1:f:${FAV_ID.replaceAll("-", "")}`,
+      confirm: true,
+    });
+    expect(fav.isError).toBe(true);
+    expect(fav.body.error).toMatch(/^No favourite matched that ref/);
+    expect(fav.body.details).toMatchObject({ reason: "notFound" });
+    const saved = await call(c, "apple_maps_remove_saved_place", {
+      ref: `p1:c:${SAVED_ID.replaceAll("-", "")}`,
+      confirm: true,
+    });
+    expect(saved.body.error).toMatch(/^No saved place matched that ref/);
+    expect(saved.body.details).toMatchObject({ reason: "notFound" });
+    expect(connections()).toBe(0);
+  });
+
+  it("refuses a malformed ref as invalid", async () => {
+    const { env, connections } = await hostStub(saves);
+    const c = await connect({ writes: true, lane: env });
+    for (const name of ["apple_maps_remove_favorite", "apple_maps_remove_saved_place"]) {
+      const res = await call(c, name, { ref: "not-a-ref", confirm: true });
+      expect(res.isError, name).toBe(true);
+      expect(res.body.error, name).toMatch(/not a place ref/);
+      expect(res.body.details, name).toMatchObject({ reason: "invalid" });
+    }
+    const guide = await call(c, "apple_maps_add_place_to_guide", {
+      guide: "Synthetic guide",
+      ref: "pc1:1",
+    });
+    expect(guide.body.details).toMatchObject({ reason: "invalid" });
+    expect(connections()).toBe(0);
+  });
+
+  it("rejects a remove without confirm: true, before the lane", async () => {
+    const path = emptyStore();
+    exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
+    exec(path, savedPlace(2, 48.2, 2.3, "Synthetic Bar", SAVED_ID));
+    const { env, connections } = await hostStub(saves);
+    const c = await connect({ writes: true, lane: env, storePath: path });
+    for (const [name, ref] of [
+      ["apple_maps_remove_favorite", "p1:f:1"],
+      ["apple_maps_remove_saved_place", "p1:c:2"],
+    ] as const) {
+      for (const args of [{ ref }, { ref, confirm: false }]) {
+        const res = await rawCall(c, name, args);
+        expect(res.isError, `${name} ${JSON.stringify(args)}`).toBe(true);
+      }
+    }
+    expect(connections()).toBe(0);
+  });
+
+  it("reports removed false when the lane changed nothing", async () => {
+    const path = emptyStore();
+    exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
+    const { env } = await hostStub(() => written({ id: FAV_ID, created: false, changed: [] }));
+    const c = await connect({ writes: true, lane: env, storePath: path });
+    const res = await call(c, "apple_maps_remove_favorite", { ref: "p1:f:1", confirm: true });
+    expect(res.body).toMatchObject({ removed: false, changed: [], sync: "Nothing to change." });
+  });
+
   it("passes the lane's notFound through", async () => {
     const path = emptyStore();
     exec(path, favorite(1, 48.1, 2.2, "Synthetic Café", FAV_ID));
@@ -684,7 +797,12 @@ describe("add_place_to_guide", () => {
     expect(res.body).toMatchObject({
       filed: true,
       guide: "Synthetic guide",
-      place: { ref: `p1:c:${SAVED_ID.replaceAll("-", "")}` },
+      place: {
+        ref: `p1:c:${SAVED_ID.replaceAll("-", "")}`,
+        name: "Synthetic Café",
+        latitude: 48.1,
+        longitude: 2.2,
+      },
       sync: MEASURED,
     });
   });
@@ -784,6 +902,26 @@ describe("add_place_to_guide", () => {
     expect(connections()).toBe(0);
   });
 
+  it("refuses a query with half a coordinate as invalid, without asking Maps", async () => {
+    const { env, connections } = await hostStub(saves);
+    // failIfCalled is the openUrl: a seed would throw, not refuse.
+    const c = await connect({ writes: true, lane: env });
+    // The same rule on the other two tools that take a query, for one meaning of a coordinate.
+    for (const [name, extra] of [
+      ["apple_maps_add_place_to_guide", { guide: "Synthetic guide" }],
+      ["apple_maps_add_favorite", {}],
+      ["apple_maps_save_place", {}],
+    ] as const) {
+      for (const half of [{ latitude: 48.1 }, { longitude: 2.2 }]) {
+        const res = await call(c, name, { ...extra, query: "Synthetic Café", ...half });
+        expect(res.isError, `${name} ${JSON.stringify(half)}`).toBe(true);
+        expect(res.body.error).toMatch(/both latitude and longitude, or neither/);
+        expect(res.body.details).toMatchObject({ reason: "invalid" });
+      }
+    }
+    expect(connections()).toBe(0);
+  });
+
   it("refuses a pk-only ref with no identifier as notFound", async () => {
     const path = emptyStore();
     exec(path, savedPlace(1, 48.1, 2.2, "Synthetic Café", null));
@@ -835,6 +973,12 @@ describe("diagnostics", () => {
     expect(lanes.writeLane).toEqual(STATUS);
     expect(lanes.writes.route).toBe("store lane");
     expect(lanes.writes.tools).toEqual([...STORE_WRITE_TOOLS]);
+    // The hosted route seeds by name alone and never writes SQL; the text must say so.
+    const writes = lanes.writes as unknown as Record<string, string>;
+    expect(writes.seeding).toContain("maps://?q=<query>");
+    expect(writes.seeding).not.toContain("&ll=");
+    expect(writes.blastRadius).toMatch(/Maps' own model/);
+    expect(writes.blastRadius).not.toMatch(/client\/write\.ts/);
   });
 
   it("reports a lane that cannot answer as an error, not a failure", async () => {
@@ -860,5 +1004,9 @@ describe("diagnostics", () => {
     const { env } = await hostStub(saves);
     const lanes = await lanesOf(await connect({ writes: false, lane: env }));
     expect(lanes.writes.tools).toEqual([]);
+    expect(lanes.writes.route).toBe("off");
+    const npm = await lanesOf(await connect({ writes: false, lane: null }));
+    expect(npm.writes.tools).toEqual([]);
+    expect(npm.writes.route).toBe("off");
   });
 });

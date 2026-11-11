@@ -3,9 +3,15 @@ import { z } from "zod";
 
 import type { LaneWrite, MapsLane } from "../client/lane.js";
 import type { AppleMapsClient } from "../client/maps.js";
-import type { PlaceSource } from "../client/place-source.js";
-import { decodePlaceRef, encodePlaceRef, type PlaceKind } from "../client/ref.js";
-import { compact, confirmArg, fail, ok, placeRefArg, wrapResult } from "./util.js";
+import type { PlaceSource, StoredPlace } from "../client/place-source.js";
+import {
+  decodePlaceRef,
+  encodePlaceRef,
+  InvalidMapsRefError,
+  type PlaceKind,
+} from "../client/ref.js";
+import type { EntityKey } from "../client/store.js";
+import { compact, confirmArg, fail, ok, placeRefArg, type ToolResult, wrapResult } from "./util.js";
 
 /** The five tools this file registers, in registration order. */
 export const STORE_WRITE_TOOLS: readonly string[] = [
@@ -86,26 +92,67 @@ const longitudeArg = z.number().min(-180).max(180).optional().describe("Longitud
 /** A refusal decided here, before the lane is called, in the lane's own vocabulary. */
 const refuse = (reason: "invalid" | "notFound", message: string) => fail(message, { reason });
 
-const coordsOf = (latitude: number | undefined, longitude: number | undefined) =>
-  latitude !== undefined && longitude !== undefined ? { latitude, longitude } : undefined;
+/**
+ * Both halves of a coordinate, or neither. Half of one is a caller's mistake,
+ * refused rather than dropped: dropping it would seed by name alone and could
+ * save a namesake on the other side of the world.
+ */
+const coordsOf = (
+  latitude: number | undefined,
+  longitude: number | undefined,
+): { near: { latitude: number; longitude: number } | undefined } | { refusal: ToolResult } => {
+  if (latitude !== undefined && longitude !== undefined) return { near: { latitude, longitude } };
+  if (latitude === undefined && longitude === undefined) return { near: undefined };
+  return { refusal: refuse("invalid", "Give both latitude and longitude, or neither.") };
+};
 
 /** Where `find` got the record, as the lane names it. */
 const fromSource = (s: PlaceSource) => ({ source: s.kind, sourceId: s.id });
 
 /**
+ * A place in an answer: its ref, and the item's own name and coordinate as the
+ * store holds them. Fields the read-back did not find are left out, never
+ * filled with what the caller asked for.
+ */
+const described = (
+  client: AppleMapsClient,
+  kind: "favorite" | "collection-item",
+  id: string,
+  stored?: StoredPlace | null,
+) => {
+  const row = stored === undefined ? client.placeSource().describe(kind, id) : stored;
+  return compact({
+    ref: encodePlaceRef(kind, { uuid: id }),
+    name: row?.name ?? undefined,
+    latitude: row?.latitude ?? undefined,
+    longitude: row?.longitude ?? undefined,
+  });
+};
+
+/**
  * A ref from a listing to the identifier the lane fetches by, or a refusal.
  *
- * Null from `identifierOf` is a row with no `ZIDENTIFIER` (a row-id ref), or no
- * row at all: either way the lane, which fetches by uuid only, cannot be given
- * it, so the lane is not called.
+ * A ref that does not decode is refused `invalid`, like every other refusal
+ * decided here. Null from `identifierOf` is a row with no `ZIDENTIFIER` (a
+ * row-id ref), or no row at all: either way the lane, which fetches by uuid
+ * only, cannot be given it, so the lane is not called.
  */
 const identifierFor = (
   client: AppleMapsClient,
   ref: string,
   want: Exclude<PlaceKind, "history">,
   verb: "removed" | "filed",
-): { id: string } | { refusal: ReturnType<typeof fail> } => {
-  const { kind, key } = decodePlaceRef(ref);
+): { id: string } | { refusal: ToolResult } => {
+  let decoded: { kind: PlaceKind; key: EntityKey };
+  try {
+    decoded = decodePlaceRef(ref);
+  } catch (err) {
+    if (err instanceof InvalidMapsRefError) {
+      return { refusal: refuse("invalid", err.message) };
+    }
+    throw err;
+  }
+  const { kind, key } = decoded;
   const what = want === "favorite" ? "favourite" : "saved place";
   if (kind !== want) {
     const is = kind === "history" ? "recent" : kind === "favorite" ? "favourite" : "saved place";
@@ -148,6 +195,11 @@ const identifierFor = (
  * of the connection's own), which the tool error carries in `details.reason`.
  * Refusals decided here use the same vocabulary.
  *
+ * A place in an answer is the item as the store holds it, read back after the
+ * lane answers: the de-duplication can match a favourite saved under another
+ * name, or ~250 m from the caller's coordinate, and the caller's guess must
+ * not be reported as the place.
+ *
  * The list does not depend on whether the lane is compatible: MCP clients cache
  * it, so an incompatible lane refuses per call instead.
  */
@@ -175,19 +227,14 @@ export const registerStoreWriteTools = (
     async ({ query, latitude, longitude, name }) =>
       wrapResult(async () => {
         const label = name ?? query;
-        const near = coordsOf(latitude, longitude);
+        const coords = coordsOf(latitude, longitude);
+        if ("refusal" in coords) return coords.refusal;
+        const { near } = coords;
         const finder = client.placeSource();
-        const favorite = (id: string, at: { latitude: number; longitude: number } | undefined) =>
-          compact({
-            ref: encodePlaceRef("favorite", { uuid: id }),
-            name: label,
-            latitude: at?.latitude,
-            longitude: at?.longitude,
-          });
         const existing = near ? finder.existingFavorite({ ...near, name: label }) : null;
         if (existing) {
           return ok({
-            favorite: favorite(existing.id, near),
+            favorite: described(client, "favorite", existing.id, existing),
             created: false,
             alreadyExisted:
               "A favourite for this place already existed and was returned unchanged.",
@@ -198,7 +245,7 @@ export const registerStoreWriteTools = (
         const w = await lane.addFavorite({ ...fromSource(s), name: label, near });
         return ok(
           compact({
-            favorite: favorite(w.id, s),
+            favorite: described(client, "favorite", w.id),
             created: w.created,
             alreadyExisted: w.created
               ? undefined
@@ -226,7 +273,7 @@ export const registerStoreWriteTools = (
         const target = identifierFor(client, ref, "favorite", "removed");
         if ("refusal" in target) return target.refusal;
         const w = await lane.removeFavorite(target.id);
-        return ok({ removed: true, id: w.id, ...laneFields(w) });
+        return ok({ removed: w.changed.length > 0, id: w.id, ...laneFields(w) });
       }),
   );
 
@@ -249,19 +296,14 @@ export const registerStoreWriteTools = (
     async ({ query, latitude, longitude, name }) =>
       wrapResult(async () => {
         const label = name ?? query;
-        const near = coordsOf(latitude, longitude);
+        const coords = coordsOf(latitude, longitude);
+        if ("refusal" in coords) return coords.refusal;
+        const { near } = coords;
         const finder = client.placeSource();
-        const place = (id: string, at: { latitude: number; longitude: number } | undefined) =>
-          compact({
-            ref: encodePlaceRef("collection-item", { uuid: id }),
-            name: label,
-            latitude: at?.latitude,
-            longitude: at?.longitude,
-          });
         const existing = near ? finder.existingSavedPlace({ ...near, name: label }) : null;
         if (existing) {
           return ok({
-            place: place(existing.id, near),
+            place: described(client, "collection-item", existing.id, existing),
             saved: true,
             alreadySaved: true,
             created: false,
@@ -272,7 +314,7 @@ export const registerStoreWriteTools = (
         const w = await lane.savePlace({ ...fromSource(s), name: label, near });
         return ok(
           compact({
-            place: place(w.id, s),
+            place: described(client, "collection-item", w.id),
             saved: true,
             alreadySaved: !w.created,
             created: w.created,
@@ -300,7 +342,7 @@ export const registerStoreWriteTools = (
         const target = identifierFor(client, ref, "collection-item", "removed");
         if ("refusal" in target) return target.refusal;
         const w = await lane.removeSavedPlace(target.id);
-        return ok({ removed: true, id: w.id, ...laneFields(w) });
+        return ok({ removed: w.changed.length > 0, id: w.id, ...laneFields(w) });
       }),
   );
 
@@ -348,7 +390,7 @@ export const registerStoreWriteTools = (
             compact({
               filed: w.filed,
               guide,
-              place: { ref: encodePlaceRef("collection-item", { uuid: w.id }) },
+              place: described(client, "collection-item", w.id),
               ...laneFields(w),
               recentsNote: seeded ? RECENTS_NOTE : undefined,
             }),
@@ -361,7 +403,9 @@ export const registerStoreWriteTools = (
         }
 
         const name = query as string;
-        const near = coordsOf(latitude, longitude);
+        const coords = coordsOf(latitude, longitude);
+        if ("refusal" in coords) return coords.refusal;
+        const { near } = coords;
         const finder = client.placeSource();
         const existing = near ? finder.existingSavedPlace({ ...near, name }) : null;
         if (existing) {

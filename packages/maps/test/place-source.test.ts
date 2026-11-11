@@ -404,8 +404,12 @@ describe("existingFavorite / existingSavedPlace", () => {
     const path = emptyStore();
     exec(path, favorite(1, 1, 48.1, 2.2, "Test Café", FAV_ID));
     const finder = new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled });
+    // The row's own name and coordinate, not the caller's: the tool reports them.
     expect(finder.existingFavorite({ latitude: 48.100004, longitude: 2.200004 })).toEqual({
       id: FAV_ID,
+      name: "Test Café",
+      latitude: 48.1,
+      longitude: 2.2,
     });
   });
 
@@ -417,7 +421,7 @@ describe("existingFavorite / existingSavedPlace", () => {
     expect(finder.existingFavorite({ latitude: 48.1001, longitude: 2.2001 })).toBeNull();
     expect(
       finder.existingFavorite({ latitude: 48.1001, longitude: 2.2001, name: "Test Café" }),
-    ).toEqual({ id: FAV_ID });
+    ).toMatchObject({ id: FAV_ID, latitude: 48.1, longitude: 2.2 });
     expect(
       finder.existingFavorite({ latitude: 48.1001, longitude: 2.2001, name: "Other Café" }),
     ).toBeNull();
@@ -427,10 +431,15 @@ describe("existingFavorite / existingSavedPlace", () => {
     const path = emptyStore();
     exec(path, collectionItem(1, ENT.collectionPlaceItem, 1, 48.1, 2.2, "Test Café", SAVED_ID));
     const finder = new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled });
-    expect(finder.existingSavedPlace({ latitude: 48.1, longitude: 2.2 })).toEqual({ id: SAVED_ID });
+    expect(finder.existingSavedPlace({ latitude: 48.1, longitude: 2.2 })).toEqual({
+      id: SAVED_ID,
+      name: "Test Café",
+      latitude: 48.1,
+      longitude: 2.2,
+    });
     expect(
       finder.existingSavedPlace({ latitude: 48.1001, longitude: 2.2001, name: "Test Café" }),
-    ).toEqual({ id: SAVED_ID });
+    ).toMatchObject({ id: SAVED_ID });
     // A saved place is not a favourite, and the other way round.
     expect(finder.existingFavorite({ latitude: 48.1, longitude: 2.2 })).toBeNull();
   });
@@ -468,5 +477,45 @@ describe("identifierOf", () => {
     const finder = new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled });
     expect(finder.identifierOf("history", { rowId: 42 })).toBeNull();
     expect(finder.identifierOf("collection-item", { uuid: SAVED_ID })).toBeNull();
+  });
+});
+
+describe("describe", () => {
+  it("reads an item back by its identifier, the label winning over the place's name", () => {
+    const path = emptyStore();
+    exec(path, favorite(1, 1, 48.1, 2.2, "Test Café", FAV_ID));
+    exec(path, `UPDATE ZFAVORITEITEM SET ZCUSTOMNAME = 'My Café' WHERE Z_PK = 1`);
+    exec(path, collectionItem(2, ENT.collectionPlaceItem, 2, 48.2, 2.3, "Test Shop", SAVED_ID));
+    const finder = new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled });
+    expect(finder.describe("favorite", FAV_ID.toUpperCase())).toEqual({
+      id: FAV_ID,
+      name: "My Café",
+      latitude: 48.1,
+      longitude: 2.2,
+    });
+    expect(finder.describe("collection-item", SAVED_ID)).toEqual({
+      id: SAVED_ID,
+      name: "Test Shop",
+      latitude: 48.2,
+      longitude: 2.3,
+    });
+  });
+
+  /* A new item may carry its coordinate only on its own map item. */
+  it("falls back to the map item's coordinate", () => {
+    const path = emptyStore();
+    exec(path, favorite(1, 1, 48.1, 2.2, "Test Café", FAV_ID));
+    exec(path, `UPDATE ZFAVORITEITEM SET ZLATITUDE = NULL, ZLONGITUDE = NULL WHERE Z_PK = 1`);
+    const finder = new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled });
+    expect(finder.describe("favorite", FAV_ID)).toMatchObject({ latitude: 48.1, longitude: 2.2 });
+  });
+
+  it("returns null for an id that is not there, or not a uuid", () => {
+    const path = emptyStore();
+    exec(path, favorite(1, 1, 48.1, 2.2, "Test Café", FAV_ID));
+    const finder = new PlaceSourceFinder({ storePath: path, openUrl: failIfCalled });
+    expect(finder.describe("collection-item", FAV_ID)).toBeNull();
+    expect(finder.describe("favorite", SAVED_ID)).toBeNull();
+    expect(finder.describe("favorite", "not-a-uuid")).toBeNull();
   });
 });

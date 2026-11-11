@@ -115,6 +115,23 @@ const TABLE_OF: Record<"favorite" | "collection-item" | "history", string> = {
 
 type SourceRow = { kind: SourceKind; hex: string; lat: number; lon: number };
 
+/**
+ * A favourite or saved place as it stands in the store, for a tool's answer.
+ *
+ * The name is the label when the user set one, else the place's own name, as
+ * the read tools render it. The coordinate is the item's, else its map
+ * item's: a field the store does not hold is null, never the caller's guess.
+ */
+export type StoredPlace = {
+  id: string;
+  name: string | null;
+  latitude: number | null;
+  longitude: number | null;
+};
+
+const num = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
 export class PlaceSourceFinder {
   readonly #path: string;
   readonly #openUrl: OpenUrl;
@@ -151,7 +168,7 @@ export class PlaceSourceFinder {
     table: string,
     where: string,
     q: { latitude: number; longitude: number; name?: string | undefined },
-  ): { id: string } | null {
+  ): StoredPlace | null {
     return this.#read((db) => {
       const select = `SELECT HEX(t."ZIDENTIFIER") AS hex FROM "${table}" t
                        WHERE ${where} AND ${named("t")}
@@ -173,17 +190,40 @@ export class PlaceSourceFinder {
                 lon + SEED_TOLERANCE,
                 q.name,
               ) as { hex: string } | undefined));
-      const id = uuidOfHex(row?.hex);
-      return id ? { id } : null;
+      return row ? this.#describeIn(db, table, row.hex) : null;
     });
   }
 
+  /** The row with this `HEX(ZIDENTIFIER)` in `table`, described, or null. */
+  #describeIn(db: DatabaseSync, table: string, hex: string): StoredPlace | null {
+    const id = uuidOfHex(hex);
+    if (!id) return null;
+    const row = db
+      .prepare(
+        `SELECT COALESCE(t."ZCUSTOMNAME", t."ZMAPITEMNAME") AS name,
+                COALESCE(t."ZLATITUDE", m."ZLATITUDE") AS lat,
+                COALESCE(t."ZLONGITUDE", m."ZLONGITUDE") AS lon
+           FROM "${table}" t LEFT JOIN "ZMIXINMAPITEM" m ON m."Z_PK" = t."ZMAPITEM"
+          WHERE HEX(t."ZIDENTIFIER") = ? LIMIT 1`,
+      )
+      .get(hex.toUpperCase()) as { name: unknown; lat: unknown; lon: unknown } | undefined;
+    if (!row) return null;
+    return { id, name: str(row.name), latitude: num(row.lat), longitude: num(row.lon) };
+  }
+
+  /**
+   * Read back a favourite or saved place by the identifier the lane answered
+   * with, so a tool reports the item as it stands rather than what was asked
+   * for. Null when no such row is in the store (yet), or `id` is not a uuid.
+   */
+  describe(kind: "favorite" | "collection-item", id: string): StoredPlace | null {
+    const hex = id.replaceAll("-", "").toUpperCase();
+    if (!/^[0-9A-F]{32}$/.test(hex)) return null;
+    return this.#read((db) => this.#describeIn(db, TABLE_OF[kind], hex));
+  }
+
   /** An existing favourite for this place. Idempotence for `add_favorite`. */
-  existingFavorite(q: {
-    latitude: number;
-    longitude: number;
-    name?: string;
-  }): { id: string } | null {
+  existingFavorite(q: { latitude: number; longitude: number; name?: string }): StoredPlace | null {
     return this.#existing("ZFAVORITEITEM", "1 = 1", q);
   }
 
@@ -192,7 +232,7 @@ export class PlaceSourceFinder {
     latitude: number;
     longitude: number;
     name?: string;
-  }): { id: string } | null {
+  }): StoredPlace | null {
     return this.#existing("ZCOLLECTIONITEM", entityIs("t", "CollectionPlaceItem"), q);
   }
 
