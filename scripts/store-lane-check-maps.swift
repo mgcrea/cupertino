@@ -1322,6 +1322,63 @@ extension StoreLaneCheck {
       try expect(status["refusal"] is NSNull, "status refusal is \(status["refusal"] ?? "")")
     }
 
+    // `near` and `name` reach the writer: dropping either in the dispatch turns a check off, or
+    // saves a place under another label, with every reply still well formed.
+    check("mapsNearAndNameCrossTheLane") {
+      let (writer, storeURL) = try mapsFixture("lane-near-name")
+      // In range, and 1 km from the recent's record: the writer's 250 m guard refuses it.
+      let far = near(north(of: recentAt, metres: 1_000))
+      let favorites = try mapsCount(storeURL, "FavoriteItem")
+      let places = try mapsCount(storeURL, "CollectionPlaceItem")
+      try expectNoMapsHistory(storeURL, "a far near") {
+        for (method, params) in [
+          ("maps.addFavorite", ["source": "recent", "sourceId": recent, "near": far]),
+          ("maps.savePlace", ["source": "recent", "sourceId": recent, "near": far]),
+          (
+            "maps.fileInGuide",
+            ["guide": "Synthetic guide", "source": "recent", "sourceId": recent, "near": far]
+          ),
+        ] as [(String, [String: Any])] {
+          let (code, reason, message) = try failure(mapsReply(request(12, method, params), writer))
+          try expect(code == -32000, "\(method) with a far near: code \(code)")
+          try expect(
+            reason == "invalid", "\(method) with a far near: \(reason ?? "nil") (\(message))")
+        }
+      }
+      try expect(try mapsCount(storeURL, "FavoriteItem") == favorites, "a favourite was saved")
+      try expect(try mapsCount(storeURL, "CollectionPlaceItem") == places, "a place was saved")
+
+      // The caller's name, read back from the place each call saved.
+      let filed = try mapsWrite(
+        mapsReply(
+          request(
+            13, "maps.fileInGuide",
+            [
+              "guide": "Synthetic guide", "source": "recent", "sourceId": recent,
+              "name": "Synthetic filed name",
+            ]), writer), "fileInGuide with a name", filed: true)
+      try expect(filed["created"] as? Bool == true, "fileInGuide with a name created none")
+      let filedName = try mapsValues(storeURL, "CollectionPlaceItem", uuid(filed))["mapItemName"]
+      try expect(
+        filedName as? String == "Synthetic filed name",
+        "the filed place is named \(filedName ?? "nil")")
+      let saved = try mapsWrite(
+        mapsReply(
+          request(
+            14, "maps.savePlace",
+            ["source": "favorite", "sourceId": favorite, "name": "Synthetic saved name"]),
+          writer), "savePlace with a name")
+      try expect(saved["created"] as? Bool == true, "savePlace with a name created none")
+      // The favourite has a name of its own, so the caller's is the custom one.
+      let savedValues = try mapsValues(storeURL, "CollectionPlaceItem", uuid(saved))
+      try expect(
+        savedValues["customName"] as? String == "Synthetic saved name",
+        "the saved place's customName is \(savedValues["customName"] ?? "nil")")
+      try expect(
+        savedValues["mapItemName"] as? String == "Synthetic favourite",
+        "the saved place's mapItemName is \(savedValues["mapItemName"] ?? "nil")")
+    }
+
     // Every write as node sends it, and one with no params at all.
     let writes: [(String, [String: Any])] = [
       ("maps.addFavorite", ["source": "recent", "sourceId": recent, "near": near(recentAt)]),

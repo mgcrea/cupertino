@@ -111,18 +111,26 @@ nonisolated enum StoreLane {
     guard let prefix = namespaces[borrower], method.hasPrefix(prefix),
       case let verb = String(method.dropFirst(prefix.count)),
       verbs[borrower]?.contains(verb) == true, let off = writesOff[borrower]
-    else {
-      throw Refusal(
-        code: Code.methodNotFound, error: .invalid("\(borrower) has no method \(method)"))
-    }
+    else { throw unknownMethod(borrower, method) }
     // Before the params are read: a malformed write is still a write.
     guard verb == "status" || allowWrites else {
       throw StoreLaneError.writesOff(off)
     }
     let params = try Params(method: method, params)
-    return borrower == "maps"
-      ? try dispatchMaps(verb, params, maps) : try dispatchVoiceMemos(verb, params, voiceMemos)
+    // Fail closed: a surface given a namespace but no dispatch here answers nothing.
+    switch borrower {
+    case "maps": return try dispatchMaps(verb, params, maps)
+    case "voice-memos": return try dispatchVoiceMemos(verb, params, voiceMemos)
+    default: throw unknownMethod(borrower, method)
+    }
   }
+
+  private static func unknownMethod(_ borrower: String, _ method: String) -> Refusal {
+    Refusal(code: Code.methodNotFound, error: .invalid("\(borrower) has no method \(method)"))
+  }
+
+  // Each `default` refuses: a verb added to `verbs` but not to its switch never answers as
+  // `status`.
 
   private static func dispatchMaps(_ verb: String, _ params: Params, _ maps: MapsWriter) throws
     -> [String: Any]
@@ -149,8 +157,10 @@ nonisolated enum StoreLane {
           guideTitle: params.string("guide"), placeId: params.optionalString("placeId"),
           source: params.optionalSource("source"), sourceId: params.optionalString("sourceId"),
           name: params.optionalString("name"), near: params.near("near")))
-    default:
+    case "status":
       return json(maps.status())
+    default:
+      throw unknownMethod("maps", params.method)
     }
   }
 
@@ -170,8 +180,10 @@ nonisolated enum StoreLane {
       return json(try voiceMemos.delete(id: params.string("id")))
     case "restore":
       return json(try voiceMemos.restore(id: params.string("id")))
-    default:
+    case "status":
       return json(voiceMemos.status())
+    default:
+      throw unknownMethod("voice-memos", params.method)
     }
   }
 
