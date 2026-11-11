@@ -16,6 +16,22 @@ summary.
 
 ### Added
 
+- **Typing into a field no longer takes the front.** `apple_desktop_type` with a `handle` focuses
+  that field through Accessibility, sends the text to its application alone, and reads the field
+  back. The application stays behind whatever the person is using, and their keyboard stays
+  theirs. The answer says `lane: "background"` and whether the whole text `verified`. A field that
+  did not change, or one that cannot be read back, such as a password field, is typed into the way
+  it was before, with its application brought forward. Because a background type cannot reach the
+  person's keyboard, it opens the driving session without the countdown. The orange card still
+  shows, and the first verb that does take the front still gets the countdown. Measured against
+  AppKit and SwiftUI fields and TextEdit; shortcuts still need the front.
+- **Drive a Debug build of one of our apps without it coming forward.**
+  `apple_desktop_launch` with `channel: true` opens a driving channel in an app that links
+  swift-support-kit's `SupportKitDriving`. Click, drag, hover, key and type with its `bundleId`
+  then go into its own windows (`lane: "channel"`), including shortcuts and windows covered by
+  other apps. Nothing reaches the person's keyboard or cursor. The channel exists only in Debug
+  builds, and other applications are driven as before.
+
 - **Rename, move, favourite, delete and restore a voice memo, in Cupertino.** Five tools,
   `rename_recording`, `move_recording`, `set_favorite`, `delete_recording` (to Recently Deleted)
   and `restore_recording`, exist only when Cupertino hosts the Voice Memos server and its writes

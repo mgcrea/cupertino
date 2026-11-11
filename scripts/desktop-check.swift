@@ -926,12 +926,15 @@ struct DesktopCheck {
 
     // The half that waits. Last, because a cancel leaves a cooldown behind that
     // refuses every admission for the rest of this process.
-    func admitOffMain(_ settings: DrivingPolicy.Settings) -> (DispatchSemaphore, () -> String) {
+    func admitOffMain(_ settings: DrivingPolicy.Settings, background: Bool = false)
+      -> (DispatchSemaphore, () -> String)
+    {
       let done = DispatchSemaphore(value: 0)
       let box = ResultBox<String>()
       Thread {
         do {
-          try DrivingSession.admit(driven, settings: settings, secondsSinceInput: 0)
+          try DrivingSession.admit(
+            driven, background: background, settings: settings, secondsSinceInput: 0)
           box.result = .success("")
         } catch {
           box.result = .success(error.localizedDescription)
@@ -958,15 +961,67 @@ struct DesktopCheck {
       allowed.wait(timeout: .now() + 5) == .success && DrivingSession.target() == driven)
     DrivingSession.release(.agent)
 
+    // A verb that cannot take the focus opens a quiet session: the card, no
+    // question. The first verb that does take the front is still asked, or a
+    // background type that fell back to the front would skip the countdown.
+    let asked = DrivingPolicy.Settings(before: .ask, countdown: 3, idleRelease: 45)
+    let (quietly, _) = admitOffMain(asked, background: true)
+    check(
+      "a background verb opens the session without asking, while somebody types",
+      quietly.wait(timeout: .now() + 2) == .success && DrivingSession.target() == driven)
+    let (alsoQuiet, _) = admitOffMain(asked, background: true)
+    check(
+      "and the next background verb goes straight in",
+      alsoQuiet.wait(timeout: .now() + 2) == .success)
+    let (inFront, _) = admitOffMain(asked)
+    check(
+      "a verb that takes the front, in a quiet session, is still asked",
+      inFront.wait(timeout: .now() + 0.4) == .timedOut)
+    DrivingSession.respond(.go)
+    check(
+      "and goes through once allowed",
+      inFront.wait(timeout: .now() + 5) == .success && DrivingSession.target() == driven)
+    // The person can move between the quiet session opening and its first
+    // front verb, and the app to hand back to is the one in front THEN.
+    let quietOpen = DrivingSession.Open(
+      target: driven, driven: [driven], since: Date(), lastCall: Date(),
+      handsBackTo: "com.apple.Safari", connections: [], orphanedAt: nil, quiet: true)
+    let upgraded = quietOpen.admitting(
+      driven, connection: nil, front: "com.microsoft.VSCode", at: Date(), background: false)
+    check(
+      "a quiet session taking the front hands back to the app in front now",
+      upgraded.handsBackTo == "com.microsoft.VSCode" && !upgraded.quiet)
+    let stillQuiet = quietOpen.admitting(
+      driven, connection: nil, front: "com.microsoft.VSCode", at: Date(), background: true)
+    check(
+      "a background verb leaves the hand-back as it was",
+      stillQuiet.handsBackTo == "com.apple.Safari" && stillQuiet.quiet)
+    let (thenFront, _) = admitOffMain(asked)
+    check(
+      "after which the session is a full one and asks nothing more",
+      thenFront.wait(timeout: .now() + 2) == .success)
+    DrivingSession.release(.agent)
+
+    // Run inside a quiet session: a no to the front verb is a no to the agent,
+    // so the quiet session it was asked in closes, and background verbs stop.
+    let (opensQuiet, _) = admitOffMain(asked, background: true)
+    _ = opensQuiet.wait(timeout: .now() + 2)
     let (cancelled, cancelMessage) = admitOffMain(
       DrivingPolicy.Settings(before: .countdown, countdown: 10, idleRelease: 45))
     Thread.sleep(forTimeInterval: 0.3)
-    check("a countdown holds the verb back while it runs", DrivingSession.target() == nil)
+    check(
+      "a countdown holds the verb back while it runs",
+      cancelled.wait(timeout: .now()) == .timedOut)
     DrivingSession.respond(.stop)
     check(
-      "Cancel refuses the verb, saying the person cancelled, and opens nothing",
+      "Cancel refuses the verb, saying the person cancelled, and ends the quiet session it was in",
       cancelled.wait(timeout: .now() + 5) == .success && cancelMessage().contains("cancelled")
         && DrivingSession.target() == nil)
+    let (afterNo, afterNoMessage) = admitOffMain(asked, background: true)
+    check(
+      "a background verb after the no is refused too",
+      afterNo.wait(timeout: .now() + 2) == .success
+        && afterNoMessage().contains("turned Cupertino away") && DrivingSession.target() == nil)
     var retryMessage = ""
     do {
       try DrivingSession.admit(driven, settings: quiet)

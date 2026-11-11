@@ -119,12 +119,33 @@ nonisolated enum DrivingPolicy {
   /// A recent decline outranks everything, including a preference of `.none`
   /// and an idle Mac. The person said no a moment ago, and neither of those
   /// facts is newer than that.
+  ///
+  /// `background` is a verb that cannot take the focus: keys posted to one
+  /// application's pid, or a command through a Debug build's own driving
+  /// channel. Measured 2026-11-11 (`scripts/spike-background-input.swift`):
+  /// neither activated the target in 32 cases, and neither touches the person's
+  /// keyboard, so the countdown has nothing to protect them from. It still opens
+  /// a session, so the orange card says an agent is at work, and a recent no
+  /// still refuses it: they said no to Cupertino, not to one lane of it.
+  /// Whether a verb that does not take the focus is BACKGROUND for this target.
+  ///
+  /// Only behind the person's app. Into the app they are in, a posted key or
+  /// a channel command still moves their caret and mixes with their own
+  /// keystrokes, so it gets the countdown as before. A front that cannot be
+  /// read counts as the target, which errs toward warning.
+  static func isBackground(target: String, frontmost: String?) -> Bool {
+    guard let frontmost else { return false }
+    return frontmost != target
+  }
+
   static func decide(
-    _ settings: Settings, secondsSinceInput: Double, declinedUntil: Date?, now: Date
+    _ settings: Settings, secondsSinceInput: Double, declinedUntil: Date?, now: Date,
+    background: Bool = false
   ) -> Decision {
     if let declinedUntil, now < declinedUntil {
       return .declined(retryIn: declinedUntil.timeIntervalSince(now))
     }
+    if background { return .open }
     guard secondsSinceInput < activeWindow else { return .open }
     switch settings.before {
     case .none: return .open

@@ -1875,9 +1875,15 @@ nonisolated enum AccessibilityDriver {
   static func focus(handle: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
     let entry = try resolveEntry(handle, scope: scope)
-    let target = entry.element
     try announce(handle)
+    return try takeFocus(entry.element, in: entry.bundleId, handle: handle)
+  }
 
+  /// `focus`'s write and read-back, without its admission, for a caller that
+  /// admits on its own terms (`typeInBackground`).
+  private static func takeFocus(_ target: AXUIElement, in bundleId: String, handle: String)
+    throws -> Bool
+  {
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
       target, kAXFocusedAttribute as CFString, &settable)
@@ -1890,7 +1896,7 @@ nonisolated enum AccessibilityDriver {
       target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
     if let problem = failure(for: err, doing: "Focusing '\(handle)'", wrote: true) { throw problem }
 
-    if holdsFocus(target, in: entry.bundleId) { return true }
+    if holdsFocus(target, in: bundleId) { return true }
 
     var raw: AnyObject?
     let read = AXUIElementCopyAttributeValue(target, kAXFocusedAttribute as CFString, &raw)
@@ -2286,9 +2292,9 @@ nonisolated enum AccessibilityDriver {
   ///
   /// Blocks for up to `timeout`, so it runs on a connection's own thread like
   /// every other verb here.
-  static func launch(bundleId: String, scope: Scope, timeout: TimeInterval = 10) throws
-    -> Launched
-  {
+  static func launch(
+    bundleId: String, scope: Scope, timeout: TimeInterval = 10, arguments: [String] = []
+  ) throws -> Launched {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     if (try? app(forBundleId: bundleId)) != nil { return Launched(launched: false) }
     guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) else {
@@ -2314,6 +2320,7 @@ nonisolated enum AccessibilityDriver {
     config.activates = false
     config.addsToRecentItems = false
     config.promptsUserIfNeeded = false
+    config.arguments = arguments
     let done = DispatchSemaphore(value: 0)
     let box = ResultBox<Void>()
     NSWorkspace.shared.openApplication(at: url, configuration: config) { _, error in
@@ -2923,6 +2930,107 @@ nonisolated enum AccessibilityDriver {
       // still counts as ours.
       DriveActivity.postedInput()
     }
+  }
+
+  /// Type into a field WITHOUT bringing its application forward, and say
+  /// whether it landed. Nil when the field is not a candidate, or would not
+  /// take the focus, which leaves the caller to type in front as before.
+  ///
+  /// MEASURED 2026-11-11 (`scripts/spike-background-input.swift`): keys posted
+  /// to an application's pid reach the first responder of a window that is not
+  /// key, in an application that is not active, and never activate it. AppKit,
+  /// a SwiftUI field focused through `AXFocused`, and TextEdit all took them.
+  /// What they do not take is a shortcut: the menu bar of an application in the
+  /// background is not the one in use, which is why `key` keeps the front.
+  ///
+  /// Admitted as `background`, so a countdown does not hold back a verb that
+  /// cannot reach the person's keyboard. If this returns nil or nothing landed
+  /// and the caller then types in front, that admission is asked again: a
+  /// session opened quietly does not wave a front verb through.
+  ///
+  /// The read-back is what makes the fallback safe, and `BackgroundTyping`
+  /// holds its rules: a field that changed at all is not typed again.
+  static func typeInBackground(text: String, handle: String, scope: Scope) throws
+    -> (verdict: BackgroundTyping.Verdict, before: String)?
+  {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let entry = try resolveEntry(handle, scope: scope)
+    let field = entry.element
+    let before = copy(field, kAXValueAttribute as String)
+    guard
+      BackgroundTyping.eligible(
+        role: copy(field, kAXRoleAttribute as String) as? String,
+        subrole: copy(field, kAXSubroleAttribute as String) as? String, value: before),
+      let before = before as? String
+    else { return nil }
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(field, &pid) == .success else { return nil }
+    // Into the app the person is in, this would move their caret and mix with
+    // their keystrokes without a warning: that is the front path's job, with
+    // its countdown.
+    guard DrivingPolicy.isBackground(target: entry.bundleId, frontmost: frontmostBundleId())
+    else { return nil }
+
+    try DrivingSession.admit(entry.bundleId, background: true)
+    DriveActivity.record(entry.bundleId)
+    guard (try? takeFocus(field, in: entry.bundleId, handle: handle)) == true else { return nil }
+    // Read after the focus, which can select the whole field: typing then
+    // replaces the selection, and the range moving is how that shows.
+    let selectionBefore = selectedRange(field)
+
+    let source = CGEventSource(stateID: .hidSystemState)
+    for chunk in text.chunked(into: 20) {
+      try DrivingSession.checkStillDriving(entry.bundleId)
+      guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
+        let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
+      else { throw Failure.refused("Could not synthesise typing.") }
+      var utf16 = Array(chunk.utf16)
+      down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+      up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+      down.postToPid(pid)
+      up.postToPid(pid)
+      DriveActivity.postedInput()
+    }
+
+    // Polled until the whole text reads back or the deadline passes: the
+    // application handles the chunks on its own main thread, one at a time, and
+    // a read made before it has is the "nothing landed" that types twice.
+    let deadline = Date().addingTimeInterval(0.5)
+    var verdict = BackgroundTyping.Verdict.nothingLanded
+    repeat {
+      usleep(25_000)
+      // A failed read is nil, which the verdict takes as unknown, never as
+      // nothing landed.
+      let after = copy(field, kAXValueAttribute as String) as? String
+      verdict = BackgroundTyping.verdict(
+        before: before, after: after, typed: text,
+        selectionMoved: selectionBefore.flatMap { was in selectedRange(field).map { $0 != was } }
+          ?? false)
+    } while verdict != .landed(verified: true) && Date() < deadline
+    return (verdict, before)
+  }
+
+  /// A field's selected range as (location, length), or nil when unreadable.
+  private struct TextRange: Equatable {
+    let location: Int
+    let length: Int
+  }
+
+  private static func selectedRange(_ field: AXUIElement) -> TextRange? {
+    guard let raw = copy(field, kAXSelectedTextRangeAttribute as String),
+      CFGetTypeID(raw) == AXValueGetTypeID()
+    else { return nil }
+    var range = CFRange()
+    guard AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+    return TextRange(location: range.location, length: range.length)
+  }
+
+  /// A field's string value, read again before typing in front what did not
+  /// land in the background: keys the app had not yet handled when the
+  /// read-back gave up would otherwise arrive twice.
+  static func stringValue(handle: String, scope: Scope) -> String? {
+    guard let entry = try? resolveEntry(handle, scope: scope) else { return nil }
+    return copy(entry.element, kAXValueAttribute as String) as? String
   }
 
   /// A named key with modifiers — what `type` cannot express.

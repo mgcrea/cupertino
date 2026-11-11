@@ -1363,6 +1363,127 @@ one rule is easier to follow than a list of exceptions, and reading first costs 
 while the Mac was in use, so the probe reproduced only the part that matters, an action that holds
 the main thread past the timeout.
 
+## Typing without the front, 2026-11-11
+
+The iOS lane in mgcrea-ai drives a Simulator through WebDriverAgent without ever taking the Mac's
+focus, because its events go into the simulated device's own event system. The Mac has one per
+login session, with one cursor, one key window and one frontmost application. So every verb here
+that posts to the session competes with the person at the keyboard, and the countdown, the card and
+the hand-back all exist to manage that. The question was which verbs need the session at all.
+
+`scripts/spike-background-input.swift` measured it against a throwaway app (AppKit field, text view
+and button, SwiftUI field and button), with its window in front and again behind other windows.
+`textedit-probe` then checked a third-party app. In 32 cases the target never became active and its
+window was never key.
+
+| How                                                                  | Inactive app, window in front or covered   |
+| -------------------------------------------------------------------- | ------------------------------------------ |
+| Keys posted from another process (`postToPid`), field focused via AX | **land**: AppKit, SwiftUI, TextEdit        |
+| A shortcut (Cmd-A, the Mail spike's Cmd-V) posted the same way       | ignored: the menu bar is not in use        |
+| Clicks posted the same way, with or without the window fields set    | arrive (the monitor sees them), do nothing |
+| `AXPress`                                                            | works, as it always has                    |
+| In process: `NSWindow.sendEvent` keys, clicks, click-then-type       | **land**                                   |
+
+So `apple_desktop_type` with a handle now tries the background first
+(`AccessibilityDriver.typeInBackground`):
+
+1. **Only a field that can be read back.** It needs a string `AXValue`, and must not be an
+   `AXSecureTextField`, whose value reads empty whatever it holds (`BackgroundTyping.eligible`).
+   Anything else goes the old way.
+2. **Admitted as background, and only behind the person's app.** Into the app in front, a posted
+   key still moves their caret and mixes with their own keys, so `DrivingPolicy.isBackground`
+   sends that case the old way, with its countdown. Behind, `DrivingPolicy.decide(background:
+true)` opens the session without a countdown or a question. A recent no still refuses it. The
+   session is **quiet** (`DrivingSession.Open.quiet`):
+   - The first verb in it that takes the front is still put to the decision. Without that, a
+     background type that fell back to the front would have skipped the countdown the fallback
+     needs.
+   - A no to that verb ends the quiet session, and its background verbs stop with it.
+   - Who it hands back to is read when it first takes the front, not when it opened.
+3. **Focused through AX, then posted to the pid** in the same 20-character unicode chunks `type`
+   uses.
+4. **Read back** every 25 ms for up to 500 ms (`BackgroundTyping.verdict`). Each of these counts
+   as landed and is never typed again:
+   - a field that changed at all;
+   - a field whose selection moved: focusing an NSTextField selects all of it, so the same text
+     typed over itself changes nothing else;
+   - a value that could not be read: unknown is not nothing.
+
+   `verified` says whether the field now holds one more copy of the text than before. A field
+   that took part of the text is not typed again, or that part would arrive twice. An unchanged
+   field falls back to the front, and is read once more just before the front types. That catches
+   keys the app handled after the read-back gave up.
+
+`make background-type-live` runs this checkout's desktop server against a TextEdit started behind.
+It passed 2026-11-11 while Olivier worked in VS Code: `typed behind, é ✓` landed `verified`,
+TextEdit never became active, and the app in front stayed in front. It is not a gate, because it
+posts input. AppleScript's `quit` did not end a TextEdit started that way, so the check terminates
+it once its document is closed.
+
+Not measured: Return, Tab and Escape posted to a pid (plain keyDowns, so probably like letters,
+though a field's action on Return may differ), Chromium and Electron fields, WebKit content, and
+input methods. For a field that takes nothing, the read-back sends it forward as before. A field
+that takes the keys more than 500 ms late, and also after the front came, would still get the
+text twice. The re-read narrows that window but has not been measured against such an app.
+
+## A channel into our own apps, 2026-11-11
+
+Typing is the only verb that works from outside without the front. A click posted to a pid
+arrives and does nothing, and a shortcut is ignored, so for our own apps the input goes in from
+the inside instead. swift-support-kit's `SupportKitDriving` opens a channel in a Debug build
+launched with `-DrivingChannel YES`. The channel is a directory in the app's own temporary
+directory, holding a commands file Cupertino appends to and an events file the app answers in.
+The app delivers each command to its own windows with `NSWindow.sendEvent`. It is compiled only
+in DEBUG (a Release object holds no channel symbol) because it bypasses the Accessibility
+permission. Cupertino never links it: the Shell window takes only a hardware click, and an input
+channel inside Cupertino would be a way round that.
+
+`apple_desktop_launch` with `channel: true` passes the argument and says whether a channel
+opened. **Only a process launched that way has a channel** (`AppChannel.register`), matched by pid
+and launch date. A channel is a directory, and the per-user temporary directory is shared by every
+unsandboxed process the user runs. The first version believed any directory whose `ready` named
+a live pid. Review found what that meant: a process with no grant at all could plant one for
+Safari and read off it what the agent typed. That includes a password, because a secure field is
+exactly what the background lane hands on. `channel-check` now plants one for Finder and checks
+that it is ignored. The same rule leaves out a crashed app's stale directory and a reused pid.
+After Cupertino or the app restarts, launch it again with `channel: true`.
+
+Click (left only), drag (within the app), hover, key (when every modifier has a menu meaning) and
+type with that `bundleId` then go through the channel. They answer `lane: "channel"` with what the
+app hit and what holds its focus. Nothing is brought forward or checked against the window
+server's stacking: the app hit-tests its own windows, so a covered window still takes the click.
+Behind the person's app they are admitted as background, with no countdown; in front they get
+the countdown. An application without a channel is driven exactly as before.
+
+A right-click is refused, with a pointer to `apple_desktop_show_menu`. The context menu is a window
+of its own, drawn over the person's work even when the app's window is covered. Its tracking loop
+reads no key sent to the app's window, so nothing sent through the channel could close it. A
+shortcut honours an item the app disabled: in a menu that does not enable its items
+automatically, as SwiftUI command menus do not, `isEnabled` decides.
+
+`make channel-check` builds a fixture app from swift-support-kit's sources and registers it with
+Launch Services, so `apple_desktop_launch` can start it by bundle id. It then drives the fixture
+through both `AppChannel` and the server's verbs. 22/22 passed on 2026-11-11 while Olivier
+worked. The fixture never became active, and the app in front stayed in front. The check found
+two defects, both fixed in swift-support-kit before this was written:
+
+- **The ack came before a SwiftUI button had acted.** A click queues its up, and a SwiftUI button
+  acts on the up, which the app's event loop reaches after a plain `DispatchQueue.main.async`.
+  So a button whose action held the main thread for 3 s was acknowledged at once. The ack now
+  waits for a marker event queued behind the up, and the stall is reported as "did not answer
+  the click within 2 s".
+- **Cmd-A selected nothing.** An inactive app has no key window, so the menu's own validation
+  finds no target and disables Select All. The item is now found whatever the validation says,
+  then validated against the window's first responder.
+
+`channel-check` is not a gate, because CI has no swift-support-kit checkout. Set `SUPPORT_KIT` to
+one (it defaults to `~/Projects/swift-support-kit`).
+
+Not measured: hover (whether a `mouseMoved` delivered this way fires a tracking area or
+`onContinuousHover`), scroll, right-click menus (refused, above), a drag that needs real time
+between steps (the steps are queued all at once), and a sandboxed app's container from a
+Cupertino without Full Disk Access.
+
 ## Still open
 
 - **An application that takes the front when launched behind.** `launch` hands the front back when

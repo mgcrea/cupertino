@@ -58,12 +58,46 @@ nonisolated enum DrivingSession {
     var driven: Set<String>
     let since: Date
     var lastCall: Date
-    /// The application in front when the session opened. Nil when that was the
-    /// target itself, Cupertino, or unreadable.
-    let handsBackTo: String?
+    /// The application in front when the session opened, or when a quiet one
+    /// first took the front. Nil when that was the target itself, Cupertino, or
+    /// unreadable.
+    var handsBackTo: String?
     var connections: Set<UUID>
     /// When the last connection that drove in this session closed.
     var orphanedAt: Date?
+    /// Opened, and so far driven, only by verbs that cannot take the focus. The
+    /// first verb that does take it is still put to `DrivingPolicy.decide`, or a
+    /// background type that fell back to the front would skip the countdown.
+    var quiet: Bool = false
+
+    /// This session once `target` is admitted into it.
+    ///
+    /// A quiet session took nothing from the person, so the app to hand back to
+    /// is the one in front when it first takes the front, not when it opened:
+    /// they may have moved in between.
+    func admitting(
+      _ target: String, connection: UUID?, front: String?, at now: Date, background: Bool
+    ) -> Open {
+      var next = self
+      if quiet && !background, let front {
+        next.handsBackTo = DrivingSession.handBack(front: front, target: target)
+      }
+      next.quiet = quiet && background
+      next.target = target
+      next.driven.insert(target)
+      next.lastCall = now
+      if let connection {
+        next.connections.insert(connection)
+        next.orphanedAt = nil
+      }
+      return next
+    }
+  }
+
+  /// Who a session hands back to: the app that was in front, unless that was
+  /// the target itself or Cupertino.
+  static func handBack(front: String?, target: String) -> String? {
+    (front == target || front == Bundle.main.bundleIdentifier) ? nil : front
   }
 
   enum Prompt: Equatable, Sendable {
@@ -147,18 +181,25 @@ nonisolated enum DrivingSession {
   ///
   /// `settings` and `secondsSinceInput` are for the checks. The app passes
   /// neither, so both are read fresh on each call.
+  /// `background` is for a verb that cannot take the focus; see
+  /// `DrivingPolicy.decide`. It opens the session without a countdown.
   static func admit(
-    _ target: String, settings: DrivingPolicy.Settings? = nil, secondsSinceInput: Double? = nil
+    _ target: String, background: Bool = false, settings: DrivingPolicy.Settings? = nil,
+    secondsSinceInput: Double? = nil
   ) throws {
     let connection = Thread.current.threadDictionary[connectionKey] as? UUID
     while true {
       // Read outside the lock, because it is an Accessibility round trip and a
       // slow application must not stall every other reader of this state.
       // Wasted only on the call that finds a session already open.
-      let front = isOpen() ? nil : frontmost()
+      let front = needsFront() ? frontmost() : nil
 
       lock.lock()
-      if var session = open {
+      // A quiet session does not let a front verb through, and does not
+      // outlast a no: while one is fresh, its verbs go to the decision too,
+      // which refuses them.
+      let declinedNow = declinedUntil.map { Date() < $0 } ?? false
+      if var session = open, background || !session.quiet, !(session.quiet && declinedNow) {
         let renamed = session.target != target
         session.target = target
         session.driven.insert(target)
@@ -185,12 +226,12 @@ nonisolated enum DrivingSession {
       let decision = DrivingPolicy.decide(
         settings ?? DrivingPolicy.current,
         secondsSinceInput: secondsSinceInput ?? AccessibilityDriver.secondsSinceUserInput(),
-        declinedUntil: declinedUntil, now: now)
+        declinedUntil: declinedUntil, now: now, background: background)
 
       let waiting: Pending
       switch decision {
       case .open:
-        openLocked(target, connection: connection, front: front, at: now)
+        admitLocked(target, connection: connection, front: front, at: now, background: background)
         lock.unlock()
         announce(target)
         return
@@ -215,7 +256,8 @@ nonisolated enum DrivingSession {
 
       case .countdown, .ask:
         if Thread.isMainThread {
-          openLocked(target, connection: connection, front: front, at: now)
+          admitLocked(
+            target, connection: connection, front: front, at: now, background: background)
           lock.unlock()
           announce(target)
           return
@@ -238,25 +280,35 @@ nonisolated enum DrivingSession {
       // Re-read: the person had the countdown to switch to what they wanted to
       // finish, and THAT is the application to hand back to.
       let frontNow = answer == .go ? frontmost() : nil
+      var endedQuiet: Open?
 
       lock.lock()
       if pending === waiting {
         pending = nil
         switch answer {
         case .go:
-          if open == nil {
-            openLocked(target, connection: connection, front: frontNow, at: Date())
+          if open == nil || open?.quiet == true {
+            admitLocked(
+              target, connection: connection, front: frontNow, at: Date(), background: false)
           }
         case .stop:
           // Silence on a question is not a no. Nobody was there to say it.
           if !waiting.silent {
             declinedUntil = Date().addingTimeInterval(DrivingPolicy.declineCooldown)
             stopped = nil
+            // A no to the first front verb of a quiet session is a no to the
+            // agent, so its background verbs end with it. Nothing was brought
+            // forward, so nothing is handed back.
+            if let session = open, session.quiet {
+              closeLocked()
+              endedQuiet = session
+            }
           }
         }
       }
       let opened = open != nil
       lock.unlock()
+      if let endedQuiet { _ = finish(endedQuiet, .person, handBack: false, now: Date()) }
       show(nil)
 
       guard answer == .go else { throw refusal(for: waiting) }
@@ -395,6 +447,14 @@ nonisolated enum DrivingSession {
 
   static func isOpen() -> Bool { target() != nil }
 
+  /// Whether admission has to read the front: no session yet, or a quiet one
+  /// whose first front verb sets who it hands back to.
+  private static func needsFront() -> Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return open.map(\.quiet) ?? true
+  }
+
   /// For a verb that posts in several steps: refuse the rest once the session
   /// it was admitted into has ended.
   ///
@@ -462,9 +522,24 @@ nonisolated enum DrivingSession {
   }
 
   /// Under the lock.
+  /// Under the lock. Open a session, or let a quiet one through to a verb that
+  /// passed the decision, keeping what it already holds: who to hand back to,
+  /// what it drove, and the connections that drove in it.
+  private static func admitLocked(
+    _ target: String, connection: UUID?, front: String?, at now: Date, background: Bool
+  ) {
+    guard let session = open else {
+      openLocked(target, connection: connection, front: front, at: now)
+      open?.quiet = background
+      return
+    }
+    open = session.admitting(
+      target, connection: connection, front: front, at: now, background: background)
+  }
+
   private static func openLocked(_ target: String, connection: UUID?, front: String?, at now: Date)
   {
-    let back = (front == target || front == Bundle.main.bundleIdentifier) ? nil : front
+    let back = handBack(front: front, target: target)
     open = Open(
       target: target, driven: [target], since: now, lastCall: now, handsBackTo: back,
       connections: connection.map { [$0] } ?? [], orphanedAt: nil)

@@ -877,12 +877,36 @@ struct UnitCheck {
     let counting = DrivingPolicy.Settings(before: .countdown, countdown: 3, idleRelease: 45)
     let asking = DrivingPolicy.Settings(before: .ask, countdown: 3, idleRelease: 45)
     let nothing = DrivingPolicy.Settings(before: .none, countdown: 3, idleRelease: 45)
-    func decide(_ settings: DrivingPolicy.Settings, idle: Double, declinedUntil: Date? = nil)
-      -> DrivingPolicy.Decision
-    {
+    func decide(
+      _ settings: DrivingPolicy.Settings, idle: Double, declinedUntil: Date? = nil,
+      background: Bool = false
+    ) -> DrivingPolicy.Decision {
       DrivingPolicy.decide(
-        settings, secondsSinceInput: idle, declinedUntil: declinedUntil, now: noon)
+        settings, secondsSinceInput: idle, declinedUntil: declinedUntil, now: noon,
+        background: background)
     }
+    // A verb that cannot take the focus (keys posted to a pid, an in-app channel)
+    // cannot land in the person's sentence, so it does not make them wait.
+    check(
+      "a background verb opens at once while somebody types",
+      decide(counting, idle: 0.5, background: true) == .open)
+    check(
+      "and is not asked about either", decide(asking, idle: 0, background: true) == .open)
+    // Background means behind the person's app. Typing into the app they are
+    // typing in moves their caret and mixes keystrokes, whatever the lane.
+    check(
+      "an application behind the one in front is driven in the background",
+      DrivingPolicy.isBackground(target: "com.apple.TextEdit", frontmost: "com.microsoft.VSCode"))
+    check(
+      "the application in front is not",
+      !DrivingPolicy.isBackground(target: "com.apple.mail", frontmost: "com.apple.mail"))
+    check(
+      "and an unreadable front counts as in front, which errs toward the countdown",
+      !DrivingPolicy.isBackground(target: "com.apple.mail", frontmost: nil))
+    check(
+      "but a recent no still outranks it",
+      decide(counting, idle: 0, declinedUntil: noon.addingTimeInterval(10), background: true)
+        == .declined(retryIn: 10))
     check("somebody typing gets a countdown", decide(counting, idle: 0.5) == .countdown(3))
     check(
       "just inside the window still counts as somebody there",
@@ -910,6 +934,48 @@ struct UnitCheck {
     check(
       "the longest countdown ends inside the active window",
       TimeInterval(DrivingPolicy.countdownRange.upperBound) < DrivingPolicy.activeWindow)
+
+    print("\nBackground typing: whether text posted to a field in the background landed")
+
+    // The read-back decides between answering and typing again in front, so a
+    // wrong "nothing landed" types the text twice.
+    check(
+      "an empty field that now holds the text landed",
+      BackgroundTyping.verdict(before: "", after: "abc", typed: "abc") == .landed(verified: true))
+    check(
+      "text appended after what was there landed",
+      BackgroundTyping.verdict(before: "x", after: "xabc", typed: "abc")
+        == .landed(verified: true))
+    check(
+      "appended to identical text still counts the new copy",
+      BackgroundTyping.verdict(before: "abc", after: "abcabc", typed: "abc")
+        == .landed(verified: true))
+    check(
+      "an unchanged field is nothing landed, even when it already holds the text",
+      BackgroundTyping.verdict(before: "abc", after: "abc", typed: "abc") == .nothingLanded)
+    check(
+      "a field that took part of it landed, unverified, so it is not typed again",
+      BackgroundTyping.verdict(before: "", after: "ab", typed: "abcdef")
+        == .landed(verified: false))
+    // Focusing an NSTextField through AX selects all of it, so typing the text
+    // it already holds replaces it with itself: the value reads the same, and
+    // only the selection says anything happened.
+    check(
+      "identical text replacing a selection landed, because the selection moved",
+      BackgroundTyping.verdict(before: "abc", after: "abc", typed: "abc", selectionMoved: true)
+        == .landed(verified: true))
+    check(
+      "a value that could not be read is not taken for nothing landed",
+      BackgroundTyping.verdict(before: "x", after: nil, typed: "abc") == .landed(verified: false))
+    check(
+      "a secure field is never typed in the background: its value cannot be read back",
+      !BackgroundTyping.eligible(role: "AXTextField", subrole: "AXSecureTextField", value: ""))
+    check(
+      "a text area with a string value is",
+      BackgroundTyping.eligible(role: "AXTextArea", subrole: nil, value: "hi"))
+    check(
+      "an element with no string value is not",
+      !BackgroundTyping.eligible(role: "AXWebArea", subrole: nil, value: nil))
 
     // Stored the way the Settings row writes them, and the way a launch argument
     // arrives: `NSArgumentDomain` hands back strings.
