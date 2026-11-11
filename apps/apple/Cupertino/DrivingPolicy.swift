@@ -119,12 +119,22 @@ nonisolated enum DrivingPolicy {
   /// A recent decline outranks everything, including a preference of `.none`
   /// and an idle Mac. The person said no a moment ago, and neither of those
   /// facts is newer than that.
+  ///
+  /// `background` is a verb that cannot take the focus: keys posted to one
+  /// application's pid, or a command through a Debug build's own driving
+  /// channel. Measured 2026-11-11 (`scripts/spike-background-input.swift`):
+  /// neither activated the target in 32 cases, and neither touches the person's
+  /// keyboard, so the countdown has nothing to protect them from. It still opens
+  /// a session, so the orange card says an agent is at work, and a recent no
+  /// still refuses it: they said no to Cupertino, not to one lane of it.
   static func decide(
-    _ settings: Settings, secondsSinceInput: Double, declinedUntil: Date?, now: Date
+    _ settings: Settings, secondsSinceInput: Double, declinedUntil: Date?, now: Date,
+    background: Bool = false
   ) -> Decision {
     if let declinedUntil, now < declinedUntil {
       return .declined(retryIn: declinedUntil.timeIntervalSince(now))
     }
+    if background { return .open }
     guard secondsSinceInput < activeWindow else { return .open }
     switch settings.before {
     case .none: return .open

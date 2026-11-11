@@ -877,12 +877,25 @@ struct UnitCheck {
     let counting = DrivingPolicy.Settings(before: .countdown, countdown: 3, idleRelease: 45)
     let asking = DrivingPolicy.Settings(before: .ask, countdown: 3, idleRelease: 45)
     let nothing = DrivingPolicy.Settings(before: .none, countdown: 3, idleRelease: 45)
-    func decide(_ settings: DrivingPolicy.Settings, idle: Double, declinedUntil: Date? = nil)
-      -> DrivingPolicy.Decision
-    {
+    func decide(
+      _ settings: DrivingPolicy.Settings, idle: Double, declinedUntil: Date? = nil,
+      background: Bool = false
+    ) -> DrivingPolicy.Decision {
       DrivingPolicy.decide(
-        settings, secondsSinceInput: idle, declinedUntil: declinedUntil, now: noon)
+        settings, secondsSinceInput: idle, declinedUntil: declinedUntil, now: noon,
+        background: background)
     }
+    // A verb that cannot take the focus (keys posted to a pid, an in-app channel)
+    // cannot land in the person's sentence, so it does not make them wait.
+    check(
+      "a background verb opens at once while somebody types",
+      decide(counting, idle: 0.5, background: true) == .open)
+    check(
+      "and is not asked about either", decide(asking, idle: 0, background: true) == .open)
+    check(
+      "but a recent no still outranks it",
+      decide(counting, idle: 0, declinedUntil: noon.addingTimeInterval(10), background: true)
+        == .declined(retryIn: 10))
     check("somebody typing gets a countdown", decide(counting, idle: 0.5) == .countdown(3))
     check(
       "just inside the window still counts as somebody there",

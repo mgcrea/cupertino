@@ -147,8 +147,11 @@ nonisolated enum DrivingSession {
   ///
   /// `settings` and `secondsSinceInput` are for the checks. The app passes
   /// neither, so both are read fresh on each call.
+  /// `background` is for a verb that cannot take the focus; see
+  /// `DrivingPolicy.decide`. It opens the session without a countdown.
   static func admit(
-    _ target: String, settings: DrivingPolicy.Settings? = nil, secondsSinceInput: Double? = nil
+    _ target: String, background: Bool = false, settings: DrivingPolicy.Settings? = nil,
+    secondsSinceInput: Double? = nil
   ) throws {
     let connection = Thread.current.threadDictionary[connectionKey] as? UUID
     while true {
@@ -185,7 +188,7 @@ nonisolated enum DrivingSession {
       let decision = DrivingPolicy.decide(
         settings ?? DrivingPolicy.current,
         secondsSinceInput: secondsSinceInput ?? AccessibilityDriver.secondsSinceUserInput(),
-        declinedUntil: declinedUntil, now: now)
+        declinedUntil: declinedUntil, now: now, background: background)
 
       let waiting: Pending
       switch decision {
