@@ -351,8 +351,8 @@ const connectRemoval = async () => {
 
 describe("apple_maps_remove_saved_place", () => {
   /*
-   * The removal reaches every device on the account, so it takes `confirm`
-   * as apple_maps_remove_favorite does. Refused at the schema, before Maps is
+   * Maps saves the removal as one made by hand, so it takes `confirm` as
+   * apple_maps_remove_favorite does. Refused at the schema, before Maps is
    * opened: a call without it must not even bring the window forward.
    */
   const place = { query: "Café de Flore", latitude: 48.854, longitude: 2.3326 };

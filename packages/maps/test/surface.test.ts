@@ -63,14 +63,17 @@ describe("maps resources", () => {
   /*
    * The two things a model would otherwise get wrong about the writes: that an
    * unpin deletes the place (Maps keeps it as a saved place, watched
-   * 2026-11-11), and that a write reached the iPhone (not yet measured).
+   * 2026-11-11), and that a write is already on the iPhone (measured
+   * 2026-11-11 to be on its way, even with Maps quit; not instant).
    */
-  it("says unpinning keeps a saved place, and claims no sync", async () => {
+  it("says unpinning keeps a saved place, and that a save is on its way", async () => {
     const guide = textOf(
       (await (await connect()).readResource({ uri: "cupertino://maps/guide" })).contents,
     );
     expect(guide).toMatch(/keeps\s+the place in the user's library as a saved place/);
-    expect(guide).toMatch(/sync is not yet\s+measured/);
+    expect(guide).toMatch(/uploads it even\s+with Maps closed/);
+    expect(guide).toMatch(/on its way to\s+other devices, not that it is already on the iPhone/);
+    expect(guide).toMatch(/When the result's\s+`syncMeasured` is false/);
     expect(guide).toMatch(/also\s+appears in the user's Recents/);
   });
 });

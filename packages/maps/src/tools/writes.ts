@@ -21,11 +21,12 @@ import { compact, confirmArg, fail, ok, placeRefArg, wrapResult } from "./util.j
  * than surprised. When the place is already known to the store, no seeding
  * happens and no Recents entry appears.
  *
- * **It reaches the user's other devices.** The store is mirrored by
- * `NSPersistentCloudKitContainer`, which reconciles on the app's next save
- * whether or not it was told anything. A favourite added here arrived on an
- * iPhone. That makes this the one write in the bundle whose blast radius is
- * larger than the machine it runs on, and the descriptions say so.
+ * **It stays on this Mac.** These rows are written without the persistent
+ * history Maps' iCloud exporter reads, and the 2026-11-11 watch found such
+ * favourites never mirrored; Maps itself later converts them into saved places.
+ * (This once said a favourite added here arrived on an iPhone; `docs/maps.md`
+ * carries the correction.) Hosted by Cupertino, the store lane writes instead,
+ * and its saves were measured to reach an iPhone.
  */
 export const registerWriteTools = (server: McpServer, client: AppleMapsClient): void => {
   server.registerTool(
@@ -36,8 +37,9 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
         "bare coordinate does not identify a place to Maps — and latitude/longitude when known, " +
         "which makes the match exact and skips the lookup. SIDE EFFECT: unless the place is " +
         "already in the store, Maps is asked to resolve it and the place also appears in the " +
-        "user's Recents; there is no way to add a favourite without that. The favourite syncs " +
-        "to the user's other Apple devices through iCloud. Idempotent: asking twice for the same " +
+        "user's Recents; there is no way to add a favourite without that. Written into the " +
+        "store directly, the favourite stays on this Mac: such inserts were watched never to " +
+        "reach iCloud. Idempotent: asking twice for the same " +
         "place returns the existing favourite rather than creating a second. Needs Full Disk " +
         "Access.",
       inputSchema: z.object({
@@ -71,8 +73,8 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
                 "Recents. That is how the place record is obtained and cannot be avoided."
               : undefined,
             syncNote:
-              "This favourite will reach the user's other Apple devices through iCloud once " +
-              "Maps next runs.",
+              "Written into the store directly, so this favourite stays on this Mac: such " +
+              "inserts were watched never to reach iCloud.",
           }),
         );
       }),
@@ -82,13 +84,13 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
     "apple_maps_remove_favorite",
     {
       description:
-        "Remove a place from Maps' favourites, by a ref from apple_maps_list_favorites. This " +
-        "deletes the favourite on the user's other Apple devices too, through iCloud. It does " +
-        "not affect Guides, Recents, or anything else that references the same place. Needs " +
-        "Full Disk Access, and an explicit confirm: the deletion is not undoable from here.",
+        "Remove a place from Maps' favourites, by a ref from apple_maps_list_favorites. The " +
+        "row is deleted from the store directly, with no history for iCloud to export, so " +
+        "whether the removal reaches the user's other devices is not measured. It does not " +
+        "affect Guides, Recents, or anything else that references the same place. Needs Full " +
+        "Disk Access, and an explicit confirm: the deletion is not undoable from here.",
       // `confirm`, like the destructive store writes on every other surface.
-      // This one had none — and its blast radius is every device on the
-      // account.
+      // This one had none, and the deletion is real on this Mac.
       inputSchema: z.object({ ref: placeRefArg, confirm: confirmArg }),
       annotations: { readOnlyHint: false, idempotentHint: true, destructiveHint: true },
     },
@@ -112,8 +114,8 @@ export const registerWriteTools = (server: McpServer, client: AppleMapsClient): 
         return ok({
           removed: true,
           syncNote:
-            "The removal will reach the user's other Apple devices through iCloud once Maps " +
-            "next runs.",
+            "Removed on this Mac. It was deleted from the store directly, with no history for " +
+            "iCloud to export, so whether the removal reaches other devices is not measured.",
         });
       }),
   );

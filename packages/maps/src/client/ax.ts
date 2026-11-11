@@ -28,12 +28,12 @@ import { MAPS_SURFACE } from "./errors.js";
  *
  * ## The safety argument, which is the real reason to prefer it here
  *
- * The store is mirrored by `NSPersistentCloudKitContainer` and mirroring does
- * not wait to be told, so a malformed row is not a local mistake — it reaches
- * every device on the account. `write.ts` carries the rule that keeps SQL safe:
- * never fabricate a place record, only copy one Maps wrote. **A write made
- * through the interface cannot be malformed at all**, because Maps performs it.
- * Where both lanes could do a job, this one has the smaller blast radius.
+ * The store is mirrored to iCloud by `NSPersistentCloudKitContainer`, and Maps'
+ * own saves go with it. `write.ts` carries the rule that keeps SQL safe: never
+ * fabricate a place record, only copy one Maps wrote. Its inserts were watched
+ * never to mirror (2026-11-11), and Maps later converts such favourites into
+ * saved places. **A write made through the interface cannot be malformed at
+ * all**, because Maps performs it and saves it as one made by hand.
  *
  * ## The cost, which is the same one the SQL lane pays
  *

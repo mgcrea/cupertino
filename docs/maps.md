@@ -753,10 +753,12 @@ identifier the lane fetches by. `apps/apple/Cupertino/StoreLane/MapsWriter.swift
 | `apple_maps_remove_saved_place` | `maps.removeSavedPlace` | the `CollectionPlaceItem` deleted, its `MixinMapItem` by cascade, and each Guide's `places` by nullify, as Maps' 867                                                                                                                                                                                                                                              |
 | `apple_maps_add_place_to_guide` | `maps.fileInGuide`      | the `Collection` added to the item's `collections`, and `modificationTime` set on both, as Maps' 866; `placesCount` is derived. Given a `query`, the saved place is made first, in the same save                                                                                                                                                                  |
 
-`maps.status` answers what a write would meet, for diagnostics. A new item's display columns
-(`mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`) are copied from the item whose record
-it copies, when that item has them, and left nil otherwise: Maps renders a missing one from the
-record. A recent carries only `muid`, so a place copied from a recent takes the caller's name as
+`maps.status` answers what a write would meet, for diagnostics. Every `MixinMapItem` the lane
+inserts holds the copied record's bytes and coordinate, and `createTime` and `modificationTime` at
+now, as each of Maps' own did (the live check below found them missing, since fixed). A new item's
+display columns (`mapItemName`, `mapItemAddress`, `mapItemCategory`, `muid`) are copied from the
+item whose record it copies, when that item has them, and left nil otherwise: Maps renders a
+missing one from the record. A recent carries only `muid`, so a place copied from a recent takes the caller's name as
 `mapItemName`. A label that differs from the name the item would show goes in `customName`.
 
 **Unpinning is not a delete.** As in Maps, `remove_favorite` keeps the place in the library as a
@@ -839,10 +841,43 @@ by `ref`, never seed.
 never taken from having asked. A place in an answer is the item as the store holds it, read back
 after the lane answers, never the caller's guess.
 
-**Sync is not yet measured.** `MapsWriter.measuredVersions` is empty, so every lane write answers
-`syncMeasured: false`, and its `sync` sentence says sync is not yet measured on this macOS and to
-check the place on another device. Whether a lane save reaches an iPhone, and whether `mapssyncd`
-exports one with Maps quit, are the live check still to run, on a Mac and an iPhone, tool by tool.
+**Sync.** `mapssyncd`, Maps' sync daemon, exports each lane save to iCloud, whether or not Maps
+is open; the lane launches nothing. Sync was measured on macOS 27.2, model checksum
+`CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk=` (`DataModel_0_0_1`), on a Mac and an iPhone, on
+2026-11-11 (below): `MapsWriter.measuredVersions` holds that checksum, so a lane write there
+answers `syncMeasured: true` and the `sync` sentence "Saved the way Maps saves it. It reaches your
+other devices through iCloud, even with Maps closed." On any other model the save still happens,
+`syncMeasured` is false, and the `sync` sentence says sync is not yet measured on this macOS and
+to check the place on another device.
+
+**Measured 2026-11-11**, on a Debug build of the worktree (Swift at `9477363`), driven through
+`dev-mcp.mjs` on throwaway public places. The store was read about 15 s after each call with
+[`scripts/history-columns.swift`](../scripts/history-columns.swift), and Olivier checked the Mac
+and an iPhone:
+
+| Step | Tool (input)                                     | Transaction | History (author `cupertino`)                                                                                                                    | Exported                                 | Mac and iPhone                            |
+| ---- | ------------------------------------------------ | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- | ----------------------------------------- |
+| 1    | `add_favorite` (query, seeded)                   | 869         | `FavoriteItem` and its own `MixinMapItem` (record copied, 4053 B); `shortcutIdentifier` `"48.85980,2.36260"`; `positionIndex` the maximum + 5e7 | 869                                      | pinned on both                            |
+| 2    | `save_place` (query, seeded)                     | 874         | `CollectionPlaceItem` in no Guide and its own `MixinMapItem`                                                                                    | 874                                      | in the library on both                    |
+| 3a   | `add_place_to_guide` (ref)                       | 875         | the place: `collections`, `modificationTime`; the Guide: `places`, `modificationTime` (as the app's 866)                                        | 875 (both)                               | in the Guide on both                      |
+| 3b   | `add_place_to_guide` (query)                     | 877         | a new `CollectionPlaceItem` and `MixinMapItem`, filed, and the Guide's `places` and `modificationTime`, in one save                             | 877                                      | in the Guide on both                      |
+| 4    | `remove_saved_place` (ref)                       | 878         | the `CollectionPlaceItem` deleted, its record by cascade, and the Guide's `places` (as the app's 867)                                           | 878; the deleted place's mirror row gone | gone on both                              |
+| 5    | `remove_favorite` (ref)                          | 879         | a new `CollectionPlaceItem` and `MixinMapItem`, then the `FavoriteItem` and its record deleted (as the app's 856–858)                           | 879                                      | unpinned, in the library, on both         |
+| 6    | `add_favorite` (query and coordinate), Maps quit | 884         | `FavoriteItem` and `MixinMapItem`, the record copied from the saved place (no seeding, Maps not launched)                                       | 884, by `mapssyncd` alone                | pinned on the iPhone before Maps reopened |
+
+"Exported" is `ANSCKRECORDMETADATA.ZLASTEXPORTEDTRANSACTIONNUMBER` reaching the transaction.
+
+**Two imports came back from iCloud.** At 870 and 880, `mapssyncd` imported (author
+`NSCloudKitMirroringDelegate.import`) `mapItemName`, `mapItemAddress` and `mapItemCategory` onto
+the lane's pin and saved place: another device filled in the display columns the lane had left
+empty, because the recent it copied from carried none.
+
+**One gap, fixed.** The `MixinMapItem` the lane inserted at 869 had `createTime` and
+`modificationTime` nil, where Maps sets both to now on every `MixinMapItem` it inserts (850, 851,
+857, 862 in the watch). It synced regardless. `MapsWriter` now sets both on each record it
+inserts, for a pin, a saved place and the place an unpin keeps, and `make store-lane-check` holds
+each inserted record to exactly `mapItemStorage`, `latitude`, `longitude`, `createTime` and
+`modificationTime`. The table above predates the fix.
 
 ## Still open
 

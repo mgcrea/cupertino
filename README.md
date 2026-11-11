@@ -280,8 +280,8 @@ no name is returned rather than a guess.
 
 **There is no delete tool.** Contacts' scripting dictionary has no delete command of any kind, and
 this surface's writes go through Apple Events because its store is read-only by policy. That was
-true of every surface until Maps, which has no scripting dictionary to go through and writes SQL
-instead. See [docs/contacts.md](docs/contacts.md).
+true of every surface until Maps, which has no scripting dictionary to go through and writes through
+Maps' own Core Data model instead. See [docs/contacts.md](docs/contacts.md).
 
 ### Messages
 
@@ -398,16 +398,20 @@ It reads **what is saved on this Mac**. It does not search Apple's map of the wo
 address, or give directions; the guide says so, because answering those from general knowledge is
 the most likely way for this surface to be wrong.
 
-**It writes, and it is the only surface here that does so without an Apple Event.** Maps ships no
-scripting dictionary and registers no App Intents on macOS, so `add_favorite` and `remove_favorite`
-go into the Core Data store directly — which means `usesAppleEvents` stays false even with the write
-gate open, and adding this surface still widens no Automation consent.
+**It writes without an Apple Event.** Maps ships no scripting dictionary and registers no App
+Intents on macOS, so `usesAppleEvents` stays false even with the write gate open, and adding this
+surface still widens no Automation consent. When Cupertino hosts the server, the five write-gated
+tools are saved by Cupertino.app through Core Data with Maps' own model, so iCloud uploads each like
+a change made in the app, even with Maps closed. Sync was measured on macOS 27.2 (Maps' model
+`DataModel_0_0_1`) on a Mac and an iPhone, every tool, one write with Maps quit; on another model
+version the result says sync is not yet measured. The node server never writes the store itself on
+that route. Run from npm, `add_favorite` and `remove_favorite` write SQL into the store instead, and
+those inserts were watched never to reach iCloud: they stay on this Mac.
 
 The part that cannot be faked is the GEO place record, so it never is: the place is opened through
-the `maps://` URL scheme, **Maps mints the record itself**, and it is copied. Two consequences the
-tools state rather than hide — saving a place the store does not already know leaves an entry in
-Recents, and because the store is mirrored by `NSPersistentCloudKitContainer` the write reaches every
-device on the account. There is no local-only insert here.
+the `maps://` URL scheme, **Maps mints the record itself**, and it is copied. The tools state the
+consequence rather than hide it: saving a place the store does not already know leaves an entry in
+Recents.
 
 It was also declared impossible three times before it was found: the store has no file extension,
 it sits in the one directory of Maps' container that Full Disk Access gates, and
@@ -677,7 +681,7 @@ pnpm probe:contacts  # the resolver Messages needs — its own TCC grant, not Fu
 pnpm probe:screen    # ScreenCaptureKit — Screen Recording, and it takes effect on relaunch
 ```
 
-Every probed surface has a package except `screen`, `sound` and `desktop`, which the app serves in-process because their grants live in the app rather than in a package. **Safari's write set is the widest here, and it splits across two lanes that share nothing but the flag**: `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, while `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari consents to one website at a time — so their real gate is a per-site grant you can see and revoke, and the write flag is the second lock rather than the only one. `find_codes` sits behind its own `APPLE_SAFARI_ALLOW_CODES` rather than the write gate, because reading a 2FA code is a read; the three `network_*` tools sit behind `APPLE_SAFARI_ALLOW_NETWORK` for the same reason, and their `reload` and `saveAs` additionally need the write flag; and there is deliberately no `do JavaScript` tool, because it needs a developer-menu toggle whose state cannot be read, so diagnostics could never say in advance whether it would work. See [docs/safari.md](docs/safari.md). **Maps writes to a store without an Apple Event at all**, which no other surface does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and then writes SQL into the Core Data store. That store is CloudKit-mirrored, so the write reaches every device on the account — the only write in the bundle whose blast radius exceeds the machine. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
+Every probed surface has a package except `screen`, `sound` and `desktop`, which the app serves in-process because their grants live in the app rather than in a package. **Safari's write set is the widest here, and it splits across two lanes that share nothing but the flag**: `open_url` and `add_reading_list_item` are Apple Events that move a real, visible browser, while `click`, `fill` and `scroll` act inside a page through the bundled Safari extension, which Safari consents to one website at a time — so their real gate is a per-site grant you can see and revoke, and the write flag is the second lock rather than the only one. `find_codes` sits behind its own `APPLE_SAFARI_ALLOW_CODES` rather than the write gate, because reading a 2FA code is a read; the three `network_*` tools sit behind `APPLE_SAFARI_ALLOW_NETWORK` for the same reason, and their `reload` and `saveAs` additionally need the write flag; and there is deliberately no `do JavaScript` tool, because it needs a developer-menu toggle whose state cannot be read, so diagnostics could never say in advance whether it would work. See [docs/safari.md](docs/safari.md). **Maps writes to a store without an Apple Event at all**, which no other surface does: it has no scripting dictionary, so `add_favorite` asks Maps to mint a place record through the `maps://` URL scheme and copies it into the Core Data store: hosted by Cupertino, the app saves it through Maps' own model and iCloud carries it to the account's other devices, measured on a Mac and an iPhone; run from npm it is SQL, which stays on this Mac. [docs/maps.md](docs/maps.md) carries the four lanes that were measured to get there. Messages registers exactly one write tool, `send_message`, which is the whole of what its scripting dictionary can do.
 Every probe degrades rather than exits — an app that is not running, or a permission that is not
 granted, is reported as a finding — and none of them launches an app unless you pass `--launch`.
 Their shared mechanism lives in [scripts/lib/probe-kit.mjs](scripts/lib/probe-kit.mjs).

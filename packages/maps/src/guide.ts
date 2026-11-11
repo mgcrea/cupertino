@@ -63,9 +63,11 @@ place is already in the store near the coordinate given, Maps resolves it by
 name, and it then also appears in the user's Recents. Give a coordinate when
 you have one. The answer says so in \`recentsNote\`; tell the user.
 
-**Do not say it reached their other devices** unless the answer says so. While
-\`syncMeasured\` is false, as it is on every macOS so far, sync is not yet
-measured: say the change is saved on this Mac and suggest checking another
+**A save reaches iCloud without the app:** Maps' background service uploads it even
+with Maps closed. Say the change is saved on this Mac and on its way to
+other devices, not that it is already on the iPhone. When the result's
+\`syncMeasured\` is false, the save still happened but sync is not yet measured on
+this macOS: pass on its \`sync\` sentence, which asks to check the place on another
 device.
 
 A refusal's reason is in \`details.reason\`. A place Maps resolved more than about

@@ -34,11 +34,12 @@ import type { EntityKey } from "./store.js";
  *
  *   * The insert needs THREE tables — the favourite, its map item, and the two
  *     `Z_PRIMARYKEY` counters. Not the eight the app touches.
- *   * No persistent history and no `NSCK*` metadata is written. Core Data
- *     reconciles unregistered objects on the app's next save and mirrors them to
- *     iCloud by itself; a favourite written this way reached another device.
- *   * It works with Maps RUNNING, and survives a subsequent save by the app.
- *     There is no need to quit anything.
+ *   * No persistent history and no `NSCK*` metadata is written, so nothing tells
+ *     the iCloud exporter: the 2026-11-11 watch found these favourites never
+ *     mirrored. (This once said one reached another device; docs/maps.md
+ *     carries the correction.)
+ *   * It works with Maps RUNNING. There is no need to quit anything. Maps
+ *     itself later converts such a favourite into a saved place (2026-11-11).
  *
  * ## The cost the caller must be told about
  *
@@ -48,11 +49,11 @@ import type { EntityKey } from "./store.js";
  *
  * ## Why writes are dangerous here in a way the other surfaces are not
  *
- * The store is mirrored by `NSPersistentCloudKitContainer`, and mirroring does
- * not wait to be told. A malformed row is not a local mistake: it reaches every
- * device on the account as soon as Maps next runs. There is no such thing as a
- * local-only insert here — that was believed for a while and measured false.
- * Hence: never fabricate a place record, only ever copy one Maps wrote.
+ * The store belongs to Maps and to `mapssyncd`, which mirrors it to iCloud with
+ * `NSPersistentCloudKitContainer`. These inserts stay on this Mac (above), but
+ * a malformed row is still one Maps reads, renders and converts, with no way
+ * to tell it apart from its own. Hence: never fabricate a place record, only
+ * ever copy one Maps wrote.
  */
 
 const STORAGE_POLL_MS = 250;
@@ -442,9 +443,8 @@ export class MapsWriter {
       }
       if (donor && hasCoords && !near(donor.lat, donor.lon, lat, lon)) {
         // Maps resolved SOMETHING, but not the place that was asked for. Copying
-        // its record would make a favourite for the wrong place — which then
-        // syncs to every device on the account — so this refuses rather than
-        // guesses.
+        // its record would pin a place the user never asked for, so this
+        // refuses rather than guesses.
         throw new MapsWriteError(
           `Maps resolved ${JSON.stringify(input.query)} to a place about ` +
             `${Math.round(haversineMetres(donor.lat, donor.lon, lat, lon))}m from the coordinate ` +
@@ -545,8 +545,7 @@ export class MapsWriter {
           // because a real ZMUID (-2679868148951248105, measured) is past
           // MAX_SAFE_INTEGER, and node:sqlite binds a JS number as a double —
           // so Number() here silently wrote -2679868148951247872 into an
-          // INTEGER column and iCloud carried the wrong Apple place id to
-          // every device.
+          // INTEGER column: the wrong Apple place id, for Maps to read.
           donor.muid === null ? null : BigInt(donor.muid),
           now,
           now,

@@ -26,14 +26,19 @@ export const STORE_WRITE_TOOLS: readonly string[] = [
  * What a write promises about iCloud, in one sentence, on Voice Memos' pattern
  * (`packages/voice-memos/src/tools/store-writes.ts`).
  *
- * Sync is promised only on a model version whose upload was measured. Elsewhere
- * the save still happened, but nobody has watched it reach another device, so
- * the result says so.
+ * Sync is promised only on a model version whose upload was measured: Maps'
+ * DataModel_0_0_1 on macOS 27.2, every write seen on a Mac and an iPhone on
+ * 2026-11-11, one with Maps quit and mapssyncd exporting alone (`docs/maps.md`,
+ * "Measured 2026-11-11"). Elsewhere the save still happened, but nobody has
+ * watched it reach another device, so the result says so.
  */
 export const syncSentence = (w: Pick<LaneWrite, "changed" | "syncMeasured" | "modelVersion">) => {
   if (w.changed.length === 0) return "Nothing to change.";
   if (w.syncMeasured) {
-    return "Saved the way Maps saves it. It reaches your other devices through iCloud.";
+    return (
+      "Saved the way Maps saves it. It reaches your other devices through iCloud, even with " +
+      "Maps closed."
+    );
   }
   return (
     `Saved, but sync is not yet measured on this macOS (model ${w.modelVersion ?? "unknown"}): ` +

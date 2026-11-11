@@ -36,8 +36,12 @@ summary.
   step, watched one step at a time on macOS 27.2. None of them brings Maps' window forward or
   presses anything any more, and `add_place_to_guide` answers `filed: true` only when reading the
   Guide back finds the place there. A place not yet in the store is still resolved by Maps from its
-  name, which leaves it in your Recents. Sync to your other devices is not yet measured, and each
-  result says so. Run from npm, the Maps server writes as before.
+  name, which leaves it in your Recents. A write reaches iCloud even with Maps closed, as its
+  background service uploads it. Every tool's sync was measured on macOS 27.2 on a Mac and an
+  iPhone; on another Maps model version the result says sync is not yet measured. Run from npm,
+  the Maps server writes as before, but `add_favorite` and `remove_favorite` no longer say their
+  change reaches your other devices: a favourite written that way was watched never to reach
+  iCloud.
 - **Unpinning a Maps favourite keeps the place, as Maps does.** In Maps, unpinning moves a place
   into your library as a saved place rather than deleting it. In Cupertino, `remove_favorite` now
   does the same and says so, and `remove_saved_place` is what removes the place entirely.

@@ -46,7 +46,7 @@ describe("maps tools", () => {
    * `docs/maps.md` measures the whole lane, and the rule that keeps it safe is
    * that a place record is NEVER fabricated, only copied from one Maps wrote
    * itself. The blast radius is the reason it took that much proving — this
-   * store is mirrored, so a bad row reaches every device on the account.
+   * store is Maps' own, mirrored to iCloud, and a bad row is one Maps acts on.
    *
    * The guard is not gone, only narrowed: the read tools must still be exactly
    * the same set with writes on, so a write flag can never disturb them.

@@ -9,7 +9,8 @@ import { defaultOpenUrl, MapsWriteError, type OpenUrl } from "./write.js";
  * The store lane saves through Maps' own Core Data model, and it can only COPY
  * a place record (`ZMIXINMAPITEM.ZMAPITEMSTORAGE`) that Maps minted — the same
  * rule `write.ts` explains at length: the record is a GEO protobuf nobody here
- * can generate, and a fabricated one would reach every device on the account.
+ * can generate, and the lane's saves reach the account's other devices, a
+ * fabricated record with them.
  * So before the lane is asked to write, this finds a record to copy and names
  * the item that OWNS it, by that item's `ZIDENTIFIER`, because the lane fetches
  * through the model by uuid, not by row id.
@@ -357,7 +358,8 @@ export class PlaceSourceFinder {
     }
     if (hasCoords && !near(Number(seeded.lat), Number(seeded.lon), lat, lon)) {
       // Maps resolved SOMETHING, but not the place asked for. Copying its record
-      // would save the wrong place to every device, so this refuses.
+      // would save the wrong place, and the lane's saves reach the account's
+      // other devices, so this refuses.
       throw new MapsWriteError(
         `Maps resolved ${JSON.stringify(q.query)} to a place about ` +
           `${Math.round(haversineMetres(Number(seeded.lat), Number(seeded.lon), lat, lon))}m from the coordinate ` +

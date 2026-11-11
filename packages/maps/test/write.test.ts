@@ -18,8 +18,8 @@ import { MapsWriteError, MapsWriter } from "../src/client/write.js";
  *
  * What they cannot cover: that Maps ACCEPTS what is written. That was measured by
  * hand — `docs/maps.md` — and no offline test can stand in for it. What they do
- * cover is every rule that keeps the row well-formed, and those are the rules
- * whose violation would reach the user's other devices through iCloud.
+ * cover is every rule that keeps the row well-formed, a row Maps reads, renders
+ * and later converts as if it were its own.
  */
 const FIXTURE = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), "fixtures", "maps-store.sql"),
@@ -365,7 +365,7 @@ describe("addFavorite", () => {
 /*
  * Seeding can resolve to the WRONG place — a name is ambiguous, and the record
  * copied from it would produce a favourite for somewhere the caller never asked
- * about, which then syncs to every device on the account.
+ * about.
  */
 describe("seed sanity", () => {
   it("refuses a place Maps resolved far from the coordinate given", async () => {

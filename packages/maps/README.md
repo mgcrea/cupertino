@@ -45,9 +45,11 @@ server.
 
 None of them brings Maps forward or presses anything. A place record can only be minted by Maps, so
 unless the place is already in the store near the coordinate given, Maps resolves it from its name:
-**it is left in your Recents**, and resolving it can take tens of seconds. Sync to your other
-devices is **not yet measured**: each answer's `sync` says so, and the place should be checked on
-another device.
+**it is left in your Recents**, and resolving it can take tens of seconds. A write reaches your
+other devices through iCloud **even with Maps closed**, as Maps' background service uploads it:
+every tool was measured on macOS 27.2 on a Mac and an iPhone on 2026-11-11, one write with Maps
+quit. On another Maps model version each answer's `sync` says sync is not yet measured, and the
+place should be checked on another device.
 
 **Run from npm**, only `apple_maps_add_favorite` and `apple_maps_remove_favorite` exist, and they
 write SQL straight into the store; there, `remove_favorite` deletes the pin outright. On

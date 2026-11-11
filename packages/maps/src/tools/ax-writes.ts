@@ -112,8 +112,10 @@ export const registerAxWriteTools = (server: McpServer, lane: MapsAxLane): void 
         "the user's other Apple devices. Needs Accessibility for Cupertino, and an explicit " +
         "confirm: the removal is not undoable from here.",
       // `confirm`, as `apple_maps_remove_favorite` has: the one other tool on
-      // this surface that deletes, and with the same reach — every device on
-      // the account. This one arrived after the audit that added it there.
+      // this surface that deletes. Maps itself saves this removal, as one made by
+      // hand, and Maps' own changes go to iCloud; no device but this Mac was
+      // watched on this route. This one arrived after the audit that added it
+      // there.
       inputSchema: z.object({ ...place, confirm: confirmArg }),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
     },

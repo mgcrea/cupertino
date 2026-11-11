@@ -15,8 +15,8 @@ export type ToolContext = {
    * Maps has no scripting dictionary and no App Intents to write through, and
    * the route depends on who runs this server. Hosted by Cupertino, the five
    * writes go through its store lane, which saves with Maps' own Core Data
-   * model; whether those saves reach the account's other devices is not yet
-   * measured. Run from npm, two tools write SQL straight into the store; the
+   * model; on 2026-11-11 every one was seen on a Mac and an iPhone, one with
+   * Maps quit. Run from npm, two tools write SQL straight into the store; the
    * 2026-11-11 watch found those inserts never mirrored to iCloud, and saw Maps
    * convert such favourites into saved places. `docs/maps.md` carries the
    * measurements. Both routes keep one rule: never fabricate a place record,

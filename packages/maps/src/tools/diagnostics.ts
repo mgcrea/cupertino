@@ -100,14 +100,18 @@ export const buildDiagnostics = async (
             "Recents whether or not the favourite is kept, and resolving it can take tens of " +
             "seconds.",
         blastRadius: hosted
-          ? "The store is mirrored by NSPersistentCloudKitContainer, so a write reaches every " +
-            "device on the account. Each one is saved by Cupertino through Maps' own model, " +
-            "never as SQL, and only ever copies a place record Maps minted; a model that does " +
-            "not match the store is refused as incompatible rather than opened."
-          : "The store is mirrored by NSPersistentCloudKitContainer, and mirroring does not " +
-            "wait to be told. A malformed row is not a local mistake: it reaches every device " +
-            "on the account as soon as Maps next runs. Hence the rule in client/write.ts — " +
-            "never fabricate a place record, only ever copy one Maps wrote.",
+          ? "The store is mirrored by NSPersistentCloudKitContainer, and a lane write goes " +
+            "with it: on the model whose syncMeasured is true, every one of the five was seen " +
+            "on a Mac and an iPhone on 2026-11-11, one with Maps quit. Each one is saved by " +
+            "Cupertino through Maps' own model, never as SQL, and only ever copies a place " +
+            "record Maps minted; a model that does not match the store is refused as " +
+            "incompatible rather than opened."
+          : "The store is mirrored by NSPersistentCloudKitContainer, but these writes are SQL " +
+            "with no persistent history, which is what its exporter reads: the 2026-11-11 " +
+            "watch found such inserts never mirrored, so they stay on this Mac, and Maps " +
+            "itself later converts such favourites into saved places. A malformed row is " +
+            "still Maps' to read. Hence the rule in client/write.ts — never fabricate a place " +
+            "record, only ever copy one Maps wrote.",
         tools,
       },
       writeLane,

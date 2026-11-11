@@ -265,7 +265,9 @@ const rawCall = async (c: Client, name: string, args: Record<string, unknown>) =
   }
 };
 
-const MEASURED = "Saved the way Maps saves it. It reaches your other devices through iCloud.";
+const MEASURED =
+  "Saved the way Maps saves it. It reaches your other devices through iCloud, even with Maps " +
+  "closed.";
 
 /** A stub that only proves the AX route was not taken: registration never calls it. */
 const axStub = {} as MapsAxLane;
@@ -1022,6 +1024,10 @@ describe("diagnostics", () => {
     expect(lanes.writeLane).toBeNull();
     expect(lanes.writes.route).toBe("sql");
     expect(lanes.writes.tools).toEqual(["apple_maps_add_favorite", "apple_maps_remove_favorite"]);
+    // The 2026-11-11 watch: the SQL route's inserts never mirrored.
+    const writes = lanes.writes as unknown as Record<string, string>;
+    expect(writes.blastRadius).toMatch(/never mirrored/);
+    expect(writes.blastRadius).not.toMatch(/every device/);
   });
 
   it("reports the lane's status and the store route when hosted", async () => {
@@ -1036,6 +1042,10 @@ describe("diagnostics", () => {
     expect(writes.seeding).not.toContain("&ll=");
     expect(writes.blastRadius).toMatch(/Maps' own model/);
     expect(writes.blastRadius).not.toMatch(/client\/write\.ts/);
+    // Measured 2026-11-11, and only for the model whose syncMeasured is true.
+    expect(writes.blastRadius).toMatch(/syncMeasured is true/);
+    expect(writes.blastRadius).toMatch(/a Mac and an iPhone on 2026-11-11, one with Maps quit/);
+    expect(writes.blastRadius).not.toMatch(/every device/);
   });
 
   it("reports a lane that cannot answer as an error, not a failure", async () => {

@@ -68,8 +68,10 @@ nonisolated struct MapsWriter: Sendable {
   /// Relative to the home folder. No file extension: that is the store's name.
   static let storePath = "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1"
 
-  /// The model checksums whose sync was measured on two devices. None yet.
-  static let measuredVersions: Set<String> = []
+  /// The model checksums whose sync was measured on two devices: `DataModel_0_0_1` on macOS 27.2,
+  /// every write seen on a Mac and an iPhone on 2026-11-11, one with Maps quit (`docs/maps.md`,
+  /// "Measured 2026-11-11").
+  static let measuredVersions: Set<String> = ["CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk="]
 
   /// The opener over the store at `storeURL`, with Maps' model. Maps needs no patch, and its
   /// `.momd` names no current version, so the version is the model's checksum.

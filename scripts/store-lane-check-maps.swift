@@ -1117,17 +1117,23 @@ extension StoreLaneCheck {
 
     check("versionKeyIsChecksum") {
       let (writer, _) = try mapsFixture("version")
-      try expect(MapsWriter.measuredVersions.isEmpty, "measuredVersions is not empty")
+      // Measured 2026-11-11 on macOS 27.2: the one checksum, and no other.
+      try expect(
+        MapsWriter.measuredVersions == ["CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk="],
+        "measuredVersions is \(MapsWriter.measuredVersions.sorted())")
       let status = writer.status()
       try expect(status.compatible, "the fixture is incompatible: \(status)")
       try expect(status.modelVersion != nil, "no model version")
       try expect(
         status.modelVersion == mapsChecksum(),
         "modelVersion \(status.modelVersion ?? "nil") is not the .momd's checksum")
-      try expect(!status.syncMeasured, "syncMeasured with no measured version")
+      let measured = MapsWriter.measuredVersions.contains(mapsChecksum() ?? "")
+      try expect(
+        status.syncMeasured == measured,
+        "syncMeasured is \(status.syncMeasured) for \(status.modelVersion ?? "nil")")
       let result = try writer.removeSavedPlace(id: MapsID.saved.uuidString)
       try expect(
-        result.modelVersion == status.modelVersion && !result.syncMeasured,
+        result.modelVersion == status.modelVersion && result.syncMeasured == measured,
         "a write reports \(result.modelVersion ?? "nil"), \(result.syncMeasured)")
       try expect(
         MapsWriter.storePath == "Library/Containers/com.apple.Maps/Data/Maps/MapsSync_0.0.1",
@@ -1183,7 +1189,9 @@ extension StoreLaneCheck {
       result["modelVersion"] as? String == mapsChecksum(),
       "\(label) modelVersion is \(result["modelVersion"] ?? "absent")")
     try expect(isJSONBool(result["syncMeasured"]), "\(label) syncMeasured is not a boolean")
-    try expect(result["syncMeasured"] as? Bool == false, "\(label) syncMeasured is not false")
+    let measured = MapsWriter.measuredVersions.contains(mapsChecksum() ?? "")
+    try expect(
+      result["syncMeasured"] as? Bool == measured, "\(label) syncMeasured is not \(measured)")
     return result
   }
 
@@ -1350,6 +1358,10 @@ extension StoreLaneCheck {
         "status keys are \(status.keys.sorted())")
       try expect(status["compatible"] as? Bool == true, "status is not compatible: \(status)")
       try expect(status["modelVersion"] as? String == mapsChecksum(), "status version differs")
+      try expect(
+        status["syncMeasured"] as? Bool
+          == MapsWriter.measuredVersions.contains(mapsChecksum() ?? ""),
+        "status syncMeasured is \(status["syncMeasured"] ?? "absent")")
       try expect(status["refusal"] is NSNull, "status refusal is \(status["refusal"] ?? "")")
     }
 
