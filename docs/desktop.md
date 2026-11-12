@@ -1509,10 +1509,34 @@ two defects, both fixed in swift-support-kit before this was written:
 `channel-check` is not a gate, because CI has no swift-support-kit checkout. Set `SUPPORT_KIT` to
 one (it defaults to `~/Projects/swift-support-kit`).
 
+**A sandboxed app's channel is in its container, which macOS guards.** The fleet's bootstrap
+template is sandboxed, and so are most App Store apps. Their `NSTemporaryDirectory()` is
+`~/Library/Containers/<bundle id>/Data/tmp/`. On 2026-11-11 a bootstrapped probe ran with its
+channel open, and the agent's shell, which has no Full Disk Access, was refused that directory
+("Operation not permitted"). So Cupertino needs Full Disk Access to drive one: without it,
+`AppChannel.find` reads nothing and the launch answers `channel: false`. A Cupertino _with_ the
+grant reading a container is not measured yet. An unsandboxed app (armada, bastion) uses the
+per-user temporary directory and needs no grant. Armada's Debug build was driven that way on
+2026-11-11, never frontmost.
+
 Not measured: hover (whether a `mouseMoved` delivered this way fires a tracking area or
-`onContinuousHover`), scroll, right-click menus (refused, above), a drag that needs real time
-between steps (the steps are queued all at once), and a sandboxed app's container from a
-Cupertino without Full Disk Access.
+`onContinuousHover`), scroll, right-click menus (refused, above), and a drag that needs real time
+between steps (the steps are queued all at once).
+
+Known gaps, found in review on 2026-11-11 and left for later:
+
+- `AppChannel.send` appends with seek-then-write, not `O_APPEND` under its lock. Two
+  connections driving one app can interleave a line, which shows up as a timeout.
+- The `seq` base is wall-clock milliseconds mod 10⁹. A Debug and an installed Cupertino can
+  collide, and a stale ack in `events.jsonl` could then answer a new command.
+- `send` re-reads the whole `events.jsonl` every 10 ms. The file grows for the life of the app.
+- A channel directory outlives a process that is killed rather than quit
+  (`willTerminateNotification` never fires). Pid and launch-date matching keep a stale one
+  from being believed, but the directories pile up.
+- Keys posted to a pid come from a `.hidSystemState` source with no explicit `flags = []`.
+  Whether a modifier the person is holding carries into a posted key is not measured.
+- Nothing fails a build if Cupertino's project ever links `SupportKitDriving`. Today only
+  `fleet-apple-conventions`' `survey.sh` and `fleet.sh` flag it.
 
 ## Still open
 
