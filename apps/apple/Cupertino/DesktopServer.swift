@@ -1354,7 +1354,8 @@ nonisolated enum DesktopServer {
         // land, and then the field was focused above.
         if let owner, let channel = channel(for: owner) {
           if landedLate() { return landedInBackground(false, late: true) }
-          let ack = try throughChannel(channel, owner: owner, ["verb": "type", "text": text], scope: scope)
+          let ack = try throughChannel(
+            channel, owner: owner, ["verb": "type", "text": text], scope: scope)
           var typed = channelFields(ack)
           typed["typed"] = text.count
           typed["target"] = owner
