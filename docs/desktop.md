@@ -910,6 +910,7 @@ back. A session now ends in any of these ways, and none of them can strand the c
 | -------------------------------------------------- | ---------------------------------------------- |
 | `apple_desktop_release`, `apple_simulator_release` | the agent says it is done                      |
 | `apple_desktop_run` with `releaseAfter`            | every step of the run completed                |
+| `apple_desktop_mail_release` (Mail scope only)     | the Mail server saved a draft; see below       |
 | Stop: the card's cross, or the menu bar            | the person says stop; 30 s cooldown follows    |
 | idle                                               | no call of any kind for 45 s (15 to 300)       |
 | disconnected                                       | 4 s after the last connection that drove in it |
@@ -993,6 +994,14 @@ leave the button held, and it is over in well under a second.
 When the session opens, the application in front is recorded. When it ends, that application is
 brought back **only if a driven application is still in front**. If the person has switched to
 something themselves, pulling their previous app forward would undo a choice they just made.
+
+Every exit in the table hands back, the idle one included, 45 s after the last verb, whatever the
+person is doing in the driven application by then. That is why a Mail draft used to vanish mid-read.
+The Mail server now ends its own session as soon as a draft is saved, with
+`apple_desktop_mail_release`. The verb hands back only under Mail's "Return to the previous app after
+a draft" gate (`handBack`), and does nothing when the session also drove another application
+(`DrivingSession.release(drivenOnly:)`). The reasons are in
+[mail-compose.md](mail-compose.md), "A draft stays in front".
 
 `AccessibilityDriver.handBack(to:)` takes the same two routes `activate` does, with no admission,
 no notice, and **no scope check**. Scope bounds what an agent may reach, and no agent chose this
