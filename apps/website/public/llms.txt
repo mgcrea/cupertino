@@ -62,12 +62,14 @@ screen, sound, desktop and shell, and the iOS Simulator.
   needs a developer-menu toggle that is not a TCC grant and whose state cannot be read. Live tabs
   and page contents are the only things in the whole bundle that work with no Full Disk Access at
   all — tabs need an Automation grant, and page contents need the extension.
-- Voice Memos — 6 tools (5 always registered, 1 write-gated). `@mgcrea/mcp-apple-voice-memos`.
+- Voice Memos — 11 tools (5 always registered, 6 write-gated). `@mgcrea/mcp-apple-voice-memos`.
   Recordings with their folders, favourites and Recently Deleted, read from Voice Memos' own store,
   and the transcript Apple made of each recording, read out of the audio file with every segment's
   start and end. Recordings from before 2025 have no transcript, because Apple did not backfill.
-  The write tool copies a recording's audio to `~/Downloads`; nothing writes to Voice Memos itself,
-  which has no scripting dictionary. Full Disk Access is mandatory.
+  One write tool copies a recording's audio to `~/Downloads`. Five more rename, move, favourite,
+  delete (to Recently Deleted) and restore a recording, saved through Voice Memos' own data model
+  inside Cupertino; they exist only when Cupertino hosts the server, and run from npm the package
+  only reads. Full Disk Access is mandatory.
 
 The app itself hosts five more surfaces, none of them a separate npm install:
 

@@ -82,6 +82,22 @@ const surfaceList = cardApps
   .replace(/, ([^,]+)$/, " and $1");
 
 /**
+ * The same list on two lines, broken after the comma nearest the middle, so the
+ * lines come out about as long as each other however many apps there are.
+ * `composeCard` does not wrap, and one line ran out at ten names.
+ */
+const surfaceLines = ((): [string, string] => {
+  const middle = surfaceList.length / 2;
+  let cut = -1;
+  for (let i = surfaceList.indexOf(","); i !== -1; i = surfaceList.indexOf(",", i + 1)) {
+    if (cut === -1 || Math.abs(i + 1 - middle) < Math.abs(cut + 1 - middle)) cut = i;
+  }
+  return cut === -1
+    ? [surfaceList, ""]
+    : [surfaceList.slice(0, cut + 1), surfaceList.slice(cut + 2)];
+})();
+
+/**
  * The og:image card. `pnpm icons` bakes these two lines into `og-image.png`, so
  * editing them here is only half the change — re-run it, or the picture and the
  * page disagree.
@@ -140,7 +156,7 @@ const spelledSurfaces = SPELLED[cardApps.length] ?? String(cardApps.length);
  */
 export const SOCIAL_CARD = {
   headline: `${spelledSurfaces[0]?.toUpperCase()}${spelledSurfaces.slice(1)} Apple apps, one Full Disk Access grant`,
-  subhead: surfaceList,
+  subhead: surfaceLines,
   alt: `The Cupertino icon — a low sun over two hills — beside the word Cupertino, above the line “${spelledSurfaces} Apple apps, one Full Disk Access grant”, and the list ${surfaceList}.`,
   width: 1200,
   height: 630,

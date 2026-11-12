@@ -108,6 +108,16 @@ const { id, size = 18, class: className } = Astro.props;
     )
   }
   {
+    id === "voice-memos" && (
+      <>
+        {/* A waveform: seven vertical strokes of uneven height around the
+            midline, the generic picture of recorded sound. Not Apple's icon,
+            whose bars sit on a coloured plate. */}
+        <path d="M3 8.5v3M5.5 6v8M8 3.5v13M10.5 7v6M13 4.75v10.5M15.5 7.75v4.5M18 9v2" />
+      </>
+    )
+  }
+  {
     id === "safari" && (
       <>
         {/* A compass rose in a ring — the idea Safari's icon is built on, drawn

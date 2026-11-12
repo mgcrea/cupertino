@@ -362,6 +362,37 @@ export const SURFACES: readonly Surface[] = [
     withoutGrant: "Nothing at all — Maps is not scriptable, so the grant is the only way in.",
   },
   {
+    id: "voice-memos",
+    name: "Voice Memos",
+    pkg: "@mgcrea/mcp-apple-voice-memos",
+    read: [
+      "apple_voice_memos_list_folders",
+      "apple_voice_memos_list_recordings",
+      "apple_voice_memos_get_recording",
+      "apple_voice_memos_search_recordings",
+      "apple_voice_memos_diagnostics",
+    ],
+    // Voice Memos ships no scripting dictionary, and its App Intents can only be
+    // run from Shortcuts. save_recording copies a recording's audio OUT, into an
+    // export folder. The other five go through Cupertino's store lane: the app
+    // saves each into the CloudKit-mirrored Core Data store with Voice Memos' own
+    // model, so iCloud uploads it. They are registered only when Cupertino hosts
+    // the server; run from npm the package never changes a recording. See
+    // docs/voice-memos.md.
+    write: [
+      "apple_voice_memos_save_recording",
+      "apple_voice_memos_rename_recording",
+      "apple_voice_memos_move_recording",
+      "apple_voice_memos_set_favorite",
+      "apple_voice_memos_delete_recording",
+      "apple_voice_memos_restore_recording",
+    ],
+    pitch:
+      "Your recordings with their folders, favourites and Recently Deleted, and the transcript Apple made of each one, read straight out of the audio file with every segment's start and end, so a quote can be found again by listening. Search ignores case and accents. Recordings from before 2025 have none: Apple did not backfill. Behind the write gate, copies a recording's audio out for transcribing elsewhere, and in Cupertino renames, moves, favourites, deletes and restores recordings through Voice Memos' own data model, so the change reaches iCloud.",
+    withoutGrant:
+      "Nothing at all — the recordings sit in a protected container and Voice Memos is not scriptable, so the grant is the only way in.",
+  },
+  {
     id: "screen",
     name: "Screen",
     // No npm package, and not an oversight: this surface is served by the app
