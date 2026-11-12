@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { AppleSafariClient } from "../client/safari.js";
 import { describeReach, urlArg } from "./actions.js";
-import { compact, ok, wrapResult } from "./util.js";
+import { compact, fail, ok, wrapResult } from "./util.js";
 
 /**
  * The cookies tool, registered only when `allowCookies` is on.
@@ -47,6 +47,9 @@ export const registerCookieTools = (
           "its name, domain, path, secure, httpOnly, sameSite and expiry (`expires`, null for a " +
           "session cookie). It NEVER returns a cookie's value inline, whatever you ask: a login " +
           "cookie is the login itself, and this conversation is the wrong place for it.\n\n" +
+          "Safari keeps separate cookies per profile. They come from the profile of the tab " +
+          "that answered, named in `store`; with the same URL open in two profiles, whichever " +
+          "polls first answers, so keep the page open in the one profile you mean.\n\n" +
           "To hand a session to a local tool, pass `names` and `saveAs`. The named cookies are " +
           'written to that file as one Cookie header value ("A3=…; T=…; Y=…", no "Cookie:" ' +
           "prefix and no trailing newline), mode 0600, into APPLE_SAFARI_DOWNLOAD_DIR (default " +
@@ -81,15 +84,45 @@ export const registerCookieTools = (
           .boolean()
           .optional()
           .describe("Replace an existing file of that name. Defaults to false."),
+        probe: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Diagnose instead of reading: one cookie name, whose every copy in every cookie store " +
+              "the extension can see is described (domain, path, expiry, store, and the first " +
+              "8 hex of its value's SHA-256, never the value), with which store holds the tab. " +
+              "Use it when a saved session is rejected. Not with names or saveAs.",
+          ),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
     },
-    async (args) =>
+    async ({ probe, ...args }) =>
       wrapResult(async () => {
+        if (probe !== undefined) {
+          if (args.names !== undefined || args.saveAs !== undefined) {
+            return fail("probe is a diagnostic on its own: pass it without names or saveAs.");
+          }
+          return ok(
+            compact({
+              ...(await client.probeCookies({ url: args.url, name: probe })),
+              probeNote:
+                "No values: each copy is named by its value's SHA-256 prefix. The same prefix " +
+                "in two stores is the same session; a prefix that does not change across a " +
+                "sign-in is a copy the sign-in did not touch.",
+            }),
+          );
+        }
         const result = await client.cookies(args);
         return ok(
           compact({
             ...result,
+            storeNote:
+              result.store === null
+                ? "The extension that answered predates the profile fix: it read Safari's " +
+                  "default cookie store, which can be another profile's session. Update " +
+                  "Cupertino and reload the tab before relying on these cookies."
+                : undefined,
             valuesNote: result.saved
               ? "The values are in the file and nowhere else. Treat it as the login itself: " +
                 "hand its path to the tool that needs it, and delete it when done."

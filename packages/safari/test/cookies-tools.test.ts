@@ -332,6 +332,26 @@ describe("cookies inline", () => {
     expectNoValue(r.text);
   });
 
+  it("names the cookie store (Safari profile) it read, for the listing and the save", async () => {
+    const dirs = await connectOn({ APPLE_SAFARI_ALLOW_WRITES: "1" });
+    fakeExtension(dirs, (command) => ({
+      ok: true,
+      data: {
+        store: "persistent-3",
+        cookies: COOKIES.map(({ value, ...rest }) =>
+          (command.valuesFor as string[] | undefined)?.includes(rest.name)
+            ? { ...rest, value }
+            : rest,
+        ),
+      },
+    }));
+    const listed = (await cookies(dirs.client)).json() as { store: string };
+    expect(listed.store).toBe("persistent-3");
+    const saved = await cookies(dirs.client, { names: ["A3"], saveAs: "s.cookie" });
+    expect((saved.json() as { store: string }).store).toBe("persistent-3");
+    expectNoValue(saved.text);
+  });
+
   it("narrows the listing to `names`", async () => {
     const dirs = await connectOn();
     fakeExtension(dirs);
@@ -456,6 +476,79 @@ describe("cookies saveAs", () => {
     expect(r.isError).toBe(false);
     expect(existsSync(join(dirs.downloads, "escape.cookie"))).toBe(true);
     expect(existsSync(join(root, "escape.cookie"))).toBe(false);
+  });
+});
+
+/**
+ * `probe`: which cookie store answers, for one name, with no value. The
+ * worker's half is in extension-background.test.ts; this pins what the server
+ * sends, what it refuses, and that a value the worker sent anyway never
+ * reaches the result.
+ */
+describe("cookies probe", () => {
+  const PROBED = {
+    tab: { id: 9, incognito: false },
+    stores: [
+      { id: "0", tabCount: 1, holdsThisTab: false },
+      { id: "1", tabCount: 2, holdsThisTab: true },
+    ],
+    reads: [
+      {
+        storeId: null,
+        matches: [{ storeId: "0", domain: ".example.test", path: "/", valueSha8: "0a1b2c3d" }],
+      },
+      {
+        storeId: "1",
+        matches: [
+          {
+            storeId: "1",
+            domain: ".example.test",
+            path: "/",
+            valueSha8: "9f8e7d6c",
+            value: FAKE.T,
+          },
+        ],
+      },
+    ],
+  };
+
+  it("sends a cookieProbe for one name and returns the stores and prefixes", async () => {
+    const dirs = await connectOn();
+    const ext = fakeExtension(dirs, () => ({ ok: true, data: PROBED }));
+    const r = await cookies(dirs.client, { probe: "T" });
+    expect(r.isError).toBe(false);
+    expect(ext.seen[0]).toMatchObject({ action: "cookieProbe", url: PAGE_URL, name: "T" });
+    expect(ext.seen[0]).not.toHaveProperty("valuesFor");
+    const json = r.json() as typeof PROBED & { name: string };
+    expect(json.name).toBe("T");
+    expect(json.stores).toEqual(PROBED.stores);
+    expect(json.reads[1]!.matches[0]).toMatchObject({ storeId: "1", valueSha8: "9f8e7d6c" });
+  });
+
+  it("drops a value the worker sent anyway", async () => {
+    const dirs = await connectOn();
+    fakeExtension(dirs, () => ({ ok: true, data: PROBED }));
+    const r = await cookies(dirs.client, { probe: "T" });
+    expectNoValue(r.text);
+    expect(r.text).not.toContain('"value"');
+  });
+
+  it("keeps the host allowlist", async () => {
+    const dirs = await connect({ APPLE_SAFARI_ALLOW_COOKIES: "1" });
+    const ext = fakeExtension(dirs);
+    const r = await cookies(dirs.client, { probe: "T" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("APPLE_SAFARI_COOKIE_HOSTS");
+    expect(ext.seen).toEqual([]);
+  });
+
+  it("refuses probe together with names or saveAs", async () => {
+    const dirs = await connectOn({ APPLE_SAFARI_ALLOW_WRITES: "1" });
+    const ext = fakeExtension(dirs);
+    const r = await cookies(dirs.client, { probe: "T", names: ["T"], saveAs: "x.cookie" });
+    expect(r.isError).toBe(true);
+    expect(r.text).toContain("probe");
+    expect(ext.seen).toEqual([]);
   });
 });
 

@@ -64,7 +64,8 @@ export type Command = {
     | "netList"
     | "netGet"
     // Answered by the background worker, never by the page; see `cookies.ts`.
-    | "cookies";
+    | "cookies"
+    | "cookieProbe";
   /**
    * The page this is for. A command with no URL is answered by whichever
    * allowed page polls first, which is only ever right for a question about
@@ -134,6 +135,8 @@ export type Command = {
    * `names` only for `saveAs`.
    */
   valuesFor?: string[] | undefined;
+  /** `cookieProbe`: the one cookie name whose copies, in every store, are described. */
+  name?: string | undefined;
   /** Unix seconds. The handler drops an expired command rather than running it. */
   expiresAt: number;
 };

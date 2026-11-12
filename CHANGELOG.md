@@ -45,6 +45,17 @@ summary.
   was measured on macOS 27.2 on a Mac and an iPhone; on another Voice Memos model version the result says sync is
   not yet measured.
 
+### Fixed
+
+- **Safari's cookies come from the profile of the tab that asked.** `apple_safari_cookies` read
+  Safari's default cookie store, which belongs to one profile, so a tab in any other profile got
+  that profile's session, and signing in again there changed nothing the tool saved. It now reads
+  only the store holding the tab that answered, names it as `store`, and refuses, naming the
+  profile as the cause, when no single store holds the tab. A `probe` option lists every store's
+  copy of one cookie, each value shown only as a short hash, to tell which profile a session lives
+  in. The Safari extension needs this update for the fix; from an older one, `store` is `null` and
+  the tool says the cookies may be another profile's.
+
 ## [1.38.0] - 2026-11-10
 
 **Voice Memos, with Apple's own transcripts.** Agents can list, read and search your recordings

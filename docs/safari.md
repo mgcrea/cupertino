@@ -1387,7 +1387,9 @@ Safari does disable the extension, the worker has no `browser.cookies` and the t
 
 2026-10-30, Safari 26 on macOS 26, a notarized build of this branch installed over 1.34.0, the server
 started from a terminal with Full Disk Access with `APPLE_SAFARI_COOKIE_HOSTS=yahoo.com` (the app
-cannot yet pass a host list; see below), on a signed-in `https://finance.yahoo.com/` tab in front.
+could not pass a host list then; see "In the app"), on a signed-in `https://finance.yahoo.com/` tab
+in front. That build read Safari's default cookie store, which was right here only because the tab
+was in the profile the default belongs to; see "The default store is one profile's, not the tab's".
 
 | Check                                  | Result                                                                    |
 | -------------------------------------- | ------------------------------------------------------------------------- |
@@ -1407,10 +1409,44 @@ with a leading dot for a domain cookie (`.yahoo.com`) and without one for a host
 site the user allowed for the content scripts as granted for this API too, which is what lets the
 manifest add no host permission at all.
 
-**Still unmeasured:** which cookie store answers when a Safari profile other than the default holds
-the tab (the extension is active in three profiles here, and the call passes no `storeId`), a
-session cookie's `expires: null` against a real one (all 17 here had an expiry), and a Private
-Browsing tab.
+**Still unmeasured:** a session cookie's `expires: null` against a real one (all 17 here had an
+expiry), and a Private Browsing tab.
+
+### The default store is one profile's, not the tab's
+
+**Shipped wrong in 1.35.0 and fixed after it.** The read passed no `storeId`, on the assumption
+measured above that the default store was the page's. It was, for a tab in the profile the default
+belongs to. Reported 2026-10-30: a Yahoo session saved from a signed-in tab was refused by Yahoo
+(403, "Unable to authenticate user against member profile"), every login cookie carried an expiry
+from a sign-in two weeks old, and after signing out and in again the saved file was byte-identical.
+
+Measured the same day with a diagnostic that ships with the fix: `probe: "<name>"` on
+`apple_safari_cookies` lists every copy of one cookie in every store the API names, which store
+holds the tab that answered, and each value as the first 8 hex of its SHA-256, hashed in the worker.
+Two tabs on `finance.yahoo.com/portfolios/`, one in the Personal profile and one in Maker:
+
+| Read                          | Personal tab                                   | Maker tab                                      |
+| ----------------------------- | ---------------------------------------------- | ---------------------------------------------- |
+| `getAllCookieStores()`        | `persistent-2` (holds the tab), `persistent-1` | `persistent-3` (holds the tab), `persistent-1` |
+| `getAll` with no `storeId`    | `persistent-1`: `T` `8be5fd0a`                 | `persistent-1`: **the same `T` `8be5fd0a`**    |
+| `getAll` with the tab's store | `T` `8be5fd0a`                                 | **no `T`**, and an anonymous `A3` of its own   |
+
+So `storeId` is honoured, each profile is its own store, and a read with no `storeId` answers from
+`persistent-1` whichever profile asked (here it tracks Personal). A tab in any other profile got
+Personal's session, and a sign-in there changed nothing the tool read. In the Personal tab itself
+the view followed a sign-out and sign-in live: `T` went `b77826bb` → `8be5fd0a` and `A3`/`A1`
+`aef0d73d` → `e2079e60`, each re-stamped with the sign-in second, while `Y`, Yahoo's long-lived
+browser id, kept its value. Two other things the probe showed: `getAllCookieStores()` lists only the
+asking tab's store and `persistent-1`, never every profile's, and there was one copy of each name,
+on `.yahoo.com/`, with no partition key.
+
+**The fix reads only from the store whose `tabIds` holds the tab that polled**, and refuses, naming
+the profile as the cause, when no single store does or the browser cannot list them. It never falls
+back to the default, which is another profile's session for every tab outside it. The result names
+the store as `store`; one from an extension older than this is `null`, and the tool says those
+cookies may be another profile's. Two tabs on one URL in two profiles are still answered by whichever
+polls first, and `store` says which; the tool description tells the caller to keep the page open in
+one profile.
 
 ### In the app
 

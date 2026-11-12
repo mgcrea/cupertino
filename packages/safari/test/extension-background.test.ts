@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
@@ -31,14 +32,17 @@ function load(
   native: (...args: unknown[]) => Promise<unknown> = async () => "native-reply",
   // `null` is a browser with no `cookies` namespace at all, which is what an
   // extension without the permission sees.
-  cookies: { getAll: (...args: unknown[]) => Promise<unknown> } | null = {
+  cookies: {
+    getAll: (...args: unknown[]) => Promise<unknown>;
+    getAllCookieStores?: () => Promise<unknown>;
+  } | null = {
     getAll: async () => [],
   },
 ) {
   const sendNativeMessage = vi.fn(native);
   const registerContentScripts = vi.fn(async () => {});
   const lifecycle: string[] = [];
-  const messageListeners: ((message: unknown) => Promise<unknown>)[] = [];
+  const messageListeners: ((message: unknown, sender?: unknown) => Promise<unknown>)[] = [];
   const errors: unknown[][] = [];
   const hook = (name: string) => ({ addListener: () => void lifecycle.push(name) });
   // Timers the test fires by hand, so a wait that never ends can be run out.
@@ -60,7 +64,7 @@ function load(
     browser: {
       runtime: {
         onMessage: {
-          addListener: (fn: (message: unknown) => Promise<unknown>) =>
+          addListener: (fn: (message: unknown, sender?: unknown) => Promise<unknown>) =>
             void messageListeners.push(fn),
         },
         onInstalled: hook("installed"),
@@ -72,9 +76,12 @@ function load(
       ...(cookies ? { cookies } : {}),
     },
     console: { error: (...args: unknown[]) => errors.push(args) },
+    // A service worker has Web Crypto and TextEncoder; the probe hashes with them.
+    crypto: globalThis.crypto,
+    TextEncoder,
   });
   runInContext(SOURCE, context);
-  const send = (message: unknown) => messageListeners[0]!(message);
+  const send = (message: unknown, sender?: unknown) => messageListeners[0]!(message, sender);
   return {
     sendNativeMessage,
     registerContentScripts,
@@ -200,11 +207,17 @@ describe("cookies command", () => {
     ...extra,
   });
 
-  /** Native answers the poll with `commands`, and records every result filed. */
+  /**
+   * Native answers the poll with `commands`, and records every result filed.
+   *
+   * The polling tab is id 7, and by default the browser has one store holding
+   * it — the shape every read needs now that it reads the TAB's store.
+   */
   const withPoll = (
     commands: unknown[],
     getAll: (...args: unknown[]) => Promise<unknown>,
     cookies: boolean = true,
+    getAllCookieStores: (() => Promise<unknown>) | null = async () => [{ id: "0", tabIds: [7] }],
   ) => {
     const results: Record<string, unknown>[] = [];
     const loaded = load(
@@ -214,9 +227,11 @@ describe("cookies command", () => {
         if (m.kind === "result") results.push(m);
         return { stored: true };
       },
-      cookies ? { getAll } : null,
+      cookies ? { getAll, ...(getAllCookieStores ? { getAllCookieStores } : {}) } : null,
     );
-    return { ...loaded, results };
+    const send = (message: unknown, sender: unknown = { tab: { id: 7 } }) =>
+      loaded.send(message, sender);
+    return { ...loaded, send, results };
   };
 
   it("reads the page's cookies by URL, files metadata only, and hides the command from the page", async () => {
@@ -224,13 +239,14 @@ describe("cookies command", () => {
     const { send, results } = withPoll([command()], getAll);
     const reply = (await send({ kind: "poll", url: PAGE })) as { commands: unknown[] };
     expect(reply.commands).toEqual([]);
-    expect(getAll).toHaveBeenCalledWith({ url: PAGE });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, storeId: "0" });
     expect(results).toHaveLength(1);
     expect(results[0]).toMatchObject({
       kind: "result",
       id: command().id,
       ok: true,
       extensionVersion: "9.9.9",
+      data: { store: "0" },
     });
     const filed = results[0]!.data as { cookies: Record<string, unknown>[] };
     expect(filed.cookies).toEqual([
@@ -301,5 +317,204 @@ describe("cookies command", () => {
     expect(reply.commands).toEqual([click]);
     expect(getAll).not.toHaveBeenCalled();
     expect(results).toEqual([]);
+  });
+
+  /**
+   * The bug this pins: Safari keeps a cookie store per profile, and a read with
+   * no `storeId` answers from one fixed store whatever profile the tab is in.
+   * Measured 2026-10-30: a Maker-profile tab got the Personal profile's
+   * session, so a sign-in in Maker left the saved file byte-identical. The
+   * read must come from the store holding the tab that polled.
+   */
+  it("reads from the store holding the polling tab, never the default", async () => {
+    const getAll = vi.fn(async (...args: unknown[]) =>
+      (args[0] as { storeId?: string }).storeId === "persistent-3" ? STORE.slice(0, 1) : STORE,
+    );
+    const { send, results } = withPoll([command()], getAll, true, async () => [
+      { id: "persistent-1", tabIds: [] },
+      { id: "persistent-3", tabIds: [7] },
+    ]);
+    await send({ kind: "poll", url: PAGE });
+    expect(getAll).toHaveBeenCalledTimes(1);
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, storeId: "persistent-3" });
+    const filed = results[0]!.data as { store: string; cookies: { name: string }[] };
+    expect(filed.store).toBe("persistent-3");
+    expect(filed.cookies.map((c) => c.name)).toEqual(["A3"]);
+  });
+
+  it("refuses rather than guess when no store holds the tab", async () => {
+    const getAll = vi.fn(async () => STORE);
+    const { send, results } = withPoll([command()], getAll, true, async () => [
+      { id: "persistent-1", tabIds: [3] },
+    ]);
+    await send({ kind: "poll", url: PAGE });
+    expect(getAll).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ ok: false });
+    expect(String(results[0]!.error)).toMatch(/profile/);
+  });
+
+  it("refuses rather than guess when the browser cannot list its stores", async () => {
+    const getAll = vi.fn(async () => STORE);
+    const { send, results } = withPoll([command()], getAll, true, null);
+    await send({ kind: "poll", url: PAGE });
+    expect(getAll).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ ok: false });
+  });
+
+  it("refuses rather than guess when the poll names no tab", async () => {
+    const getAll = vi.fn(async () => STORE);
+    const { send, results } = withPoll([command()], getAll);
+    await send({ kind: "poll", url: PAGE }, {});
+    expect(getAll).not.toHaveBeenCalled();
+    expect(results[0]).toMatchObject({ ok: false });
+  });
+});
+
+/**
+ * `cookieProbe`: which cookie store answers, measured without a value.
+ *
+ * Safari keeps one cookie store per profile, and `getAll({url})` with no
+ * `storeId` reads whichever the API defaults to — not necessarily the one the
+ * polling tab's profile uses. The probe reads one cookie name from EVERY store
+ * the API knows, says which store holds the polling tab, and identifies each
+ * value only by the first 8 hex of its SHA-256, computed in the worker. Values
+ * are obvious fakes, and every assertion searches the whole filed result.
+ */
+const sha8 = (v: string) => createHash("sha256").update(v).digest("hex").slice(0, 8);
+const probeCookie = (value: string, storeId: string, extra: Record<string, unknown> = {}) => ({
+  name: "T",
+  value,
+  domain: ".example.test",
+  path: "/",
+  secure: true,
+  httpOnly: true,
+  sameSite: "lax",
+  hostOnly: false,
+  session: false,
+  expirationDate: 1_798_761_600,
+  storeId,
+  ...extra,
+});
+
+describe("cookieProbe command", () => {
+  const PAGE = "https://finance.example.test/portfolios/";
+  const OLD = "fake-t-old-value-0000";
+  const NEW = "fake-t-new-value-1111";
+  const cookie = probeCookie;
+  const probe = {
+    id: "c0ffee00-0000-4000-8000-000000000002",
+    action: "cookieProbe",
+    url: PAGE,
+    name: "T",
+    expiresAt: 9_999_999_999,
+  };
+
+  /** Two profiles: store "0" (the API's default) holds an old session, "1" the tab's. */
+  const twoStores = () => {
+    const getAll = vi.fn(async (...args: unknown[]) =>
+      (args[0] as { storeId?: string }).storeId === "1" ? [cookie(NEW, "1")] : [cookie(OLD, "0")],
+    );
+    const getAllCookieStores = vi.fn(async () => [
+      { id: "0", tabIds: [3] },
+      { id: "1", tabIds: [7, 9] },
+    ]);
+    const results: Record<string, unknown>[] = [];
+    const loaded = load(
+      async (_app, message) => {
+        const m = message as Record<string, unknown>;
+        if (m.kind === "poll") return { commands: [probe] };
+        if (m.kind === "result") results.push(m);
+        return { stored: true };
+      },
+      { getAll, getAllCookieStores },
+    );
+    return { ...loaded, results, getAll, getAllCookieStores };
+  };
+
+  it("reads the name from every store and says which one holds the polling tab", async () => {
+    const { send, results, getAll } = twoStores();
+    await send({ kind: "poll", url: PAGE }, { tab: { id: 9, incognito: false } });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, name: "T" });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, name: "T", storeId: "0" });
+    expect(getAll).toHaveBeenCalledWith({ url: PAGE, name: "T", storeId: "1" });
+
+    expect(results[0]).toMatchObject({ kind: "result", id: probe.id, ok: true });
+    const data = results[0]!.data as {
+      tab: Record<string, unknown>;
+      stores: { id: string; tabCount: number; holdsThisTab: boolean }[];
+      reads: { storeId: string | null; matches: Record<string, unknown>[] }[];
+    };
+    expect(data.tab).toMatchObject({ id: 9, incognito: false });
+    expect(data.stores).toEqual([
+      { id: "0", tabCount: 1, holdsThisTab: false },
+      { id: "1", tabCount: 2, holdsThisTab: true },
+    ]);
+    // The default read (what the tool did) and one per store.
+    expect(data.reads.map((r) => r.storeId)).toEqual([null, "0", "1"]);
+    expect(data.reads[0]!.matches[0]).toMatchObject({ storeId: "0", valueSha8: sha8(OLD) });
+    expect(data.reads[2]!.matches[0]).toMatchObject({
+      storeId: "1",
+      domain: ".example.test",
+      path: "/",
+      expirationDate: 1_798_761_600,
+      valueSha8: sha8(NEW),
+    });
+  });
+
+  it("files no value, only 8-hex prefixes", async () => {
+    const { send, results } = twoStores();
+    await send({ kind: "poll", url: PAGE }, { tab: { id: 9 } });
+    const filed = JSON.stringify(results);
+    expect(filed).not.toContain(OLD);
+    expect(filed).not.toContain(NEW);
+    expect(filed).not.toContain('"value"');
+    for (const read of (results[0]!.data as { reads: { matches: { valueSha8: string }[] }[] })
+      .reads) {
+      for (const m of read.matches) expect(m.valueSha8).toMatch(/^[0-9a-f]{8}$/);
+    }
+  });
+
+  it("returns every duplicate of the name, with partition fields when the API gives them", async () => {
+    const getAll = vi.fn(async () => [
+      cookie(OLD, "0"),
+      cookie(NEW, "0", {
+        domain: "finance.example.test",
+        path: "/portfolios",
+        partitionKey: { topLevelSite: "https://example.test" },
+      }),
+    ]);
+    const results: Record<string, unknown>[] = [];
+    const { send } = load(
+      async (_app, message) => {
+        const m = message as Record<string, unknown>;
+        if (m.kind === "poll") return { commands: [probe] };
+        if (m.kind === "result") results.push(m);
+        return { stored: true };
+      },
+      { getAll },
+    );
+    await send({ kind: "poll", url: PAGE }, { tab: { id: 9 } });
+    const data = results[0]!.data as {
+      stores: unknown;
+      reads: { matches: Record<string, unknown>[] }[];
+    };
+    // No getAllCookieStores in this browser: said, not guessed.
+    expect(data.stores).toBeNull();
+    expect(data.reads).toHaveLength(1);
+    expect(data.reads[0]!.matches).toHaveLength(2);
+    expect(data.reads[0]!.matches[1]).toMatchObject({
+      domain: "finance.example.test",
+      path: "/portfolios",
+      partitionKey: { topLevelSite: "https://example.test" },
+    });
+    expect(JSON.stringify(results)).not.toContain("fake-");
+  });
+
+  it("does not let the page see the probe", async () => {
+    const { send } = twoStores();
+    const reply = (await send({ kind: "poll", url: PAGE }, { tab: { id: 9 } })) as {
+      commands: unknown[];
+    };
+    expect(reply.commands).toEqual([]);
   });
 });
