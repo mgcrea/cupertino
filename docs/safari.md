@@ -1375,7 +1375,9 @@ Safari does disable the extension, the worker has no `browser.cookies` and the t
 
 2026-10-30, Safari 26 on macOS 26, a notarized build of this branch installed over 1.34.0, the server
 started from a terminal with Full Disk Access with `APPLE_SAFARI_COOKIE_HOSTS=yahoo.com` (the app
-cannot yet pass a host list; see below), on a signed-in `https://finance.yahoo.com/` tab in front.
+could not pass a host list then; see "In the app"), on a signed-in `https://finance.yahoo.com/` tab
+in front. That build read Safari's default cookie store, which was right here only because the tab
+was in the profile the default belongs to; see "The default store is one profile's, not the tab's".
 
 | Check                                  | Result                                                                    |
 | -------------------------------------- | ------------------------------------------------------------------------- |
