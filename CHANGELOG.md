@@ -88,6 +88,67 @@ summary.
   copy of one cookie, each value shown only as a short hash, to tell which profile a session lives
   in. The Safari extension needs this update for the fix; from an older one, `store` is `null` and
   the tool says the cookies may be another profile's.
+- **Mail searches and counts with an account allowlist cover only the allowed accounts.** With
+  `APPLE_MAIL_ACCOUNTS` set and no account or mailbox named, `apple_mail_query` counted and named
+  senders from excluded accounts, and `search_messages` pages came back short or empty. Unscoped
+  queries are now limited to the admitted accounts in SQL.
+- **Paging through a message's raw source never breaks an accented character.** A page boundary
+  inside a multibyte character turned both halves into replacement characters, and when Mail
+  supplied the source itself, offsets were counted in UTF-16 units rather than bytes. Both routes
+  now page in UTF-8 bytes and return `nextOffset` to resume from.
+- **Calendar lists and searches no longer report a busy week as free.** When hidden declined or
+  cancelled events filled the internal query limit, later events were dropped and `hasMore` was
+  false. The result now sets `hasMore` with `nextFrom` (list) or `nextTo` (search), and leaves the
+  resume point out when it would not move, so following it never loops.
+- **Searching Messages and Calendar finds accented words whatever their case.** SQLite folds ASCII
+  only, so "ÉTÉ" missed "été" in message text and "été" missed "Été indien" in event titles.
+  Searches with non-ASCII text now fold case fully.
+- **Mail drafts say when Cupertino declined to lend its Accessibility access.** A refusal from the
+  app, such as Mail switched off or no licence, was reported as a missing Accessibility grant,
+  sending people to a setting that was already on. Compose, draft edits, rebuilds,
+  `list_open_drafts` and diagnostics now pass on the app's own reason.
+- **Flag, move and delete over several mailboxes or calendars report what was already done when
+  one fails.** A later mailbox's or calendar's error discarded the earlier results and returned a
+  bare error, though those items had already changed. Each item now gets its own row with an error
+  code, timed-out ones are counted as `unknown`, and Calendar refreshes its cached store either way.
+- **`update_draft` outside Cupertino no longer reports a replacement that never saved.** When sync
+  renumbered the original draft, it could pass for the replacement, giving `replaced: true` with
+  the original's id. The replacement must now open with the new text and carry a new Message-ID.
+- **Chat can still reply to and forward mail after the trial ends.** Mail's replies, forwards and
+  open drafts, and the other actions that borrow Desktop's Accessibility access, went through the
+  licence check the Chat pane itself is exempt from, so with an expired trial they were refused and
+  reached the model as a missing permission. A borrow now counts as admitted, because the server
+  asking for it already was.
+- **Configure on a client that is already set up writes nothing and keeps your original backup.**
+  For JSON clients, a second Configure rewrote the file and replaced `.cupertino-backup`, the copy
+  of your config from before Cupertino touched it, with the configured version. It now writes only
+  when something changed, and says "Already up to date" when nothing did.
+- **Switching off Allow writes or a gate reaches editors that are already connected.** A Node
+  server reads its settings once, at start, so an open editor kept tools like `send_message` and
+  `find_codes` until it was restarted. Cupertino now stops any running server started with a
+  setting that has since been switched off, and the editor reconnects to one started without it.
+- **The Log keeps up when it is busy.** Follow stopped scrolling once the log was full, at 1,000
+  rows or a few hundred when calls carry payloads, and Show less could not close a row a search had
+  opened. Follow now tracks each new row, and the button wins until the search changes.
+- **Turning on Launch at login stays on.** When macOS still needed your approval, the switch read
+  back as off and the app then removed the registration you had just asked for. It now shows what
+  macOS reports, and Settings says when approval is pending, with a button to open Login Items.
+- **Answering the update question in Settings removes the card in the main window.** The card kept
+  its own copy of the answer, so it went on showing, and clicking it reversed what you had just
+  chosen. The card and Settings now read one answer.
+- **The audit log's "including message contents" switch follows the settings that put contents on
+  disk.** It was greyed out by the app-wide content setting, while each surface's own setting is
+  what decides, so it could be off while contents were written. It now names the surfaces whose
+  contents would be written.
+- **Opening the Activity settings no longer freezes the app while the log is verified.**
+  Verification ran on the main thread each time the pane opened, which took seconds on a full log.
+  It now runs in the background, and the button says "Verifying…" meanwhile.
+- **The licence server stops reading an oversized request as soon as it passes the limit.** The
+  Stripe webhook and the licence re-send form read the whole body before measuring it, so a chunked
+  upload was held in full and two-byte text got through at twice the limit. Both now count bytes as
+  the body arrives and stop at the cap.
+- **The licence email and the thank-you page name the major version your key covers.** Both said
+  "every 1.x release" as fixed text. They now read the version stored with the licence.
 
 ## [1.38.0] - 2026-11-10
 
