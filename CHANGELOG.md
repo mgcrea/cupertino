@@ -149,6 +149,28 @@ summary.
   the body arrives and stop at the cap.
 - **The licence email and the thank-you page name the major version your key covers.** Both said
   "every 1.x release" as fixed text. They now read the version stored with the licence.
+- **Driving an app without the Accessibility grant says the grant is missing, with nothing put on
+  screen.** A click, hover, type or key that brings an app forward opened a driving session,
+  activated the app, waited two seconds and blamed the app for not coming to the front. The grant
+  is now checked first.
+- **Desktop and Simulator trees stay within their 40,000-byte cap.** Elements were measured on their
+  own rather than as nested in the answer, and `wait_for` added fields after the cap, so answers
+  ran to 52,000 bytes or more. The whole answer is now measured as sent.
+- **Expanding a handle whose window has closed says the element is gone.** It used to return an
+  empty tree that looked complete. A stale element is now named by its handle.
+- **`set_value` confirms clearing a field, a trailing space, a slider and a checkbox.** The read-back
+  trimmed text and read strings only, so these writes were reported as dropped although they had
+  landed. The raw value is now compared, and the answer includes `actual`.
+- **Simulator handles from `ui_tree` no longer expire after about a dozen calls.** Every call minted
+  a handle for each node it walked to find the device screen, up to 1,500 at a time, which pushed
+  the caller's handles out. Only candidate screen groups get one now.
+- **A desktop `run` with a malformed step is refused before any step runs.** A one-title
+  `press_menu` path, a `set_value` given a number, a `find_elements` with no criteria or an unknown
+  key name used to run the earlier steps first. Each step is now checked by the same check the tool
+  makes, and `apple_desktop_key` refuses an unknown key before bringing an app forward.
+- **`apple_simulator_type` types the exact character, or reports it untyped.** Shift was assumed to
+  give a key's uppercase, so on AZERTY É went out as "2" while counted as typed, and on a US layout
+  `!`, `@` and `?` could not be typed. Each character now uses the key that produces it.
 
 ## [1.38.0] - 2026-11-10
 
