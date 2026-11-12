@@ -383,6 +383,57 @@ If those workflow blobs turn out to be sealed, classification without running is
 impossible and the escape hatch can only ever run the name the caller gave it —
 a worse contract, still shippable, and it must not guess.
 
+## Writing automations through the Home app (measured 2026-11-12)
+
+Carillon (the HomeKit app beside this repo) found two writes HomeKit refuses every app, measured one
+call at a time on macOS 27.2: adding to, changing or removing the actions of an automation the Home
+app made (they live in a trigger-owned action set; `HMError 80`, "Missing entitlement for API", the
+entitlement being `com.apple.homekit.private-spi-access`, which AMFI will not let a non-Apple binary
+claim), and removing a condition (`updatePredicate(nil)` is answered as done and the condition is
+kept). Neither the private framework nor the store is a way round: see Carillon's `PLAN.md` §3.1.
+
+The Home app makes both, so this Accessibility lane was measured on a throwaway automation in a
+second home, through `apple_desktop_*`, each result read back through Carillon after relaunching it:
+
+| Write                  | Steps (by `AXIdentifier` where there is one)                                                                               | Kept by HomeKit                         |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| switch home            | `Home.NavBar.more` (on a room view) → menu item id `2_liberté`, the home's name lowercased with `_`                        | —                                       |
+| open an automation     | `Home.Tab.Automation`, then the row, an `AXButton` named "<name>, <summary>"                                               | —                                       |
+| remove a condition     | When row → "People, <state>" → `AXStaticText` "Off" → `BackButton` → Done                                                  | yes                                     |
+| add an accessory       | "Select Accessories and Scenes…" → `Home.Scene.AddAccessories.<NameWithoutSpaces>` → Done                                  | yes, in the trigger-owned set, no scene |
+| set a value            | the tile `<Room>-<Name>-TileCell` → its menu → `show_controls` → a sheet                                                   | yes                                     |
+| a heater-cooler's mode | in the sheet, the `AXPopUpButton` → menu item id `heat` / `cool` / `auto` / `off`                                          | yes: Target Heater Cooler State → heat  |
+| a temperature          | `AccessoryControl.thermostat.Thermostat`, a round dial: **drag** the handle, read the dial's name ("HEAT TO, 20,0, 18,0°") | yes: Heating Threshold 20               |
+| a fan speed            | `AccessoryControl.service-<UUID>.incremental.LargeSlider`: **drag**, read the sheet's label ("27 %")                       | yes: Rotation Speed 27                  |
+| remove an accessory    | the picker again → press the selected row (named "<Name>, selected") → Done                                                | yes                                     |
+
+The sheet edits the automation's target, never the live accessory: the unit read off, 25 °C and cool
+throughout, while the automation took 20 °C and heat.
+
+What the lane has to work around, each one met in the run:
+
+- **Values cannot be set, only dragged.** Both sliders accept `AXValue` writes and drop them
+  ("nan" read back), expose no actions and refuse focus. A value is a drag, read back from a label,
+  repeated: 25 → 20 took three drags on the dial (about 19° of arc per degree, in steps of 0.5).
+  The labels are in the person's locale ("20,0").
+- **The control sheet has no close control in the tree.** Escape closes it only after a click inside
+  the sheet gives it focus; a click outside does nothing.
+- **The menu bar's View › Homes items are ignored** when pressed through Accessibility; the window's
+  `Home.NavBar.more` menu works.
+- **A tile's default is not the person's intent.** An added accessory comes in as "Turn Off"; the
+  Home app's off for a split wrote `Active` on its **Fan** service, not its Heater-Cooler.
+- **The keyboard is the person's layout.** On AZERTY there is no unmodified ".", so ⌘-. is not
+  available as a key.
+- **The Mac's Home app lists only time-of-day and solar automations.** An automation an accessory
+  starts is out of this lane's reach on the Mac; the iPhone's Home app is the only route.
+- **Anything the Home app saves, it saves whole**, and it was seen rewriting a predicate it cannot
+  show (Apple Developer Forums 856046): the lane must not touch an automation whose condition the
+  Home app does not make.
+
+**Verdict: GO for time-of-day and solar automations**, with every write read back through HomeKit
+(Carillon's `carillon_get_automation` after a relaunch), never trusted from the screen. Not built:
+the script that replays these steps unattended, and the drag-and-read loop as code.
+
 ## Decision criteria
 
 Set in advance, so the answer is not argued backwards from whatever the probe
