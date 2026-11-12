@@ -5,8 +5,9 @@ import Foundation
 /// Apple store.
 ///
 /// A standalone `swiftc` binary for the reason `unit-check.swift` gives. Every store here is
-/// built from a model made in code (entity `Thing`, string attributes `key` and `name`), in a
-/// fresh temporary folder, so nothing touches a real Apple app's data.
+/// built from a model made in code (entity `Thing`, string attributes `key` and `name`, or
+/// `Gadget`, named by a UUID), in a fresh temporary folder, so nothing touches a real Apple
+/// app's data.
 ///
 /// The things worth holding still, all silent when they go wrong: a store the model does not
 /// match being migrated rather than refused, a write that lands without the persistent history
@@ -57,6 +58,46 @@ struct StoreLaneCheck {
     return model
   }
 
+  /// `Owner` (string `name`, to-one `item`) and `Item` (double `lat`): a key path to resolve.
+  static func ownerModel() -> NSManagedObjectModel {
+    let lat = NSAttributeDescription()
+    lat.name = "lat"
+    lat.attributeType = .doubleAttributeType
+    lat.isOptional = true
+    let item = NSEntityDescription()
+    item.name = "Item"
+    item.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
+    item.properties = [lat]
+    let name = NSAttributeDescription()
+    name.name = "name"
+    name.attributeType = .stringAttributeType
+    name.isOptional = true
+    let relationship = NSRelationshipDescription()
+    relationship.name = "item"
+    relationship.destinationEntity = item
+    relationship.minCount = 0
+    relationship.maxCount = 1
+    relationship.isOptional = true
+    let owner = NSEntityDescription()
+    owner.name = "Owner"
+    owner.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
+    owner.properties = [name, relationship]
+    let model = NSManagedObjectModel()
+    model.entities = [owner, item]
+    return model
+  }
+
+  /// Takes the attribute `name` out of `entity`, a root entity with no subentities, so a check
+  /// can build a store-compatible model that lacks what a writer names.
+  static func removeAttribute(
+    _ name: String, from entity: String, in model: NSManagedObjectModel
+  ) throws {
+    guard let description = model.entitiesByName[entity], description.superentity == nil,
+      description.subentities.isEmpty, description.attributesByName[name] != nil
+    else { throw Failure(why: "\(entity).\(name) cannot be taken out of this model") }
+    description.properties = description.properties.filter { $0.name != name }
+  }
+
   /// A fresh folder per case, so no case reads another's store.
   static func folder(_ name: String) throws -> URL {
     let url = scratch.appendingPathComponent(name)
@@ -71,13 +112,19 @@ struct StoreLaneCheck {
   }
 
   /// A versioned `.momd`: the `.mom` plus the `VersionInfo.plist` naming the current version.
-  static func writeMomd(_ model: NSManagedObjectModel, version: String, to url: URL) throws {
+  /// With `checksum`, the plist also carries `version`'s checksum; with `namesCurrent` false it
+  /// leaves the current version name out, as Maps' `.momd` does.
+  static func writeMomd(
+    _ model: NSManagedObjectModel, version: String, to url: URL, checksum: String? = nil,
+    namesCurrent: Bool = true
+  ) throws {
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     try writeMom(model, to: url.appendingPathComponent("\(version).mom"))
-    let info: [String: Any] = [
-      "NSManagedObjectModel_CurrentVersionName": version,
-      "NSManagedObjectModel_VersionHashes": [version: model.entityVersionHashesByName],
+    var info: [String: Any] = [
+      "NSManagedObjectModel_VersionHashes": [version: model.entityVersionHashesByName]
     ]
+    if namesCurrent { info["NSManagedObjectModel_CurrentVersionName"] = version }
+    if let checksum { info["NSManagedObjectModel_VersionChecksums"] = [version: checksum] }
     let plist = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
     try plist.write(to: url.appendingPathComponent("VersionInfo.plist"))
   }
@@ -127,10 +174,51 @@ struct StoreLaneCheck {
   }
 
   static func opener(
-    _ modelURL: URL, _ storeURL: URL, measured: Set<String> = []
+    _ modelURL: URL, _ storeURL: URL, measured: Set<String> = [],
+    versionKey: @escaping @Sendable (URL) -> String? = CoreDataStore.currentVersionName,
+    requires: [String: [String]] = [:]
   ) -> CoreDataStore {
     CoreDataStore(
-      modelURL: modelURL, storeURL: storeURL, patch: { _ in }, measuredVersions: measured)
+      modelURL: modelURL, storeURL: storeURL, patch: { _ in }, measuredVersions: measured,
+      versionKey: versionKey, app: "Things", requires: requires)
+  }
+
+  /// `Gadget`: a UUID attribute `identifier` and a string `name`, as Maps names its objects.
+  static func gadgetModel() -> NSManagedObjectModel {
+    let identifier = NSAttributeDescription()
+    identifier.name = "identifier"
+    identifier.attributeType = .UUIDAttributeType
+    identifier.isOptional = true
+    let name = NSAttributeDescription()
+    name.name = "name"
+    name.attributeType = .stringAttributeType
+    name.isOptional = true
+    let entity = NSEntityDescription()
+    entity.name = "Gadget"
+    entity.managedObjectClassName = NSStringFromClass(NSManagedObject.self)
+    entity.properties = [identifier, name]
+    let model = NSManagedObjectModel()
+    model.entities = [entity]
+    return model
+  }
+
+  /// A store of `Gadget`s, one per `(identifier, name)` pair.
+  static func makeGadgetStore(
+    at url: URL, model: NSManagedObjectModel, gadgets: [(UUID, String)]
+  ) throws {
+    let coordinator = NSPersistentStoreCoordinator(managedObjectModel: model)
+    let store = try coordinator.addPersistentStore(type: .sqlite, at: url, options: storeOptions)
+    let context = NSManagedObjectContext(.privateQueue)
+    context.persistentStoreCoordinator = coordinator
+    try context.performAndWait {
+      for (identifier, name) in gadgets {
+        let gadget = NSEntityDescription.insertNewObject(forEntityName: "Gadget", into: context)
+        gadget.setValue(identifier, forKey: "identifier")
+        gadget.setValue(name, forKey: "name")
+      }
+      try context.save()
+    }
+    try coordinator.remove(store)
   }
 
   /// Sets `k1`'s name through the opener.
@@ -246,10 +334,14 @@ struct StoreLaneCheck {
   /// The number of history transactions, and the last one's author, changed attribute names per
   /// change, and changes by row (sorted by row; a change that is not an update reads
   /// `"insert"` or `"delete"` as its only property).
-  static func history(_ storeURL: URL) throws -> (
-    count: Int, author: String?, changes: [[String]], rows: [HistoryChange]
-  ) {
-    try voiceMemos(storeURL) { context in
+  typealias History = (count: Int, author: String?, changes: [[String]], rows: [HistoryChange])
+
+  /// `History` of the store at `storeURL`, read with `model`; `rowName` names each change's row.
+  static func history(
+    _ storeURL: URL, model: NSManagedObjectModel,
+    rowName: (NSPersistentHistoryChange, NSManagedObjectContext) throws -> String
+  ) throws -> History {
+    try reading(storeURL, model: model) { context in
       let request = NSPersistentHistoryChangeRequest.fetchHistory(after: .distantPast)
       request.resultType = .transactionsAndChanges
       let result = try context.execute(request) as? NSPersistentHistoryResult
@@ -257,17 +349,22 @@ struct StoreLaneCheck {
       let last = transactions.last?.changes ?? []
       let changes = last.map { ($0.updatedProperties ?? []).map(\.name).sorted() }
       let rows = try last.map { change in
-        let object = try context.existingObject(with: change.changedObjectID)
-        let row =
-          (object.value(forKey: object.entity.name == "Folder" ? "uuid" : "uniqueID") as? String)
-          ?? "?"
         let properties =
           change.changeType == .update
           ? (change.updatedProperties ?? []).map(\.name).sorted()
           : [change.changeType == .insert ? "insert" : "delete"]
-        return HistoryChange(row: row, properties: properties)
+        return HistoryChange(row: try rowName(change, context), properties: properties)
       }.sorted { $0.row < $1.row }
       return (transactions.count, transactions.last?.author, changes, rows)
+    }
+  }
+
+  /// Voice Memos' history: a recording's row is its `uniqueID`, a folder's its `uuid`.
+  static func history(_ storeURL: URL) throws -> History {
+    try history(storeURL, model: voiceMemosModel()) { change, context in
+      let object = try context.existingObject(with: change.changedObjectID)
+      return (object.value(forKey: object.entity.name == "Folder" ? "uuid" : "uniqueID") as? String)
+        ?? "?"
     }
   }
 
@@ -277,9 +374,17 @@ struct StoreLaneCheck {
   static func oneTransaction(_ storeURL: URL, _ label: String, _ call: () throws -> Void) throws
     -> [HistoryChange]
   {
-    let before = try history(storeURL).count
+    try oneTransaction(storeURL, label, reader: { try history($0) }, call)
+  }
+
+  /// `oneTransaction`, with the history read by `reader`.
+  @discardableResult
+  static func oneTransaction(
+    _ storeURL: URL, _ label: String, reader: (URL) throws -> History, _ call: () throws -> Void
+  ) throws -> [HistoryChange] {
+    let before = try reader(storeURL).count
     try call()
-    let after = try history(storeURL)
+    let after = try reader(storeURL)
     try expect(
       after.count == before + 1, "\(label) saved \(after.count - before) history transactions")
     try expect(after.author == "cupertino", "\(label) author is \(after.author ?? "nil")")
@@ -373,22 +478,17 @@ struct StoreLaneCheck {
       store: VoiceMemosWriter.store(at: scratch.appendingPathComponent("absent/none.db")))
   }
 
-  /// What the writer and the fixture touch. A model without one of these (another macOS's
-  /// Voice Memos) cannot exercise the writer, so the group skips rather than fails.
-  static let voiceMemosNeeds: [String: [String]] = [
-    "CloudRecording": [
-      "uniqueID", "encryptedTitle", "customLabelForSorting", "flags", "sharedFlags",
-      "evictionDate", "folder",
-    ],
-    "Folder": ["uuid", "countOfRecordings", "recordings"],
+  /// What the fixture and the checks touch beyond the writer's own `VoiceMemosWriter.needs`.
+  static let voiceMemosFixtureNeeds: [String: [String]] = [
+    "Folder": ["encryptedName", "rank", "countOfRecordings", "recordings"]
   ]
 
-  /// `Entity.property` for each needed property `model` lacks, sorted.
+  /// `Entity.property` for each property the writer or the fixture needs that `model` lacks. A
+  /// model without one (another macOS's Voice Memos) cannot exercise the writer, so the group
+  /// skips rather than fails; `voiceMemosModelLackingAProperty` holds the writer's refusal of it.
   static func voiceMemosLacks(_ model: NSManagedObjectModel) -> [String] {
-    voiceMemosNeeds.flatMap { entity, names in
-      let properties = model.entitiesByName[entity]?.propertiesByName ?? [:]
-      return names.filter { properties[$0] == nil }.map { "\(entity).\($0)" }
-    }.sorted()
+    CoreDataStore.lacks(
+      model, VoiceMemosWriter.needs.merging(voiceMemosFixtureNeeds) { $0 + $1 })
   }
 
   /// The `.momd`'s current version name, read the way the opener reads it.
@@ -735,6 +835,60 @@ struct StoreLaneCheck {
       try expect(after == before, "invalid calls wrote \(after - before) transactions")
     }
 
+    // A store-compatible model without a property the writer names: refused before any write,
+    // where a write would otherwise raise past Swift and abort the app.
+    check("voiceMemosModelLackingAProperty") {
+      let dir = try folder("voice-memos-lacking")
+      let model = try voiceMemosModel()
+      try removeAttribute("sharedFlags", from: "CloudRecording", in: model)
+      let modelURL = dir.appendingPathComponent("VoiceMemos.mom")
+      try writeMom(model, to: modelURL)
+      let storeURL = dir.appendingPathComponent("CloudRecordings.db")
+      try makeVoiceMemosStore(at: storeURL, model: model)
+      func writer(_ requires: [String: [String]]) -> VoiceMemosWriter {
+        VoiceMemosWriter(
+          store: CoreDataStore(
+            modelURL: modelURL, storeURL: storeURL, patch: VoiceMemosWriter.patch,
+            measuredVersions: VoiceMemosWriter.measuredVersions,
+            versionKey: CoreDataStore.currentVersionName, app: "Voice Memos",
+            requires: requires))
+      }
+      // The store matches this model: only the missing property can refuse it.
+      var without = VoiceMemosWriter.needs
+      without["CloudRecording"]?.removeAll { $0 == "sharedFlags" }
+      let matching = writer(without).status()
+      try expect(matching.compatible, "the fixture is refused for another reason: \(matching)")
+      let lacking = writer(VoiceMemosWriter.needs)
+      let expected = "this macOS's Voice Memos model lacks CloudRecording.sharedFlags"
+      let status = lacking.status()
+      try expect(!status.compatible, "status() calls the model compatible")
+      try expect(status.refusal == expected, "status() refusal is \(status.refusal ?? "nil")")
+      let transactions = { try history(storeURL, model: model) { _, _ in "" }.count }
+      let before = try transactions()
+      let writes: [(String, () throws -> Void)] = [
+        ("rename", { _ = try lacking.rename(id: "R-ONE", title: "Synthetic renamed") }),
+        ("setFavorite", { _ = try lacking.setFavorite(id: "R-ONE", favorite: true) }),
+        ("move", { _ = try lacking.move(id: "R-ONE", folderId: "F-TWO") }),
+        ("delete", { _ = try lacking.delete(id: "R-ONE") }),
+        ("restore", { _ = try lacking.restore(id: "R-ONE") }),
+      ]
+      for (label, call) in writes {
+        let message = try expectRefusal("incompatible", label, call)
+        try expect(message == expected, "\(label) says \(message)")
+      }
+      let answer = try reply(request(61, "voiceMemos.status"), lacking)
+      let result = answer["result"] as? [String: Any]
+      try expect(
+        result?["compatible"] as? Bool == false && result?["refusal"] as? String == expected,
+        "the lane's status answers \(answer)")
+      try expect(try transactions() == before, "the refused writes saved history")
+      let title = try reading(storeURL, model: model) {
+        try row("CloudRecording", "uniqueID", "R-ONE", in: $0).value(forKey: "encryptedTitle")
+          as? String
+      }
+      try expect(title == "Synthetic one", "the title changed to \(title ?? "nil")")
+    }
+
     // Only a patch that moves the hash makes an unpatched opener refuse the store.
     guard patchChangesHash else {
       print(
@@ -747,7 +901,9 @@ struct StoreLaneCheck {
       let unpatched = VoiceMemosWriter(
         store: CoreDataStore(
           modelURL: VoiceMemosWriter.modelURL, storeURL: storeURL, patch: { _ in },
-          measuredVersions: VoiceMemosWriter.measuredVersions))
+          measuredVersions: VoiceMemosWriter.measuredVersions,
+          versionKey: CoreDataStore.currentVersionName, app: "Voice Memos",
+          requires: VoiceMemosWriter.needs))
       let message = try expectRefusal("incompatible", "the unpatched model") {
         _ = try unpatched.rename(id: "R-ONE", title: "Synthetic renamed")
       }
@@ -867,6 +1023,134 @@ struct StoreLaneCheck {
       }
     }
 
+    check("versionKeyIsPerWriter") {
+      // Maps' `.momd` names no current version, only a checksum per version.
+      let dir = try folder("version-key")
+      let storeURL = dir.appendingPathComponent("Things.sqlite")
+      let momdURL = dir.appendingPathComponent("Thing.momd")
+      let checksum = "CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk="
+      try makeStore(at: storeURL, model: modelA)
+      try writeMomd(
+        modelA, version: "DataModel_0_0_1", to: momdURL, checksum: checksum, namesCurrent: false)
+      let byChecksum = opener(
+        momdURL, storeURL, measured: [checksum],
+        versionKey: CoreDataStore.versionChecksum("DataModel_0_0_1")
+      ).status()
+      try expect(
+        byChecksum
+          == CoreDataStore.Status(
+            compatible: true, modelVersion: checksum, syncMeasured: true, refusal: nil),
+        "by checksum: \(byChecksum)")
+      let byName = opener(momdURL, storeURL, measured: [checksum]).status()
+      try expect(
+        byName.modelVersion == nil && !byName.syncMeasured && byName.compatible,
+        "by current name: \(byName)")
+      // A checksum key for a version the plist does not list reads as no version.
+      let otherVersion = opener(
+        momdURL, storeURL, measured: [checksum],
+        versionKey: CoreDataStore.versionChecksum("DataModel_0_0_2")
+      ).status()
+      try expect(
+        otherVersion.modelVersion == nil && !otherVersion.syncMeasured,
+        "another version's checksum: \(otherVersion)")
+    }
+
+    check("fetchOneByUUID") {
+      let dir = try folder("fetch-uuid")
+      let storeURL = dir.appendingPathComponent("Gadgets.sqlite")
+      let modelURL = dir.appendingPathComponent("Gadget.mom")
+      let model = gadgetModel()
+      let one = UUID()
+      let twice = UUID()
+      try makeGadgetStore(
+        at: storeURL, model: model,
+        gadgets: [(one, "Alpha"), (twice, "Beta"), (twice, "Beta again"), (UUID(), "Gamma")])
+      try writeMom(model, to: modelURL)
+      let store = opener(modelURL, storeURL)
+      let name = try store.write { context in
+        try CoreDataStore.fetchOne("Gadget", uuid: one, in: context).value(forKey: "name")
+          as? String
+      }
+      try expect(name == "Alpha", "one match reads \(name ?? "nil"), not Alpha")
+      for (uuid, label, found) in [(UUID(), "zero", "none"), (twice, "two", "more than one")] {
+        do {
+          try store.write { context in
+            _ = try CoreDataStore.fetchOne("Gadget", uuid: uuid, in: context)
+          }
+          throw Failure(why: "\(label) matches did not throw")
+        } catch let error as StoreLaneError {
+          guard case .notFound(let message) = error else {
+            throw Failure(why: "\(label) matches threw \(error.reason), not notFound")
+          }
+          let expected = "expected one Gadget with that identifier, found \(found)"
+          try expect(message == expected, "\(label) matches say \(message.debugDescription)")
+        }
+      }
+    }
+
+    check("refusesModelThatLacksAProperty") {
+      let dir = try folder("lacks")
+      let storeURL = dir.appendingPathComponent("Things.sqlite")
+      let modelURL = dir.appendingPathComponent("Thing.mom")
+      try makeStore(at: storeURL, model: modelA)
+      try writeMom(modelA, to: modelURL)
+      let transactions = {
+        try history(storeURL, model: modelA) { _, _ in "" }.count
+      }
+      let before = try transactions()
+      let lacking = opener(
+        modelURL, storeURL, requires: ["Thing": ["key", "name", "missing"], "Ghost": ["key"]])
+      let expected = "this macOS's Things model lacks Ghost.key, Thing.missing"
+      let status = lacking.status()
+      try expect(!status.compatible, "status() calls a model that lacks a property compatible")
+      try expect(status.refusal == expected, "status() refusal is \(status.refusal ?? "nil")")
+      let message = try expectRefusal("incompatible", "a write") {
+        try rename(lacking, to: "Gamma")
+      }
+      try expect(message == expected, "the write says \(message)")
+      try expect(try transactions() == before, "the refused write saved history")
+      let name = try reading(storeURL, model: modelA) { try currentName(of: "k1", in: $0) }
+      try expect(name == "Alpha", "k1 changed to \(name ?? "nil")")
+      // Everything it names is there: it writes.
+      let complete = opener(modelURL, storeURL, requires: ["Thing": ["key", "name"]])
+      try expect(complete.status().compatible, "a model with every property is refused")
+      try rename(complete, to: "Gamma")
+    }
+
+    check("requiresReadsKeyPaths") {
+      let lacks = CoreDataStore.lacks(
+        ownerModel(),
+        [
+          "Owner": ["name", "item", "item.lat", "item.lon", "name.lat", "nope.lat"],
+          "Ghost": ["a"],
+        ])
+      try expect(
+        lacks == ["Ghost.a", "Owner.item.lon", "Owner.name.lat", "Owner.nope.lat"],
+        "lacks is \(lacks)")
+    }
+
+    check("fetchOneRefusesAnUnknownKey") {
+      let dir = try folder("fetch-unknown-key")
+      let storeURL = dir.appendingPathComponent("Things.sqlite")
+      let modelURL = dir.appendingPathComponent("Thing.mom")
+      try makeStore(at: storeURL, model: modelA)
+      try writeMom(modelA, to: modelURL)
+      let store = opener(modelURL, storeURL)
+      // Asking for a key the entity lacks raises in Objective-C, past Swift's reach: refused first.
+      for (entity, key) in [("Thing", "nope"), ("Ghost", "key")] {
+        try expectRefusal("failed", "\(entity).\(key)") {
+          try store.write { context in
+            _ = try CoreDataStore.fetchOne(entity, key: key, value: "k1", in: context)
+          }
+        }
+        try expectRefusal("failed", "\(entity).\(key) by uuid") {
+          try store.write { context in
+            _ = try CoreDataStore.fetchOne(entity, uuid: UUID(), key: key, in: context)
+          }
+        }
+      }
+    }
+
     check("admitsOnlyItsOwnServer") {
       try expect(
         StoreLane.admit(borrowerId: "voice-memos", peerSurface: "voice-memos") == nil,
@@ -879,7 +1163,7 @@ struct StoreLaneCheck {
       }
       let mail = StoreLane.admit(borrowerId: "mail", peerSurface: "mail")
       try expect(mail == "'mail' has no store lane", "mail gets \(mail ?? "admitted")")
-      try expect(StoreLane.surfaces == ["voice-memos"], "surfaces is \(StoreLane.surfaces)")
+      // The whole set is asserted with Maps' door, in `mapsAdmission`.
     }
 
     check("garbageIsParseError") {
@@ -924,6 +1208,7 @@ struct StoreLaneCheck {
     }
 
     voiceMemosCases()
+    mapsCases()
 
     // Not a `defer`: `exit` never returns, so a deferred removal would never run.
     try? FileManager.default.removeItem(at: scratch)

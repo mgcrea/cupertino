@@ -639,7 +639,8 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 store-lane-check: ## Assert the store lane's Core Data opener refuses a mismatched store and writes history, with no app
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/store-lane-check \
-		apps/apple/Cupertino/StoreLane/*.swift scripts/store-lane-check.swift
+		apps/apple/Cupertino/StoreLane/*.swift scripts/store-lane-check.swift \
+		scripts/store-lane-check-maps.swift
 	@apps/apple/.build/store-lane-check
 
 chat-check: ## Assert the chat pane's tool budget and schema subset, with no app and no model

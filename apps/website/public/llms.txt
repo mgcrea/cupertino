@@ -47,9 +47,9 @@ hold.
   blob that SQL cannot reach, and since Apple stopped writing the plain column in early 2026 that is
   ~100% of recent ones, so the server decodes them.
 - Maps — 13 tools, 5 behind the write gate. Favourites, Guides, recents and places filed in no
-  Guide, with coordinates. The write tools save and remove favourites through a store write, and —
-  when Cupertino is hosting the server — save places and file them into Guides through the app's own
-  interface. `@mgcrea/mcp-apple-maps`
+  Guide, with coordinates. The write tools pin and unpin places, save and remove them, and file them
+  into Guides, saved through Maps' own data model inside Cupertino; they exist only when Cupertino
+  hosts the server, and run from npm the package only reads. `@mgcrea/mcp-apple-maps`
 - Safari — 21 tools (9 always registered, 7 write-gated, 1 behind its own flag for reading 2FA
   codes, 3 behind another for reading a page's network traffic, 1 behind a third for reading the
   cookies of sites you list, never returning a value inline). `@mgcrea/mcp-apple-safari`.

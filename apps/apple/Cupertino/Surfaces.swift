@@ -49,7 +49,8 @@ nonisolated struct Surface: Identifiable, Hashable {
   /// Whether this surface ever sends an Apple Event.
   ///
   /// False means no Automation prompt is ever shown for it and none is needed:
-  /// Maps writes SQL into its own store and Screen has no app to script at all.
+  /// Maps' writes are saved by this app's store lane through Maps' own Core Data
+  /// model, and Screen has no app to script at all.
   /// Asking for a permission the code never uses is the opposite of what the
   /// closed table is for.
   let usesAppleEvents: Bool
@@ -573,18 +574,31 @@ nonisolated struct Surface: Identifiable, Hashable {
       // edit to one replica of a synchronising object graph, underneath a running
       // app that is also editing it. That measured what Maps DOES; a write only
       // has to do what Maps REQUIRES, which is three tables rather than eight.
+      // It is TRUE for Cupertino only: since 2026-11-11 the npm package writes
+      // nothing, and every Maps write goes through the store lane below.
       //
       // Columns are resolved BY COVERAGE rather than by name, which no other
       // surface has needed. ZHISTORYITEM carries both ZLATITUDE (1 row of 33) and
       // ZLATITUDE1 (19 of 33); taking the first recognised name would report that
       // Maps holds almost no coordinates.
       //
-      // Writes are SQL into the store, because Maps has no scripting dictionary
-      // and registers no App Intents on macOS. The place record cannot be
-      // synthesised, so it is never fabricated: the place is opened through the
-      // maps:// URL scheme, Maps mints the record into Recents, and it is copied.
-      // That leaves a Recents entry, which the tools disclose. The store is
-      // CloudKit-mirrored, so a write reaches every device on the account.
+      // Maps has no scripting dictionary and registers no App Intents on macOS,
+      // so writes take one route, and only in Cupertino. Hosted by Cupertino,
+      // the five write tools go through this app's store lane
+      // (StoreLane/MapsWriter.swift), which saves through Core Data with Maps'
+      // own model, as a change made in Maps is. On macOS 27.2, model checksum
+      // CaxhFkDDBEvVUHzx/wKUv4k+QehKTgcfEuPWR91+uhk=, every one was seen on a
+      // Mac and an iPhone on 2026-11-11, one with Maps quit and mapssyncd
+      // exporting alone; on another model the result says sync is not yet
+      // measured. Run from npm the server registers no write tool. Its SQL and
+      // Accessibility routes were retired on 2026-11-11, after the watch found
+      // the SQL inserts never mirrored and saw Maps convert favourites that look
+      // like them (no mirror row, no shortcutIdentifier, a small positionIndex)
+      // into saved places. The place record cannot be synthesised, so it is
+      // never fabricated: the place is opened through the maps:// URL scheme,
+      // Maps mints the record into Recents, and it is copied. That leaves a
+      // Recents entry, which the tools disclose. See docs/maps.md, "The store
+      // lane".
       bundleID: "com.apple.Maps",
       kind: .app,
       iconPath: nil,

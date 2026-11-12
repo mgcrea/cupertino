@@ -127,8 +127,9 @@ even after a favourite toggle on another memo made the app save and sync: that t
 `ATRANSACTION`/`ACHANGE` rows for the other memo, and `voicememod` uploaded only that one. The
 test memo's `ANSCKRECORDMETADATA.ZLASTEXPORTEDTRANSACTIONNUMBER` stayed at 144. The exporter uploads
 what persistent history lists, and an out-of-band write adds nothing to it. Maps' SQL inserts
-reach iCloud because Core Data reconciles a brand-new object; an update to a mirrored row gets no
-such treatment.
+do not reach iCloud either. This paragraph said they did, because Core Data reconciles a brand-new
+object. CORRECTED 2026-11-11: those inserts were never mirrored, and Maps converts them into saved
+places ([docs/maps.md](maps.md#what-maps-changes-watched-2026-11-11)).
 
 **A rename through Core Data syncs in seconds.** A Swift helper opened the store with
 `NSPersistentStoreCoordinator` and Voice Memos' own model, then saved the new title. The model was
@@ -220,8 +221,9 @@ admits it only from the Voice Memos server it spawned itself. The app then:
    `/System/iOSSupport/System/Library/PrivateFrameworks/VoiceMemos.framework/Versions/A/Resources/`,
    and sets `allowsExternalBinaryDataStorage` on `CloudRecording.audioFuture`, as the app does at
    runtime;
-2. refuses with `incompatible` unless the store's metadata matches that model, and never migrates
-   the store;
+2. refuses with `incompatible` unless that model has every attribute and relationship the writer
+   names ("this macOS's Voice Memos model lacks …", naming each) and the store's metadata matches
+   it, and never migrates the store;
 3. opens a coordinator for this call alone, with history tracking and remote-change notifications
    on and migration off;
 4. fetches the recording by the `id` the read tools return (`uniqueID`), and a folder by its

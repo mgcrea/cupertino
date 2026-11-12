@@ -62,6 +62,15 @@ export class MapsStoreUnavailableError extends AppleAutomationError {
   }
 }
 
+/**
+ * A write could not be prepared: no place record to copy, or one Maps
+ * resolved too far from the coordinate given. Raised before the store lane is
+ * asked to save anything, so nothing was written.
+ */
+export class MapsWriteError extends AppleAutomationError {
+  override readonly name = "MapsWriteError";
+}
+
 /** A ref no longer resolves — the place was removed, or the store was re-synced. */
 export class PlaceNotFoundError extends AppleAutomationError {
   override readonly name = "PlaceNotFoundError";

@@ -1,14 +1,15 @@
 import type { Logger, ReadOnlyMode } from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
-import { MapsAxLane } from "./ax.js";
 import { renderInstant, type Epoch } from "./dates.js";
 import { MapsStoreUnavailableError } from "./errors.js";
+import { MapsLane } from "./lane.js";
 import { locateStore, type LocateResult } from "./locate.js";
+import type { OpenUrl } from "./open-url.js";
+import { PlaceSourceFinder } from "./place-source.js";
 import { encodeCollectionRef, encodePlaceRef, type PlaceKind } from "./ref.js";
 import type { EntityKey } from "./store.js";
 import { openStore, type CollectionRow, type MapsStore, type PlaceRow } from "./store.js";
-import { MapsWriter, type OpenUrl } from "./write.js";
 
 /**
  * The client.
@@ -71,13 +72,17 @@ export type CreateClientOptions = {
   /** Injected by tests so discovery never reaches the developer's real home. */
   home?: string;
   /**
-   * The interface lane, for tests.
-   *
-   * A seam of the same shape as `home`: null pins the store-only surface on a
-   * machine that IS hosted, and a stub drives the interface lane on one that is
-   * not. Undefined means "ask the environment", which is what the server does.
+   * The store lane, for tests. A seam of the same shape as `home`: null pins
+   * the npm surface on a machine that IS hosted, a lane opened on a stub socket
+   * drives the lane tools, and undefined asks the environment, which is what
+   * the server does.
    */
-  ax?: MapsAxLane | null | undefined;
+  lane?: MapsLane | null | undefined;
+  /**
+   * How a place is opened in Maps to seed a record, for tests, so a suite never
+   * launches the app. Undefined is `open -g`.
+   */
+  openUrl?: OpenUrl | undefined;
 };
 
 /**
@@ -97,13 +102,16 @@ export class AppleMapsClient {
   readonly #config: Config;
 
   /**
-   * The interface lane, when this server is hosted by Cupertino.
+   * The store lane, when this server is hosted by Cupertino: the five writes,
+   * saved by the app with Maps' own model, and Maps' only write route.
    *
    * Null when it is not, which is the supported case rather than a fault: the
-   * npm package has to work with no app on the machine. `tools/index.ts` skips
-   * registering the tools that need it.
+   * npm package has to work with no app on the machine, and then it only
+   * reads. `tools/index.ts` registers no write tool. Opening it connects
+   * nothing.
    */
-  readonly #ax: MapsAxLane | null;
+  readonly #lane: MapsLane | null;
+  readonly #openUrl: OpenUrl | undefined;
   readonly #logger: Logger | undefined;
   readonly #home: string | undefined;
 
@@ -113,7 +121,8 @@ export class AppleMapsClient {
 
   constructor(opts: CreateClientOptions) {
     this.#config = opts.config;
-    this.#ax = opts.ax !== undefined ? opts.ax : MapsAxLane.open();
+    this.#lane = opts.lane !== undefined ? opts.lane : MapsLane.open();
+    this.#openUrl = opts.openUrl;
     this.#logger = opts.logger;
     this.#home = opts.home;
   }
@@ -122,8 +131,8 @@ export class AppleMapsClient {
     return this.#config;
   }
 
-  get axLane(): MapsAxLane | null {
-    return this.#ax;
+  get lane(): MapsLane | null {
+    return this.#lane;
   }
 
   located(): LocateResult {
@@ -135,19 +144,17 @@ export class AppleMapsClient {
   }
 
   /**
-   * A writer bound to the located store, or an error explaining why not.
-   *
-   * Writes go through their own read-write connection rather than the shared
-   * read-only one: `store()` opens with `query_only` and an `immutable` fallback
-   * precisely so a read can never mutate by accident, and widening it would
-   * throw that guarantee away for every read on the surface.
+   * A read-only finder of place records for the store lane, bound to the
+   * located store, or an error explaining why not. It writes nothing: the lane
+   * does the writing, through Maps' own model. Its own connections, rather than
+   * the shared one `store()` opens, because it must not hold one across a seed.
    */
-  writer(openUrl?: OpenUrl): MapsWriter {
+  placeSource(openUrl: OpenUrl | undefined = this.#openUrl): PlaceSourceFinder {
     const located = this.located();
     if (!located.readable || !located.storePath) {
       throw new MapsStoreUnavailableError(located.reason ?? "Maps' store could not be opened.");
     }
-    return new MapsWriter({
+    return new PlaceSourceFinder({
       storePath: located.storePath,
       seedTimeoutMs: this.#config.seedTimeoutMs,
       ...(openUrl ? { openUrl } : {}),
@@ -338,5 +345,6 @@ export class AppleMapsClient {
   close(): void {
     this.#store?.close();
     this.#store = null;
+    this.#lane?.close();
   }
 }

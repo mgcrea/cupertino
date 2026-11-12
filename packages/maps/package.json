@@ -1,7 +1,7 @@
 {
   "name": "@mgcrea/mcp-apple-maps",
   "version": "1.38.0",
-  "description": "Read and act on Apple Maps — favourites, Guides and recents, writes off by default",
+  "description": "Read Apple Maps — favourites, Guides and recents; writes only when Cupertino hosts it",
   "keywords": [
     "apple",
     "apple-maps",

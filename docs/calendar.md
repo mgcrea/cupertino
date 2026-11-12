@@ -349,7 +349,8 @@ bare error code is now re-inflated so the caller still gets the explanation.
 Probed **2026-11-03, macOS 27.2**, against a throwaway weekly series of three (07:00 on 10, 17 and
 24 November) on a personal iCloud calendar, through the installed app's Desktop surface. The
 question was whether the two deletes Apple Events cannot do (above) can be done through the
-Accessibility lane instead, the way Maps writes with no `.sdef`.
+Accessibility lane instead, the way Maps wrote with no `.sdef` until its store lane replaced that
+route on 2026-11-11.
 
 What holds:
 

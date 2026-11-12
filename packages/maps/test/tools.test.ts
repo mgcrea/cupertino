@@ -40,23 +40,23 @@ describe("maps tools", () => {
   });
 
   /*
-   * This assertion used to demand an IDENTICAL list with writes enabled — the
-   * guard that made "read-only" a decision rather than an omission. It has been
-   * changed, and the justification it was there to force is on the record:
-   * `docs/maps.md` measures the whole lane, and the rule that keeps it safe is
-   * that a place record is NEVER fabricated, only copied from one Maps wrote
-   * itself. The blast radius is the reason it took that much proving — this
-   * store is mirrored, so a bad row reaches every device on the account.
-   *
-   * The guard is not gone, only narrowed: the read tools must still be exactly
-   * the same set with writes on, so a write flag can never disturb them.
+   * Run from npm, the list is the read tools whatever the write flag says.
+   * Maps' writes exist only when Cupertino hosts this server, through its store
+   * lane (`store-writes.test.ts`). The SQL route this package once registered
+   * was retired on 2026-11-11: its inserts were watched never to mirror to
+   * iCloud, and Maps was seen converting favourites that look like them into
+   * saved places (`docs/maps.md`).
    */
-  const WRITE_TOOLS = ["apple_maps_add_favorite", "apple_maps_remove_favorite"];
+  const WRITE_TOOLS = [
+    "apple_maps_add_favorite",
+    "apple_maps_remove_favorite",
+    "apple_maps_save_place",
+    "apple_maps_remove_saved_place",
+    "apple_maps_add_place_to_guide",
+  ];
 
-  it("adds exactly the write tools when writes are enabled", async () => {
-    expect(await toolNames(await connect({ APPLE_MAPS_ALLOW_WRITES: "1" }))).toEqual(
-      [...EXPECTED, ...WRITE_TOOLS].toSorted(),
-    );
+  it("registers exactly the read tools from npm, even with writes enabled", async () => {
+    expect(await toolNames(await connect({ APPLE_MAPS_ALLOW_WRITES: "1" }))).toEqual(EXPECTED);
   });
 
   it("registers no mutating tool by default", async () => {
@@ -147,9 +147,10 @@ describe("diagnostics and the write gate", () => {
     const off = await report();
     expect(off.lanes.writes.enabled).toBe(false);
     expect(off.lanes.writes.tools).toEqual([]);
+    // Run from npm the flag is reported, and no tool: there is no route without the host.
     const on = await report({ APPLE_MAPS_ALLOW_WRITES: "1" });
     expect(on.lanes.writes.enabled).toBe(true);
-    expect(on.lanes.writes.tools).toContain("apple_maps_remove_favorite");
+    expect(on.lanes.writes.tools).toEqual([]);
   });
 
   it("reports the seed timeout, which is now a setting", async () => {

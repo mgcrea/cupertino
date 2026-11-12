@@ -38,12 +38,45 @@ summary.
   `rename_recording`, `move_recording`, `set_favorite`, `delete_recording` (to Recently Deleted)
   and `restore_recording`, exist only when Cupertino hosts the Voice Memos server and its writes
   are on; from npm they are absent. Cupertino.app saves each one through Core Data with Voice
-  Memos' own model, so iCloud uploads it like a change made in the app. A rename written straight
-  into the database showed on the Mac and never reached the iPhone. Each tool changes only
-  what Voice Memos itself changed for the same edit, watched one step at a time. A write reaches
-  iCloud even with Voice Memos closed, as its background service uploads it. Every tool's sync
-  was measured on macOS 27.2 on a Mac and an iPhone; on another Voice Memos model version the result says sync is
-  not yet measured.
+  Memos' own model, as a change made in the app is. A rename written straight into the database
+  showed on the Mac and never reached the iPhone. Each tool changes only what Voice Memos itself
+  changed for the same edit, watched one step at a time. Every tool's sync was measured on macOS
+  27.2 on a Mac and an iPhone: there each write reaches iCloud like a change made in the app, even
+  with Voice Memos closed, as its background service uploads it. On another Voice Memos model
+  version the result says sync is not yet measured.
+
+### Changed
+
+- **Maps' writes save through Maps' own model, in Cupertino.** When Cupertino hosts the Maps
+  server, `add_favorite`, `remove_favorite`, `save_place`, `remove_saved_place` and
+  `add_place_to_guide` are saved by Cupertino.app through Core Data with Maps' own model, so each
+  is recorded like a change made in the app. Each follows what Maps itself saved for the same
+  step, watched one step at a time on macOS 27.2. None of them brings Maps' window forward or
+  presses anything any more, and `add_place_to_guide` answers `filed: true` only when reading the
+  Guide back finds the place there. A place not yet in the store is still resolved by Maps from its
+  name, which leaves it in your Recents. Every tool's sync was measured on macOS 27.2 on a Mac and
+  an iPhone: there a write reaches iCloud even with Maps closed, as its background service uploads
+  it. On another Maps model version the result says sync is not yet measured.
+- **Unpinning a Maps favourite keeps the place, as Maps does.** In Maps, unpinning moves a place
+  into your library as a saved place rather than deleting it. In Cupertino, `remove_favorite` now
+  does the same and says so, and `remove_saved_place` is what removes the place entirely.
+- **`remove_saved_place` takes a ref.** In Cupertino it takes a ref from `list_unfiled_places` or
+  `list_collection_places`, with `confirm: true`, instead of a place name and coordinate: Maps'
+  coordinate and yours differ by up to a building's width, so a coordinate can match the wrong
+  place. `add_place_to_guide` takes a ref to a saved place, or a name to save a new place and
+  file it in one save.
+
+### Removed
+
+- **The npm Maps package no longer writes to Maps.** Run from npm, `@mgcrea/mcp-apple-maps` now
+  only reads, whatever `APPLE_MAPS_ALLOW_WRITES` says: `add_favorite` and `remove_favorite`, which
+  wrote SQL straight into Maps' store, are gone. A favourite written that way was watched never to
+  reach iCloud, and Maps itself was seen converting favourites that look like it into saved
+  places.
+- **Maps no longer presses buttons on its place card, in Cupertino.** The Accessibility route for
+  `save_place`, `remove_saved_place` and `add_place_to_guide` is gone. The same five Maps tools
+  remain in Cupertino, saved through Maps' own model by the store lane, the way a change made in
+  the app is.
 
 ### Fixed
 
