@@ -492,6 +492,18 @@ nonisolated enum Changelog {
         entries: [
           Entry(
             ordinal: 0,
+            headline: "Typing into a field no longer takes the front.",
+            body: [
+              "`apple_desktop_type` with a `handle` focuses that field through Accessibility, sends the text to its application alone, and reads the field back. The application stays behind whatever the person is using, and their keyboard stays theirs. The answer says `lane: \"background\"` and whether the whole text `verified`. A field that did not change, or one that cannot be read back, such as a password field, is typed into the way it was before, with its application brought forward. Because a background type cannot reach the person's keyboard, it opens the driving session without the countdown. The orange card still shows, and the first verb that does take the front still gets the countdown. Measured against AppKit and SwiftUI fields and TextEdit; shortcuts still need the front.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Drive a Debug build of one of our apps without it coming forward.",
+            body: [
+              "`apple_desktop_launch` with `channel: true` opens a driving channel in an app that links swift-support-kit's `SupportKitDriving`. Click, drag, hover, key and type with its `bundleId` then go into its own windows (`lane: \"channel\"`), including shortcuts and windows covered by other apps. Nothing reaches the person's keyboard or cursor. The channel exists only in Debug builds, and other applications are driven as before. `path` starts one exact `.app`: the Debug build of an App Store app that shares its bundle id with the installed copy. Nothing is started while another copy with that bundle id is running.",
+            ]),
+          Entry(
+            ordinal: 2,
             headline: "Rename, move, favourite, delete and restore a voice memo, in Cupertino.",
             body: [
               "Five tools, `rename_recording`, `move_recording`, `set_favorite`, `delete_recording` (to Recently Deleted) and `restore_recording`, exist only when Cupertino hosts the Voice Memos server and its writes are on; from npm they are absent. Cupertino.app saves each one through Core Data with Voice Memos' own model, as a change made in the app is. A rename written straight into the database showed on the Mac and never reached the iPhone. Each tool changes only what Voice Memos itself changed for the same edit, watched one step at a time. Every tool's sync was measured on macOS 27.2 on a Mac and an iPhone: there each write reaches iCloud like a change made in the app, even with Voice Memos closed, as its background service uploads it. On another Voice Memos model version the result says sync is not yet measured.",
@@ -502,19 +514,19 @@ nonisolated enum Changelog {
         lead: [],
         entries: [
           Entry(
-            ordinal: 1,
+            ordinal: 3,
             headline: "Maps' writes save through Maps' own model, in Cupertino.",
             body: [
               "When Cupertino hosts the Maps server, `add_favorite`, `remove_favorite`, `save_place`, `remove_saved_place` and `add_place_to_guide` are saved by Cupertino.app through Core Data with Maps' own model, so each is recorded like a change made in the app. Each follows what Maps itself saved for the same step, watched one step at a time on macOS 27.2. None of them brings Maps' window forward or presses anything any more, and `add_place_to_guide` answers `filed: true` only when reading the Guide back finds the place there. A place not yet in the store is still resolved by Maps from its name, which leaves it in your Recents. Every tool's sync was measured on macOS 27.2 on a Mac and an iPhone: there a write reaches iCloud even with Maps closed, as its background service uploads it. On another Maps model version the result says sync is not yet measured.",
             ]),
           Entry(
-            ordinal: 2,
+            ordinal: 4,
             headline: "Unpinning a Maps favourite keeps the place, as Maps does.",
             body: [
               "In Maps, unpinning moves a place into your library as a saved place rather than deleting it. In Cupertino, `remove_favorite` now does the same and says so, and `remove_saved_place` is what removes the place entirely.",
             ]),
           Entry(
-            ordinal: 3,
+            ordinal: 5,
             headline: "`remove_saved_place` takes a ref.",
             body: [
               "In Cupertino it takes a ref from `list_unfiled_places` or `list_collection_places`, with `confirm: true`, instead of a place name and coordinate: Maps' coordinate and yours differ by up to a building's width, so a coordinate can match the wrong place. `add_place_to_guide` takes a ref to a saved place, or a name to save a new place and file it in one save.",
@@ -525,16 +537,171 @@ nonisolated enum Changelog {
         lead: [],
         entries: [
           Entry(
-            ordinal: 4,
+            ordinal: 6,
             headline: "The npm Maps package no longer writes to Maps.",
             body: [
               "Run from npm, `@mgcrea/mcp-apple-maps` now only reads, whatever `APPLE_MAPS_ALLOW_WRITES` says: `add_favorite` and `remove_favorite`, which wrote SQL straight into Maps' store, are gone. A favourite written that way was watched never to reach iCloud, and Maps itself was seen converting favourites that look like it into saved places.",
             ]),
           Entry(
-            ordinal: 5,
+            ordinal: 7,
             headline: "Maps no longer presses buttons on its place card, in Cupertino.",
             body: [
               "The Accessibility route for `save_place`, `remove_saved_place` and `add_place_to_guide` is gone. The same five Maps tools remain in Cupertino, saved through Maps' own model by the store lane, the way a change made in the app is.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 8,
+            headline: "Safari's cookies come from the profile of the tab that asked.",
+            body: [
+              "`apple_safari_cookies` read Safari's default cookie store, which belongs to one profile, so a tab in any other profile got that profile's session, and signing in again there changed nothing the tool saved. It now reads only the store holding the tab that answered, names it as `store`, and refuses, naming the profile as the cause, when no single store holds the tab. A `probe` option lists every store's copy of one cookie, each value shown only as a short hash, to tell which profile a session lives in. The Safari extension needs this update for the fix; from an older one, `store` is `null` and the tool says the cookies may be another profile's.",
+            ]),
+          Entry(
+            ordinal: 9,
+            headline: "Mail searches and counts with an account allowlist cover only the allowed accounts.",
+            body: [
+              "With `APPLE_MAIL_ACCOUNTS` set and no account or mailbox named, `apple_mail_query` counted and named senders from excluded accounts, and `search_messages` pages came back short or empty. Unscoped queries are now limited to the admitted accounts in SQL.",
+            ]),
+          Entry(
+            ordinal: 10,
+            headline: "Paging through a message's raw source never breaks an accented character.",
+            body: [
+              "A page boundary inside a multibyte character turned both halves into replacement characters, and when Mail supplied the source itself, offsets were counted in UTF-16 units rather than bytes. Both routes now page in UTF-8 bytes and return `nextOffset` to resume from.",
+            ]),
+          Entry(
+            ordinal: 11,
+            headline: "Calendar lists and searches no longer report a busy week as free.",
+            body: [
+              "When hidden declined or cancelled events filled the internal query limit, later events were dropped and `hasMore` was false. The result now sets `hasMore` with `nextFrom` (list) or `nextTo` (search), and leaves the resume point out when it would not move, so following it never loops.",
+            ]),
+          Entry(
+            ordinal: 12,
+            headline: "Searching Messages and Calendar finds accented words whatever their case.",
+            body: [
+              "SQLite folds ASCII only, so \"ÉTÉ\" missed \"été\" in message text and \"été\" missed \"Été indien\" in event titles. Searches with non-ASCII text now fold case fully.",
+            ]),
+          Entry(
+            ordinal: 13,
+            headline: "Mail drafts say when Cupertino declined to lend its Accessibility access.",
+            body: [
+              "A refusal from the app, such as Mail switched off or no licence, was reported as a missing Accessibility grant, sending people to a setting that was already on. Compose, draft edits, rebuilds, `list_open_drafts` and diagnostics now pass on the app's own reason.",
+            ]),
+          Entry(
+            ordinal: 14,
+            headline: "Flag, move and delete over several mailboxes or calendars report what was already done when one fails.",
+            body: [
+              "A later mailbox's or calendar's error discarded the earlier results and returned a bare error, though those items had already changed. Each item now gets its own row with an error code, timed-out ones are counted as `unknown`, and Calendar refreshes its cached store either way.",
+            ]),
+          Entry(
+            ordinal: 15,
+            headline: "`update_draft` outside Cupertino no longer reports a replacement that never saved.",
+            body: [
+              "When sync renumbered the original draft, it could pass for the replacement, giving `replaced: true` with the original's id. The replacement must now open with the new text and carry a new Message-ID.",
+            ]),
+          Entry(
+            ordinal: 16,
+            headline: "Chat can still reply to and forward mail after the trial ends.",
+            body: [
+              "Mail's replies, forwards and open drafts, and the other actions that borrow Desktop's Accessibility access, went through the licence check the Chat pane itself is exempt from, so with an expired trial they were refused and reached the model as a missing permission. A borrow now counts as admitted, because the server asking for it already was.",
+            ]),
+          Entry(
+            ordinal: 17,
+            headline: "Configure on a client that is already set up writes nothing and keeps your original backup.",
+            body: [
+              "For JSON clients, a second Configure rewrote the file and replaced `.cupertino-backup`, the copy of your config from before Cupertino touched it, with the configured version. It now writes only when something changed, and says \"Already up to date\" when nothing did.",
+            ]),
+          Entry(
+            ordinal: 18,
+            headline: "Switching off Allow writes or a gate reaches editors that are already connected.",
+            body: [
+              "A Node server reads its settings once, at start, so an open editor kept tools like `send_message` and `find_codes` until it was restarted. Cupertino now stops any running server started with a setting that has since been switched off, and the editor reconnects to one started without it.",
+            ]),
+          Entry(
+            ordinal: 19,
+            headline: "The Log keeps up when it is busy.",
+            body: [
+              "Follow stopped scrolling once the log was full, at 1,000 rows or a few hundred when calls carry payloads, and Show less could not close a row a search had opened. Follow now tracks each new row, and the button wins until the search changes.",
+            ]),
+          Entry(
+            ordinal: 20,
+            headline: "Turning on Launch at login stays on.",
+            body: [
+              "When macOS still needed your approval, the switch read back as off and the app then removed the registration you had just asked for. It now shows what macOS reports, and Settings says when approval is pending, with a button to open Login Items.",
+            ]),
+          Entry(
+            ordinal: 21,
+            headline: "Answering the update question in Settings removes the card in the main window.",
+            body: [
+              "The card kept its own copy of the answer, so it went on showing, and clicking it reversed what you had just chosen. The card and Settings now read one answer.",
+            ]),
+          Entry(
+            ordinal: 22,
+            headline: "The audit log's \"including message contents\" switch follows the settings that put contents on disk.",
+            body: [
+              "It was greyed out by the app-wide content setting, while each surface's own setting is what decides, so it could be off while contents were written. It now names the surfaces whose contents would be written.",
+            ]),
+          Entry(
+            ordinal: 23,
+            headline: "Opening the Activity settings no longer freezes the app while the log is verified.",
+            body: [
+              "Verification ran on the main thread each time the pane opened, which took seconds on a full log. It now runs in the background, and the button says \"Verifying…\" meanwhile.",
+            ]),
+          Entry(
+            ordinal: 24,
+            headline: "The licence server stops reading an oversized request as soon as it passes the limit.",
+            body: [
+              "The Stripe webhook and the licence re-send form read the whole body before measuring it, so a chunked upload was held in full and two-byte text got through at twice the limit. Both now count bytes as the body arrives and stop at the cap.",
+            ]),
+          Entry(
+            ordinal: 25,
+            headline: "The licence email and the thank-you page name the major version your key covers.",
+            body: [
+              "Both said \"every 1.x release\" as fixed text. They now read the version stored with the licence.",
+            ]),
+          Entry(
+            ordinal: 26,
+            headline: "Driving an app without the Accessibility grant says the grant is missing, with nothing put on screen.",
+            body: [
+              "A click, hover, type or key that brings an app forward opened a driving session, activated the app, waited two seconds and blamed the app for not coming to the front. The grant is now checked first.",
+            ]),
+          Entry(
+            ordinal: 27,
+            headline: "Desktop and Simulator trees stay within their 40,000-byte cap.",
+            body: [
+              "Elements were measured on their own rather than as nested in the answer, and `wait_for` added fields after the cap, so answers ran to 52,000 bytes or more. The whole answer is now measured as sent.",
+            ]),
+          Entry(
+            ordinal: 28,
+            headline: "Expanding a handle whose window has closed says the element is gone.",
+            body: [
+              "It used to return an empty tree that looked complete. A stale element is now named by its handle.",
+            ]),
+          Entry(
+            ordinal: 29,
+            headline: "`set_value` confirms clearing a field, a trailing space, a slider and a checkbox.",
+            body: [
+              "The read-back trimmed text and read strings only, so these writes were reported as dropped although they had landed. The raw value is now compared, and the answer includes `actual`.",
+            ]),
+          Entry(
+            ordinal: 30,
+            headline: "Simulator handles from `ui_tree` no longer expire after about a dozen calls.",
+            body: [
+              "Every call minted a handle for each node it walked to find the device screen, up to 1,500 at a time, which pushed the caller's handles out. Only candidate screen groups get one now.",
+            ]),
+          Entry(
+            ordinal: 31,
+            headline: "A desktop `run` with a malformed step is refused before any step runs.",
+            body: [
+              "A one-title `press_menu` path, a `set_value` given a number, a `find_elements` with no criteria or an unknown key name used to run the earlier steps first. Each step is now checked by the same check the tool makes, and `apple_desktop_key` refuses an unknown key before bringing an app forward.",
+            ]),
+          Entry(
+            ordinal: 32,
+            headline: "`apple_simulator_type` types the exact character, or reports it untyped.",
+            body: [
+              "Shift was assumed to give a key's uppercase, so on AZERTY É went out as \"2\" while counted as typed, and on a US layout `!`, `@` and `?` could not be typed. Each character now uses the key that produces it.",
             ]),
         ]),
     ])
