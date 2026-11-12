@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-maps",
-  "version": "1.38.0",
+  "version": "1.39.0",
   "description": "Read Apple Maps — favourites, Guides and recents; writes only when Cupertino hosts it",
   "keywords": [
     "apple",

@@ -1,6 +1,6 @@
 {
   "name": "@mgcrea/mcp-apple-voice-memos",
-  "version": "1.38.0",
+  "version": "1.39.0",
   "description": "Read and search Apple Voice Memos recordings and their on-device transcripts, export off by default",
   "keywords": [
     "apple",

@@ -6,13 +6,17 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.38.0`,
-`notes-v1.38.0`, `reminders-v1.38.0`, `core-v1.38.0` for the npm packages, and `app-v1.38.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.39.0`,
+`notes-v1.39.0`, `reminders-v1.39.0`, `core-v1.39.0` for the npm packages, and `app-v1.39.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.39.0] - 2026-11-12
+
+**Typing into a field no longer takes the front.** Desktop types into a background field and reads it
+back, so your keyboard stays yours. In Cupertino, Voice Memos renames, moves and deletes
+recordings, and Maps saves through its own model.
 
 ### Added
 
@@ -3600,7 +3604,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.38.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.39.0...HEAD
+[1.39.0]: https://github.com/mgcrea/cupertino/compare/app-v1.38.0...app-v1.39.0
 [1.38.0]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...app-v1.38.0
 [1.37.1]: https://github.com/mgcrea/cupertino/compare/app-v1.37.0...app-v1.37.1
 [1.37.0]: https://github.com/mgcrea/cupertino/compare/app-v1.36.2...app-v1.37.0

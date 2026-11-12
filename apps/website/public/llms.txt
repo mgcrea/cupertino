@@ -6,7 +6,7 @@
 > them to every editor.
 
 Unofficial. Not affiliated with Apple. macOS 26 or later, and macOS only. Shipped at 1.0.0, and at
-1.38.0 as of November 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
+1.39.0 as of November 2026: the signed app ships from GitHub releases. The `@mgcrea/mcp-apple-*`
 packages are MIT and on npm; the app carries Screen, Sound, Desktop, Simulator and Shell instead,
 which have no npm package because they need permissions and frameworks only the signed app can
 hold.
@@ -82,7 +82,8 @@ The app itself hosts five more surfaces, none of them a separate npm install:
 - Desktop — 27 tools (10 always registered, 17 write-gated). Drives any app through the Accessibility
   API — reads a window as named, addressable controls, and behind the write gate presses, types,
   right-clicks, drags and runs a whole session (`apple_desktop_run`) before releasing control back
-  to whoever was using the Mac. Scoped to the apps Cupertino brokers unless you widen it.
+  to whoever was using the Mac. Typing into a field it can read back happens in the background,
+  without bringing the app forward. Scoped to the apps Cupertino brokers unless you widen it.
 - Simulator — 12 tools (4 always registered, 8 write-gated). The same idea for an iOS Simulator
   window: reads an app's own controls in iOS points and, behind the write gate, presses, taps,
   swipes, types and folds a foldable, with no WebDriverAgent runner to keep alive.

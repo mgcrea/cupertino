@@ -220,271 +220,12 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_38_0, v1_37_1, v1_37_0, v1_36_2, v1_36_1]
+  static let releases: [Release] = [v1_39_0, v1_38_0, v1_37_1, v1_37_0, v1_36_2]
 
   // swift-format-ignore
-  private static let v1_38_0: Release = Release(
-    version: "1.38.0",
-    date: "2026-11-10",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Voice Memos, a new surface: `@mgcrea/mcp-apple-voice-memos`.",
-            body: [
-              "Lists your recordings with their folders, favourites and Recently Deleted, and reads **the transcript Apple made of each one**, which macOS embeds in the audio file. Every segment carries its start and end, so a quote can be found again by listening. Search ignores case and accents, so \"cafe\" finds \"Café\". Recordings from before 2025 have no transcript, because Apple did not backfill, and the server says so rather than making one up. With writes on, `save_recording` copies a recording's audio to `~/Downloads`, where Cadence can pick it up. Nothing writes to Voice Memos itself: the app ships no scripting dictionary, and its App Intents can only be run from Shortcuts. Full Disk Access is required. Checked against a real library of 87 recordings: all 28 from 2025 on read, and an exported `.m4a` and `.qta` both transcribed in Cadence.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Claude Code's pane says when its allowlist hides a surface.",
-            body: [
-              "Claude Code silently drops a server its `allowedMcpServers` or `deniedMcpServers` refuses, so a surface Cupertino had wired correctly could be missing from every session. The pane now reads `~/.claude/settings.json` and managed settings, applies Claude Code's own matching rules, badges each refused entry and says what to do: Update in Bastion for Bastion's list, the entries to paste for a hand-written one, the Mac's admin for managed settings.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "Shell asks once per session by default.",
-            body: [
-              "\"Before running\" now starts at Ask once per session, and turning Shell off puts it back there. If you never changed it, this update moves you to it. The setting alone approves nothing: the first run on each connection still shows the whole script, with Don't run as the default button, and only \"Run, and stop asking this session\" approves the rest of that connection, for 30 minutes at most. Under Ask every time that button sat behind a picker few people open. Ask every time is still there, and a \"Don't ask\" Cupertino did not seal itself still reads as Ask every time.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 3,
-            headline: "A Safari tab no longer stops answering after one lost message.",
-            body: [
-              "Safari can drop a page's message to the extension's background when the worker is stopped or still starting, and the page then waited for an answer that never came: that tab stopped polling, so every click, fill and `page_elements` on it timed out, while other sites kept answering, until the page was reloaded. Each message now gets ten seconds and a lost one counts as a failed poll, so the tab polls again at its usual interval. A reply that turns up after its wait is dropped with its commands rather than run late, and a result that cannot be filed no longer abandons the rest of its batch. Pages need one reload after this update to pick up the new script.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "A Mail attachment whose accented name is split across header lines keeps its real name.",
-            body: [
-              "Some servers, Open-Xchange among them, cut an encoded filename such as `=?UTF-8?Q?...?=` across several `filename*0`, `filename*1` parameters. Those pieces were joined but never decoded, so `list_attachments` and `get_message` showed the raw encoded text and `save_attachment` could not find the attachment under either name. They are now decoded once joined. `save_attachment` also matches names whatever their Unicode normalization, still accepts the raw spelling earlier versions listed, and says which names the message has when none matches.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_37_1: Release = Release(
-    version: "1.37.1",
-    date: "2026-11-07",
-    sections: [
-      Section(
-        name: "Security",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Shell warns about a line break the window shows and zsh does not.",
-            body: [
-              "The window started a new line at a lone carriage return and at U+2028 and U+2029, which zsh reads as ordinary characters, so `ls ~/Documents\\r# ; curl … | sh` showed as `ls` over a comment while zsh ran the `curl`. Each of those now gets the hidden-characters warning, and the line count counts every line the window draws. A Windows line ending (CR LF) is still not flagged: both end the line there.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Shell's \"Turn On Shell\" and \"Don't Ask\" buttons refuse a click through a window laid over them.",
-            body: [
-              "The run window already did this. The two sheets that lower the bar had no such watch, so a program with Accessibility could open \"Don't Ask\", cover its button with a click-through window and borrow your next click. Each sheet's button now turns off while another window covers it, and says so.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "Declining a Shell request also calls off that client's other waiting requests.",
-            body: [
-              "An agent can open connections as it likes, so four requests stood in line, and \"Don't run\" on the first brought the other three straight up. They are now withdrawn with it, and answer as the cooldown. Another client's window keeps waiting.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 3,
-            headline: "A message listed in a Gmail INBOX is moved and deleted in INBOX.",
-            body: [
-              "On the index lane, `list_messages` named each message by the mailbox its file lives in, which for a Gmail INBOX is All Mail, so `move_messages` and `delete_messages` acted on the All Mail copy. Refs now name the mailbox that was listed. A ref naming INBOX also finds the message's file under All Mail, so `list_attachments` and `save_attachment` work on it instead of failing.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "`update_draft` no longer edits the wrong open message.",
-            body: [
-              "A closed draft that is not a reply was matched to an open window by the shorter of their openings, so an open message reading \"Hi Dave,\" could have its text replaced in place of the draft \"Hi Dave, the VMs are up…\" with the same subject. Such a draft now needs a window holding exactly its text. Replies keep the old rule.",
-            ]),
-          Entry(
-            ordinal: 5,
-            headline: "An edited Mail draft keeps characters like `é` and `’` that it stored as HTML entities.",
-            body: [
-              "A draft that came in from Outlook could hold `&eacute;` or `&rsquo;`, and an edit to it sent the recipient \"Caf&eacute;\". The rest of the text is now kept byte for byte, as intended.",
-            ]),
-          Entry(
-            ordinal: 6,
-            headline: "A draft edit with attachments that would land in a reply's quote is refused before anything is pasted.",
-            body: [
-              "It used to be refused only after the new body was already in a window Mail autosaves.",
-            ]),
-          Entry(
-            ordinal: 7,
-            headline: "Rebuilding a reply draft refuses a subject that did not take",
-            body: [
-              ", leaving the original draft as it was, instead of reporting the draft replaced under Mail's own \"Re:\".",
-            ]),
-          Entry(
-            ordinal: 8,
-            headline: "Without Cupertino.app, Mail sends nothing when it holds fewer files than asked.",
-            body: [
-              "The message stays open as a draft and the result says how many files are there. Replies and forwards on this path now report their `attachments` like the other two paths. A refused reply draft no longer says its window is closed, since nothing on this path looked.",
-            ]),
-          Entry(
-            ordinal: 9,
-            headline: "A mailbox created since Cupertino last read Mail's list is found the first time.",
-            body: [
-              "`list_messages`, `count_messages` and `search_messages` refused it with \"No mailbox\" after a pause, and found it on the next call. They now read the list again before refusing a name.",
-            ]),
-          Entry(
-            ordinal: 10,
-            headline: "Mail and Messages watches no longer skip mail or replay old mail.",
-            body: [
-              "A watch read could move past a message in a mailbox created since the last refresh, so it was never returned. And when Mail's index or Messages' database was rebuilt as a new file, every older message above the watch's start came back as new. A watch now restarts at the new file's latest message.",
-            ]),
-          Entry(
-            ordinal: 11,
-            headline: "Safari commands keep working after Back and Forward.",
-            body: [
-              "A page restored from the back/forward cache stopped taking commands, and every one timed out as if the extension were not installed there.",
-            ]),
-          Entry(
-            ordinal: 12,
-            headline: "`apple_safari_wait_for` finds text across a line break on pages whose script predates `find`.",
-            body: [
-              "A heading spread over two lines was never matched, and with `gone: true` it came back `met: true` while the words were still on the page.",
-            ]),
-          Entry(
-            ordinal: 13,
-            headline: "Safari's network list shows a streaming fetch's status as soon as it starts.",
-            body: [
-              "Server-sent events and other streamed responses read status `null` until the stream ended, or for good if it never did. A `data:` URL over 256 characters is now listed as its header and length rather than whole, so one 4 MiB image no longer makes a 4-million-character answer; `urlContains` still matches all of it.",
-            ]),
-          Entry(
-            ordinal: 14,
-            headline: "`get_reminder` in Reminders says \"not found\" for a deleted reminder on a Mac set to another language.",
-            body: [
-              "It recognised the error only by its English text, and failed with a raw script error.",
-            ]),
-          Entry(
-            ordinal: 15,
-            headline: "The Simulator surface names DeviceHub when nothing is showing the simulator.",
-            body: [
-              "On Xcode 27, with DeviceHub closed, every call answered \"com.apple.iphonesimulator is not running\", which sent an agent looking for a Simulator.app that Xcode 27 does not ship. It now names the app this Mac has, says how to open it (`open -b com.apple.dt.Devices`, then select the device in its sidebar), and warns that quitting DeviceHub shuts every booted simulator down.",
-            ]),
-        ]),
-      Section(
-        name: "Changed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 16,
-            headline: "`create_reminder` and `move_reminders` find their list about 2 s sooner.",
-            body: [
-              "Without the Reminders store open, they counted every list's completed reminders to pick one by name, and threw the counts away.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_37_0: Release = Release(
-    version: "1.37.0",
-    date: "2026-11-06",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Mail's `save_attachment` has Mail download an attachment it has not fetched yet.",
-            body: [
-              "On a Gmail account that caches messages without their attachments, most older attachments were never on disk, and saving one failed with \"not stored locally\". Cupertino now asks Mail to save it, which makes Mail fetch it from the server (the result says `from: \"mail\"`); Mail keeps the copy, so the attachment reads as retrievable afterwards. Mail has to be running and online. It writes into a staging folder that is removed after the copy, never into the destination itself.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_36_2: Release = Release(
-    version: "1.36.2",
-    date: "2026-11-03",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A Mail draft with no subject is pasted, not assigned, when Cupertino hosts the server.",
-            body: [
-              "It went through Apple Events, which wraps the body in a quotation the recipient sees, and taking that off needed Automation for System Events. It is now filled and saved through Cupertino's own Accessibility driver, like every other draft. Sending a message with no subject at once still takes the old path, because Mail asks about the missing subject before sending it.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Safari brought to the front by `apple_safari_open_url` is announced like any other driving.",
-            body: [
-              "With `activate: true` Safari came forward through an Apple Event, with no notice and no say for the person at the keyboard. It now goes through Cupertino's driver, and the result says whether it happened (`activated`). Safari stays in front afterwards rather than being handed back when the session idles out.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_36_1: Release = Release(
-    version: "1.36.1",
-    date: "2026-11-02",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Mail drafts work with Mail in full screen or on another desktop.",
-            body: [
-              "Accessibility lists only the windows on the desktop shown, so with Mail full screen every draft failed after 8 seconds with \"no such window was readable\", and `apple_mail_list_open_drafts` said no draft was open while one was. The app now finds Mail's windows on other desktops and reads them where they are, listed with `onAnotherDesktop: true`. Editing one brings Mail forward on that desktop first, and a composer that cannot be brought forward is refused before anything is touched. A compose that reads no Mail window at all no longer says \"this is not a permission\".",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "A Mail draft stays in front for you to read.",
-            body: [
-              "Once a draft was written or edited, Cupertino brought back the app you had been in, straight after the save and again 45 seconds later, so the draft disappeared under it while you were reading. Mail now stays in front with the draft open. To get the old behaviour, turn on **Return to the previous app after a draft** in Mail's settings in Cupertino, or `APPLE_MAIL_HAND_BACK_AFTER_DRAFT` outside the app. A send, a refusal or a failure still brings back your app as before.",
-            ]),
-          Entry(
-            ordinal: 2,
-            headline: "A Desktop press or write that times out says it may have landed.",
-            body: [
-              "An app answers a press only when the action returns, and an action that opens a modal alert returns when the alert closes, so a press that worked still answered \"did not answer in time … retry\", and the retry pressed a second time. A press or write with no answer within 2 s now says it may already have happened and asks for a read of the window before repeating it. A read that times out still says busy.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "The Activity log shows a watch update that no one was listening for.",
-            body: [
-              "When matching mail or a message arrived and the host had not subscribed to the watch, the update went nowhere and the Activity log showed nothing, so a push never sent and a push nobody took looked the same. Mail and Messages now log `push dropped (no listener): cupertino://mail/watch/…` with the reason: no open `subscriptions/listen` names the watch (2026-07-28 protocol), or it was not subscribed with `resources/subscribe` (2025). In Claude Code every watch update is such a line, since it never subscribes to a watch; its agents read the watch instead.",
-            ]),
-        ]),
-    ])
-
-  /// Work that is written down but not shipped.
-  ///
-  /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
-  /// tag's version, so there is no `[Unreleased]` left to emit by then. The
-  /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
+  private static let v1_39_0: Release = Release(
+    version: "1.39.0",
+    date: "2026-11-12",
     sections: [
       Section(
         name: "Added",
@@ -707,6 +448,228 @@ nonisolated enum Changelog {
     ])
 
   // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  private static let v1_38_0: Release = Release(
+    version: "1.38.0",
+    date: "2026-11-10",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Voice Memos, a new surface: `@mgcrea/mcp-apple-voice-memos`.",
+            body: [
+              "Lists your recordings with their folders, favourites and Recently Deleted, and reads **the transcript Apple made of each one**, which macOS embeds in the audio file. Every segment carries its start and end, so a quote can be found again by listening. Search ignores case and accents, so \"cafe\" finds \"Café\". Recordings from before 2025 have no transcript, because Apple did not backfill, and the server says so rather than making one up. With writes on, `save_recording` copies a recording's audio to `~/Downloads`, where Cadence can pick it up. Nothing writes to Voice Memos itself: the app ships no scripting dictionary, and its App Intents can only be run from Shortcuts. Full Disk Access is required. Checked against a real library of 87 recordings: all 28 from 2025 on read, and an exported `.m4a` and `.qta` both transcribed in Cadence.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Claude Code's pane says when its allowlist hides a surface.",
+            body: [
+              "Claude Code silently drops a server its `allowedMcpServers` or `deniedMcpServers` refuses, so a surface Cupertino had wired correctly could be missing from every session. The pane now reads `~/.claude/settings.json` and managed settings, applies Claude Code's own matching rules, badges each refused entry and says what to do: Update in Bastion for Bastion's list, the entries to paste for a hand-written one, the Mac's admin for managed settings.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "Shell asks once per session by default.",
+            body: [
+              "\"Before running\" now starts at Ask once per session, and turning Shell off puts it back there. If you never changed it, this update moves you to it. The setting alone approves nothing: the first run on each connection still shows the whole script, with Don't run as the default button, and only \"Run, and stop asking this session\" approves the rest of that connection, for 30 minutes at most. Under Ask every time that button sat behind a picker few people open. Ask every time is still there, and a \"Don't ask\" Cupertino did not seal itself still reads as Ask every time.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "A Safari tab no longer stops answering after one lost message.",
+            body: [
+              "Safari can drop a page's message to the extension's background when the worker is stopped or still starting, and the page then waited for an answer that never came: that tab stopped polling, so every click, fill and `page_elements` on it timed out, while other sites kept answering, until the page was reloaded. Each message now gets ten seconds and a lost one counts as a failed poll, so the tab polls again at its usual interval. A reply that turns up after its wait is dropped with its commands rather than run late, and a result that cannot be filed no longer abandons the rest of its batch. Pages need one reload after this update to pick up the new script.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "A Mail attachment whose accented name is split across header lines keeps its real name.",
+            body: [
+              "Some servers, Open-Xchange among them, cut an encoded filename such as `=?UTF-8?Q?...?=` across several `filename*0`, `filename*1` parameters. Those pieces were joined but never decoded, so `list_attachments` and `get_message` showed the raw encoded text and `save_attachment` could not find the attachment under either name. They are now decoded once joined. `save_attachment` also matches names whatever their Unicode normalization, still accepts the raw spelling earlier versions listed, and says which names the message has when none matches.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  private static let v1_37_1: Release = Release(
+    version: "1.37.1",
+    date: "2026-11-07",
+    sections: [
+      Section(
+        name: "Security",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Shell warns about a line break the window shows and zsh does not.",
+            body: [
+              "The window started a new line at a lone carriage return and at U+2028 and U+2029, which zsh reads as ordinary characters, so `ls ~/Documents\\r# ; curl … | sh` showed as `ls` over a comment while zsh ran the `curl`. Each of those now gets the hidden-characters warning, and the line count counts every line the window draws. A Windows line ending (CR LF) is still not flagged: both end the line there.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Shell's \"Turn On Shell\" and \"Don't Ask\" buttons refuse a click through a window laid over them.",
+            body: [
+              "The run window already did this. The two sheets that lower the bar had no such watch, so a program with Accessibility could open \"Don't Ask\", cover its button with a click-through window and borrow your next click. Each sheet's button now turns off while another window covers it, and says so.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Declining a Shell request also calls off that client's other waiting requests.",
+            body: [
+              "An agent can open connections as it likes, so four requests stood in line, and \"Don't run\" on the first brought the other three straight up. They are now withdrawn with it, and answer as the cooldown. Another client's window keeps waiting.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 3,
+            headline: "A message listed in a Gmail INBOX is moved and deleted in INBOX.",
+            body: [
+              "On the index lane, `list_messages` named each message by the mailbox its file lives in, which for a Gmail INBOX is All Mail, so `move_messages` and `delete_messages` acted on the All Mail copy. Refs now name the mailbox that was listed. A ref naming INBOX also finds the message's file under All Mail, so `list_attachments` and `save_attachment` work on it instead of failing.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "`update_draft` no longer edits the wrong open message.",
+            body: [
+              "A closed draft that is not a reply was matched to an open window by the shorter of their openings, so an open message reading \"Hi Dave,\" could have its text replaced in place of the draft \"Hi Dave, the VMs are up…\" with the same subject. Such a draft now needs a window holding exactly its text. Replies keep the old rule.",
+            ]),
+          Entry(
+            ordinal: 5,
+            headline: "An edited Mail draft keeps characters like `é` and `’` that it stored as HTML entities.",
+            body: [
+              "A draft that came in from Outlook could hold `&eacute;` or `&rsquo;`, and an edit to it sent the recipient \"Caf&eacute;\". The rest of the text is now kept byte for byte, as intended.",
+            ]),
+          Entry(
+            ordinal: 6,
+            headline: "A draft edit with attachments that would land in a reply's quote is refused before anything is pasted.",
+            body: [
+              "It used to be refused only after the new body was already in a window Mail autosaves.",
+            ]),
+          Entry(
+            ordinal: 7,
+            headline: "Rebuilding a reply draft refuses a subject that did not take",
+            body: [
+              ", leaving the original draft as it was, instead of reporting the draft replaced under Mail's own \"Re:\".",
+            ]),
+          Entry(
+            ordinal: 8,
+            headline: "Without Cupertino.app, Mail sends nothing when it holds fewer files than asked.",
+            body: [
+              "The message stays open as a draft and the result says how many files are there. Replies and forwards on this path now report their `attachments` like the other two paths. A refused reply draft no longer says its window is closed, since nothing on this path looked.",
+            ]),
+          Entry(
+            ordinal: 9,
+            headline: "A mailbox created since Cupertino last read Mail's list is found the first time.",
+            body: [
+              "`list_messages`, `count_messages` and `search_messages` refused it with \"No mailbox\" after a pause, and found it on the next call. They now read the list again before refusing a name.",
+            ]),
+          Entry(
+            ordinal: 10,
+            headline: "Mail and Messages watches no longer skip mail or replay old mail.",
+            body: [
+              "A watch read could move past a message in a mailbox created since the last refresh, so it was never returned. And when Mail's index or Messages' database was rebuilt as a new file, every older message above the watch's start came back as new. A watch now restarts at the new file's latest message.",
+            ]),
+          Entry(
+            ordinal: 11,
+            headline: "Safari commands keep working after Back and Forward.",
+            body: [
+              "A page restored from the back/forward cache stopped taking commands, and every one timed out as if the extension were not installed there.",
+            ]),
+          Entry(
+            ordinal: 12,
+            headline: "`apple_safari_wait_for` finds text across a line break on pages whose script predates `find`.",
+            body: [
+              "A heading spread over two lines was never matched, and with `gone: true` it came back `met: true` while the words were still on the page.",
+            ]),
+          Entry(
+            ordinal: 13,
+            headline: "Safari's network list shows a streaming fetch's status as soon as it starts.",
+            body: [
+              "Server-sent events and other streamed responses read status `null` until the stream ended, or for good if it never did. A `data:` URL over 256 characters is now listed as its header and length rather than whole, so one 4 MiB image no longer makes a 4-million-character answer; `urlContains` still matches all of it.",
+            ]),
+          Entry(
+            ordinal: 14,
+            headline: "`get_reminder` in Reminders says \"not found\" for a deleted reminder on a Mac set to another language.",
+            body: [
+              "It recognised the error only by its English text, and failed with a raw script error.",
+            ]),
+          Entry(
+            ordinal: 15,
+            headline: "The Simulator surface names DeviceHub when nothing is showing the simulator.",
+            body: [
+              "On Xcode 27, with DeviceHub closed, every call answered \"com.apple.iphonesimulator is not running\", which sent an agent looking for a Simulator.app that Xcode 27 does not ship. It now names the app this Mac has, says how to open it (`open -b com.apple.dt.Devices`, then select the device in its sidebar), and warns that quitting DeviceHub shuts every booted simulator down.",
+            ]),
+        ]),
+      Section(
+        name: "Changed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 16,
+            headline: "`create_reminder` and `move_reminders` find their list about 2 s sooner.",
+            body: [
+              "Without the Reminders store open, they counted every list's completed reminders to pick one by name, and threw the counts away.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  private static let v1_37_0: Release = Release(
+    version: "1.37.0",
+    date: "2026-11-06",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Mail's `save_attachment` has Mail download an attachment it has not fetched yet.",
+            body: [
+              "On a Gmail account that caches messages without their attachments, most older attachments were never on disk, and saving one failed with \"not stored locally\". Cupertino now asks Mail to save it, which makes Mail fetch it from the server (the result says `from: \"mail\"`); Mail keeps the copy, so the attachment reads as retrievable afterwards. Mail has to be running and online. It writes into a staging folder that is removed after the copy, never into the destination itself.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  private static let v1_36_2: Release = Release(
+    version: "1.36.2",
+    date: "2026-11-03",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "A Mail draft with no subject is pasted, not assigned, when Cupertino hosts the server.",
+            body: [
+              "It went through Apple Events, which wraps the body in a quotation the recipient sees, and taking that off needed Automation for System Events. It is now filled and saved through Cupertino's own Accessibility driver, like every other draft. Sending a message with no subject at once still takes the old path, because Mail asks about the missing subject before sending it.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Safari brought to the front by `apple_safari_open_url` is announced like any other driving.",
+            body: [
+              "With `activate: true` Safari came forward through an Apple Event, with no notice and no say for the person at the keyboard. It now goes through Cupertino's driver, and the result says whether it happened (`activated`). Safari stays in front afterwards rather than being handed back when the session idles out.",
+            ]),
+        ]),
+    ])
+
+  /// Work that is written down but not shipped.
+  ///
+  /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
+  /// tag's version, so there is no `[Unreleased]` left to emit by then. The
+  /// pane shows it in debug builds only, where it is true of what is running.
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }

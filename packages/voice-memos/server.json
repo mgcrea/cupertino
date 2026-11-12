@@ -3,7 +3,7 @@
   "name": "io.github.mgcrea/mcp-apple-voice-memos",
   "title": "Apple Voice Memos",
   "description": "Read and search Apple Voice Memos recordings and their on-device transcripts, export off by default",
-  "version": "1.38.0",
+  "version": "1.39.0",
   "websiteUrl": "https://cupertino.mgcrea.io",
   "repository": {
     "url": "https://github.com/mgcrea/cupertino",
@@ -15,7 +15,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@mgcrea/mcp-apple-voice-memos",
-      "version": "1.38.0",
+      "version": "1.39.0",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
