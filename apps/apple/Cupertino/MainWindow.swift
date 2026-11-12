@@ -547,7 +547,12 @@ struct MainView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
       }
       .textSelection(.enabled)
-      .onChange(of: LogStore.shared.entries.count) {
+      // The last entry's id, not the count. Once the store is full every append
+      // trims one, so the count holds still — at 1,000 rows, or at a few hundred
+      // when calls carry payloads and the byte budget trims first — and Follow
+      // stopped following exactly when the log was busiest. `make unit` pins
+      // the store's half of this.
+      .onChange(of: LogStore.shared.entries.last?.id) {
         guard following else { return }
         withAnimation(.linear(duration: 0.1)) { proxy.scrollTo(tailAnchor, anchor: .bottom) }
       }
@@ -845,13 +850,18 @@ extension MainView.Pane: RawRepresentable {
 /// It is also the sentence that keeps the claim in docs/licensing.md honest.
 /// Cupertino is sold partly on making no network connections, so the moment it
 /// can make one, the person who bought it on that basis is the one who decides.
+///
+/// Reads the answer from `UpdateController` rather than a copy of its own. The
+/// main window is never released (`HostedWindow` keeps it), so a copy seeded
+/// once went on showing the card after the question was answered in Settings —
+/// and a click on it then reversed that answer.
 struct UpdateConsentCard: View {
-  @State private var answered = UserDefaults.standard.bool(forKey: UpdateController.choiceMade)
+  private var updates = UpdateController.shared
 
   var body: some View {
     // Never in a capture: a screenshot is of the product, not of whether this
     // laptop has answered a question yet.
-    if !answered && !DemoSeed.isEnabled {
+    if !updates.choiceMade && !DemoSeed.isEnabled {
       VStack(alignment: .leading, spacing: 8) {
         Label("Should Cupertino check for updates?", systemImage: "arrow.down.circle")
           .font(.subheadline).bold()
@@ -867,10 +877,10 @@ struct UpdateConsentCard: View {
         .fixedSize(horizontal: false, vertical: true)
 
         HStack(spacing: 8) {
-          Button("Check automatically") { answer(true) }
+          Button("Check automatically") { updates.answer(true) }
             .controlSize(.small)
             .buttonStyle(.borderedProminent)
-          Button("Keep updates off") { answer(false) }
+          Button("Keep updates off") { updates.answer(false) }
             .controlSize(.small)
           Text("You can change this in Settings.")
             .font(.caption)
@@ -881,12 +891,6 @@ struct UpdateConsentCard: View {
       .frame(maxWidth: .infinity, alignment: .leading)
       .background(.quaternary.opacity(0.4))
     }
-  }
-
-  private func answer(_ automatic: Bool) {
-    UpdateController.shared.setAutomatic(automatic)
-    UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
-    answered = true
   }
 }
 
@@ -904,15 +908,24 @@ private struct LogRow: View {
   /// past the preview. Empty when nothing is being searched for.
   var highlight: String = ""
 
-  @State private var expanded = false
+  /// What the reader asked for with the button, when they have; nil follows
+  /// the search.
+  ///
+  /// An override rather than an `expanded` flag OR'd with the search, because
+  /// the OR made "Show less" a button that could not do what it said: while the
+  /// match sat past the preview the search term held the row open, and the
+  /// button flipped a flag nothing was reading. Reset when the search changes,
+  /// so a new query gets to open the rows it needs to.
+  @State private var override: Bool?
 
   /// How much of a payload shows before the row is opened.
   private static let preview = 160
 
-  /// Open either because the reader asked, or because the match is out of
-  /// sight and a row listed for no visible reason reads as a bug.
+  /// Open because the reader asked, or — until they say otherwise — because the
+  /// match is out of sight and a row listed for no visible reason reads as a
+  /// bug.
   private var isOpen: Bool {
-    expanded || entry.matchIsHidden(highlight, preview: Self.preview)
+    override ?? entry.matchIsHidden(highlight, preview: Self.preview)
   }
 
   var body: some View {
@@ -940,13 +953,14 @@ private struct LogRow: View {
         payload("result", result, tint: entry.failed ? .red : .secondary)
       }
       if longest > Self.preview {
-        Button(isOpen ? "Show less" : "Show all \(longest) characters") { expanded.toggle() }
+        Button(isOpen ? "Show less" : "Show all \(longest) characters") { override = !isOpen }
           .buttonStyle(.link)
           .font(.caption2)
           .padding(.leading, 84)
       }
     }
     .font(.system(.caption, design: .monospaced))
+    .onChange(of: highlight) { override = nil }
   }
 
   private var longest: Int { max(entry.arguments?.count ?? 0, entry.result?.count ?? 0) }

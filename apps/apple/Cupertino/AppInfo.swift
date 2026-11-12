@@ -118,6 +118,18 @@ enum LoginItem {
     SMAppService.mainApp.status == .enabled
   }
 
+  /// Registered, and waiting for the user to allow it in System Settings —
+  /// which is not enabled, and not a failure either, so it gets a sentence of
+  /// its own rather than an unticked box and nothing else.
+  static var requiresApproval: Bool {
+    SMAppService.mainApp.status == .requiresApproval
+  }
+
+  /// System Settings › General › Login Items, where that approval is given.
+  static func openSettings() {
+    SMAppService.openSystemSettingsLoginItems()
+  }
+
   /// What the user asked for, as opposed to what the service currently reports.
   ///
   /// These come apart. `SMAppService.mainApp` registers a bundle at a path, and

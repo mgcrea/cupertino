@@ -22,8 +22,9 @@ import Sparkle
 final class UpdateController: NSObject {
   static let shared = UpdateController()
 
-  /// Set once the user has answered the consent card, either way.
-  static let choiceMade = "updateChoiceMade"
+  /// The key recording that the user has answered, either way, at the consent
+  /// card or in the Updates pane.
+  static let choiceMadeKey = "updateChoiceMade"
 
   private var controller: SPUStandardUpdaterController?
 
@@ -32,15 +33,22 @@ final class UpdateController: NSObject {
 
   /// Whether automatic checks are on.
   ///
-  /// The answer lives in Sparkle's own `UserDefaults` key, read through the
-  /// updater when it exists and directly when it does not. A second
-  /// `@AppStorage` mirror would be one more thing to drift, and the plist
+  /// The answer lives in Sparkle's own `UserDefaults` key, and the plist
   /// default (`SUEnableAutomaticChecks`, false) already answers for a fresh
-  /// install.
-  var automatic: Bool {
-    controller?.updater.automaticallyChecksForUpdates
-      ?? UserDefaults.standard.bool(forKey: "SUEnableAutomaticChecks")
-  }
+  /// install. A second `@AppStorage` mirror would be one more thing to drift.
+  ///
+  /// Stored here all the same, and that is not the mirror: it is seeded from
+  /// that key and written only by `setAutomatic`, which writes the key in the
+  /// same breath, so there is one writer and nothing to drift from. What
+  /// storing buys is observation. The consent card and the Updates pane each
+  /// seeded an `@State` copy once, in windows that live for the session, so an
+  /// answer given in one never reached the other — and the card, still showing,
+  /// could reverse a choice already made in Settings.
+  private(set) var automatic = UserDefaults.standard.bool(forKey: "SUEnableAutomaticChecks")
+
+  /// Whether the question has been answered, so the card can stop asking the
+  /// moment it is — wherever it was answered.
+  private(set) var choiceMade = UserDefaults.standard.bool(forKey: choiceMadeKey)
 
   /// Called from `applicationDidFinishLaunching`. Builds nothing unless the
   /// user has already opted in.
@@ -69,12 +77,24 @@ final class UpdateController: NSObject {
     controller.updater.checkForUpdates()
   }
 
-  func setAutomatic(_ on: Bool) {
+  /// The answer, from the consent card or the Updates pane — the one path both
+  /// take, so each sees the other's.
+  ///
+  /// Answering in the pane is answering the card too. Leaving it armed would ask
+  /// again about a decision already made.
+  func answer(_ on: Bool) {
+    setAutomatic(on)
+    UserDefaults.standard.set(true, forKey: Self.choiceMadeKey)
+    choiceMade = true
+  }
+
+  private func setAutomatic(_ on: Bool) {
     if on { start() }
     controller?.updater.automaticallyChecksForUpdates = on
     // Written through even when no updater exists, so that a "no" answered at
     // the consent card is durable without constructing one to record it.
     UserDefaults.standard.set(on, forKey: "SUEnableAutomaticChecks")
+    automatic = on
   }
 
   private func start() {

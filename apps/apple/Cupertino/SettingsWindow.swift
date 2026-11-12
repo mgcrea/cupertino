@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SupportKit
 import SupportKitSettings
 import SwiftUI
@@ -260,7 +261,12 @@ private struct AboutPane: View {
 /// four slightly different row heights and three different label widths.
 struct GeneralPane: View {
   let model: StatusModel
+  /// What the service reports, never what was last clicked. Read back after
+  /// every change, on appear, and whenever the app comes to the front — the
+  /// registration is changed from System Settings too, and by an update
+  /// replacing the bundle under it.
   @State private var launchAtLogin = LoginItem.isEnabled
+  @State private var loginNeedsApproval = LoginItem.requiresApproval
   @State private var loginError: String?
   @AppStorage(SurfaceSettings.appLazyToolsKey) private var lazyTools = false
 
@@ -310,24 +316,44 @@ struct GeneralPane: View {
       }
 
       Section {
-        Toggle(isOn: $launchAtLogin) {
+        // A binding whose setter is the click, rather than `onChange` on the
+        // state. Putting the box back to what the service says is a write to
+        // that same state, and `onChange` fired again for it: a registration
+        // that landed in `.requiresApproval` read back as off, the handler ran
+        // with `false`, and the click that asked for launch at login ended in
+        // `unregister()` with the intent recorded as not wanted. Here reading
+        // back is only a read.
+        Toggle(
+          isOn: Binding(
+            get: { launchAtLogin },
+            set: { value in
+              loginError = LoginItem.set(value)
+              // Trust the service, not the checkbox: a refused registration has
+              // to put the box back rather than claim something untrue.
+              readLoginItem()
+            })
+        ) {
           Text("Launch at login")
           Text(
             "Cupertino starts on demand when a client connects. This only removes the wait on the first call."
           )
         }
         .disabled(!model.location.isStable)
-        .onChange(of: launchAtLogin) { _, value in
-          loginError = LoginItem.set(value)
-          // Trust the service, not the checkbox: a refused registration has to
-          // put the box back rather than claim something untrue.
-          launchAtLogin = LoginItem.isEnabled
-        }
+        .onAppear(perform: readLoginItem)
+        .onReceive(
+          NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+        ) { _ in readLoginItem() }
       } header: {
         Text("Startup")
       } footer: {
         if let loginError {
           Text(loginError).foregroundStyle(.red)
+        } else if loginNeedsApproval {
+          HStack(alignment: .firstTextBaseline) {
+            Text("Waiting for your approval in System Settings › General › Login Items.")
+            Button("Open Login Items") { LoginItem.openSettings() }
+              .buttonStyle(.link)
+          }
         }
       }
 
@@ -352,6 +378,11 @@ struct GeneralPane: View {
       }
     }
     .formStyle(.grouped)
+  }
+
+  private func readLoginItem() {
+    launchAtLogin = LoginItem.isEnabled
+    loginNeedsApproval = LoginItem.requiresApproval
   }
 }
 
@@ -884,7 +915,6 @@ enum StatusStyle {
 /// caption says what the check sends in plain terms rather than leaving it to
 /// the privacy policy. See docs/licensing.md.
 struct UpdatesPane: View {
-  @State private var automatic = UpdateController.shared.automatic
   private var updates = UpdateController.shared
 
   var body: some View {
@@ -909,14 +939,13 @@ struct UpdatesPane: View {
       }
 
       Section {
-        Toggle(isOn: $automatic) {
+        // Bound to the controller, not to a copy seeded when the pane was
+        // built: Settings lives for the session, and the consent card can
+        // answer the same question while it does.
+        Toggle(
+          isOn: Binding(get: { updates.automatic }, set: { updates.answer($0) })
+        ) {
           Text("Check for updates automatically")
-        }
-        .onChange(of: automatic) { _, on in
-          updates.setAutomatic(on)
-          // Answering here is answering the consent card too. Leaving it armed
-          // would ask again about a decision already made in this pane.
-          UserDefaults.standard.set(true, forKey: UpdateController.choiceMade)
         }
       } footer: {
         Text(
@@ -960,9 +989,16 @@ private struct AuditPane: View {
   @AppStorage(AuditLog.maxMegabytesKey) private var maxMegabytes = AuditLog.defaultMaxMegabytes
 
   @State private var summary: AuditLog.Summary?
+  /// While a verification is running. It reads every segment, which takes
+  /// seconds on a full log, so it runs off the main thread and says so.
+  @State private var verifying = false
   @State private var note: String?
   @State private var fingerprint = AuditSigning.currentFingerprint()
   @State private var copied = false
+  /// Bumped on every defaults write, so the contents caption follows switches
+  /// this pane does not own — each surface's own content and capture settings
+  /// live in its detail pane, and nothing here would otherwise redraw for them.
+  @State private var defaultsRevision = 0
 
   var body: some View {
     Form {
@@ -1010,16 +1046,17 @@ private struct AuditPane: View {
         // The third act, and the only toggle in this app with a warning on it.
         // Getting somebody's mail onto disk should take three deliberate
         // switches, not one — and the last of them should say what it does.
+        //
+        // Not gated on the app-wide "Include contents" above. A surface's own
+        // override is what wins at runtime, so that gate greyed this out while
+        // a surface's contents were going to disk, and kept it from being
+        // turned on when the override was the only one set. The caption names
+        // the surfaces instead, from the same rule the log applies.
         Toggle(isOn: $fileContent) {
           Text("…including message contents")
-          Text(
-            fileContent
-              ? "⚠ Mail bodies, message text and note contents are written to a file on disk, "
-                + "unencrypted. FileVault is what protects it at rest."
-              : "Off. Even with contents shown in the window above, the file keeps only the "
-                + "structure. Turning this on is a separate decision from showing them on screen.")
+          Text(contentCaption)
         }
-        .disabled(!keepFile || !filePayloads || !content)
+        .disabled(!keepFile || !filePayloads)
 
         LabeledContent("Keep for") {
           Stepper("\(maxDays) days", value: $maxDays, in: 1...365)
@@ -1039,7 +1076,8 @@ private struct AuditPane: View {
 
       Section {
         HStack {
-          Button("Verify") { verify() }
+          Button(verifying ? "Verifying…" : "Verify") { Task { await verify() } }
+            .disabled(verifying)
           Button("Export…") { export() }
           Button("Delete the log") { erase() }
             .disabled((summary?.records ?? 0) == 0)
@@ -1125,11 +1163,17 @@ private struct AuditPane: View {
       }
     }
     .formStyle(.grouped)
-    .onAppear { summary = AuditLog.verifyAll() }
+    .onReceive(
+      NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+        .receive(on: DispatchQueue.main)
+    ) { _ in defaultsRevision += 1 }
+    .task { await verify() }
   }
 
-  private func verify() {
-    summary = AuditLog.verifyAll()
+  private func verify() async {
+    verifying = true
+    defer { verifying = false }
+    summary = await AuditLog.shared.verifyInBackground()
     note = nil
   }
 
@@ -1142,8 +1186,51 @@ private struct AuditPane: View {
 
   private func erase() {
     AuditLog.shared.clear()
-    summary = AuditLog.verifyAll()
-    note = "The log on disk is gone."
+    // Nothing left to read, so this is instant — but through the same path,
+    // so there is one way the pane learns what is on disk.
+    Task {
+      await verify()
+      note = "The log on disk is gone."
+    }
+  }
+
+  /// The surfaces whose own settings record contents: what this switch puts
+  /// in the file, with the two above it on. Asked of `AuditLog`'s rule rather
+  /// than re-derived, so the caption and the file cannot disagree.
+  private var surfacesRecordingContent: [Surface] {
+    _ = defaultsRevision
+    return SurfaceSettings.enabledSurfaces.filter {
+      AuditLog.contentReachesDisk(
+        auditEnabled: true, payloads: true, content: true,
+        surfaceCapturesContent: SurfaceSettings.capturesContent($0),
+        surfaceMode: SurfaceSettings.captureMode($0))
+    }
+  }
+
+  /// Names the surfaces, because "message contents" is a promise about all of
+  /// them and the switches that decide it are per surface.
+  private var contentCaption: String {
+    let names = surfacesRecordingContent.map(\.displayName)
+    guard !names.isEmpty else {
+      return "No surface records contents, so none would reach the file. Contents are "
+        + "turned on with Include contents above, or on a surface of its own."
+    }
+    let list = ListFormatter.localizedString(byJoining: names)
+    let record = names.count == 1 ? "records" : "record"
+    if keepFile && filePayloads && fileContent {
+      return "⚠ What \(list) \(record) — mail bodies, message text, "
+        + "what a tool returned — is written to a file on disk, unencrypted. FileVault is what "
+        + "protects it at rest."
+    }
+    if fileContent {
+      return
+        "Nothing reaches a file until one is kept with arguments and results in it. Then what \(list) "
+        + "\(record) goes into it, contents included."
+    }
+    return
+      "Off. The file keeps only the structure of what \(list) \(record). "
+      + "Turning this on writes their contents to disk, which is a separate decision from "
+      + "showing them on screen."
   }
 
   private func bytes(_ count: Int) -> String {

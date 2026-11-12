@@ -62,6 +62,28 @@ final class AuditLog {
   nonisolated static var recordsPayloads: Bool { UserDefaults.standard.bool(forKey: payloadsKey) }
   nonisolated static var recordsContent: Bool { UserDefaults.standard.bool(forKey: contentKey) }
 
+  /// Whether one surface's contents — a mail body, a message's text, what a
+  /// tool returned — land in the file, given every switch that decides it.
+  ///
+  /// Five switches, and the last two are the SURFACE's: whether it records
+  /// contents at all (its own override, else the app-wide default) and whether
+  /// it records arguments. That is the runtime's rule — `RequestObserver`
+  /// captures with the surface's verdict, `record` keeps payloads only when the
+  /// file does, and `forDisk` blanks prose again unless `contentKey` is set —
+  /// and the Activity pane asks this rather than re-deriving it. It used to
+  /// gate its switch on the app-wide default alone, so it sat greyed out while
+  /// a surface's override was sending contents to disk, and could not be
+  /// turned on when that override was the only one set.
+  ///
+  /// Values rather than reads, so `make audit-log-check` can pin every case
+  /// without `SurfaceSettings`, which lives with the host.
+  nonisolated static func contentReachesDisk(
+    auditEnabled: Bool, payloads: Bool, content: Bool,
+    surfaceCapturesContent: Bool, surfaceMode: CallCapture.Mode
+  ) -> Bool {
+    auditEnabled && payloads && content && surfaceCapturesContent && surfaceMode >= .arguments
+  }
+
   nonisolated static let defaultMaxDays = 30
   nonisolated static let defaultMaxMegabytes = 100
 
@@ -517,7 +539,7 @@ final class AuditLog {
 
   // MARK: - Reading back
 
-  struct Summary {
+  nonisolated struct Summary: Sendable {
     var segments = 0
     var records = 0
     var bytes = 0
@@ -546,10 +568,17 @@ final class AuditLog {
 
   /// Verify every segment in order, carrying the head across.
   ///
-  /// Off the main actor would be nicer, and it is deliberately not: this runs
-  /// when somebody presses a button, and a verifier racing the writer would
-  /// report a torn last line as tampering.
-  static func verifyAll() -> Summary {
+  /// Reads files and nothing else, so it can run anywhere — and it should not
+  /// run on the main thread, which is where the Activity pane used to call it,
+  /// on every open: about 13 s of CPU at the default 100 MB names-only cap.
+  ///
+  /// This used to say the main actor was what kept a verifier from racing the
+  /// writer and reading a torn last line as tampering. It never was: records
+  /// are SEALED on the main actor but COMMITTED on `writer`, a background
+  /// queue, so a verify on main raced the commits exactly as one anywhere else
+  /// would. What keeps the last line whole is running on `writer` itself —
+  /// `verifyInBackground` below — behind every commit already queued.
+  nonisolated static func verifyAll() -> Summary {
     let loaded = load()
     let verification = AuditChain.verify(segments: chainSegments(loaded))
     var summary = Summary()
@@ -561,6 +590,18 @@ final class AuditLog {
     summary.report.head = verification.head
     summary.startsAtSegment = verification.startsAtSegment
     return summary
+  }
+
+  /// `verifyAll`, on the writer's serial queue: off the main thread, after
+  /// every record queued before the call has landed, and with no commit able to
+  /// start until it is done — so no torn last line.
+  ///
+  /// It holds the writer for as long as it reads, which is fine: records keep
+  /// being sealed on the main actor and queue behind it, in order.
+  func verifyInBackground() async -> Summary {
+    await withCheckedContinuation { done in
+      writer.async { done.resume(returning: Self.verifyAll()) }
+    }
   }
 
   // MARK: - Export

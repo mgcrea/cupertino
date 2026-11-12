@@ -296,11 +296,12 @@ final class ChatConversation {
 
   /// The connection ended without us asking.
   ///
-  /// `stopSessions` SIGTERMs a surface's servers when it is switched off, and
-  /// `serveInProcess` refuses at the top of its next read loop — so this can
-  /// arrive mid-call or after a long idle. Deliberately does NOT reconnect:
-  /// quietly reopening a connection to a surface somebody just switched off is
-  /// exactly what `stopSessions` exists to prevent.
+  /// `stopSessions` SIGTERMs a surface's servers when it is switched off,
+  /// `settingsChanged` does when its writes or a gate are, and `serveInProcess`
+  /// refuses at the top of its next read loop — so this can arrive mid-call or
+  /// after a long idle. Deliberately does NOT reconnect: quietly reopening a
+  /// connection to a surface somebody just switched off is exactly what
+  /// `stopSessions` exists to prevent.
   private func lost(_ id: String) {
     guard surface?.id == id, disconnected == nil else { return }
     abandon(noting: false)

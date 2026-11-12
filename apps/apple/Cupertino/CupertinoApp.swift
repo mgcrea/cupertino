@@ -831,6 +831,11 @@ struct TrialBanner: View {
 /// decides what the assistant can even *see*, not merely whether it is allowed
 /// to use it.
 ///
+/// Which is why switching it off has to reach a server that is already
+/// running: a node server registered its tools at spawn, so
+/// `ServerHost.settingsChanged` stops one spawned with writes on, and its
+/// editor reconnects to one spawned without.
+///
 /// `@AppStorage` rather than a copy cached on the model. The cached version read
 /// the defaults once at init and the toggle wrote back from that snapshot, so a
 /// value changed from anywhere else was silently overwritten the next time the
@@ -898,10 +903,18 @@ struct WritesToggle: View {
 /// the key lives in `surfaces.json`, so the toggle, the environment variable
 /// the server reads and the capability cache key cannot disagree.
 ///
-/// Renders nothing for a surface with no gates, which is every surface but
-/// Messages today. The description comes from the manifest rather than from
-/// here because a switch that turns on a read of authentication codes needs to
-/// say so at the point of decision, not in a doc comment.
+/// Drawn once per gate by `SurfaceDetail`, so a surface with none shows none;
+/// which surfaces have gates, and which, is `surfaces.json`'s to say rather
+/// than a list here to go stale. The description comes from the
+/// manifest rather than from here because a switch that turns on a read of
+/// authentication codes needs to say so at the point of decision, not in a
+/// doc comment.
+///
+/// Switching a gate off reaches what is already running without anything
+/// here: the in-process surfaces read the gate per request, and a node server
+/// spawned with it on is stopped by `ServerHost.settingsChanged`, which
+/// watches the defaults this writes. The one thing left to this view is the
+/// recording, which outlives the request that started it.
 struct GateToggle: View {
   private let surface: Surface
   private let gate: Surface.Gate

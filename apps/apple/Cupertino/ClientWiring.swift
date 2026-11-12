@@ -485,7 +485,9 @@ enum ClientWiring {
   /// and the atomic swap all still apply, and `isOurs` still decides what may be
   /// pruned.
   @discardableResult
-  static func configure(_ client: Client, force: Bool = false) throws -> URL? {
+  static func configure(_ client: Client, force: Bool = false) throws
+    -> ClientWiringMerge.WriteOutcome
+  {
     // Before the read the merge is computed from, so a refusal is never a
     // partial write. It costs one extra read of a file this is about to read
     // anyway, which is the cheapest part of the operation.
@@ -495,10 +497,10 @@ enum ClientWiring {
         throw WriteError.collision(client: client.displayName, keys: taken)
       }
     }
-    let backup: URL?
+    let outcome: ClientWiringMerge.WriteOutcome
     switch client.wiring {
     case .json(let path, let rootKey):
-      backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+      outcome = try mergeWrite(into: path, newFileMode: 0o600) { root in
         ClientWiringMerge.merged(
           into: root, rootKey: rootKey, entries: entries(for: client.id), legacy: legacyKeys,
           remove: disabledKeys)
@@ -508,12 +510,16 @@ enum ClientWiring {
       // here rather than by the merge, because a splice deletes line ranges and
       // has no dictionary to diff. `spliceWrite` still refuses to delete a span
       // whose entry is not ours — see its `removing` argument.
-      backup = try spliceWrite(
+      outcome = try spliceWrite(
         into: path, upserting: entries(for: client.id),
         removing: Set(legacyKeys.values).union(disabledKeys))
     }
-    hostLog("cupertino", .info, "configured \(client.displayName) at \(client.wiring.path.path)")
-    return backup
+    hostLog(
+      "cupertino", .info,
+      outcome == .unchanged
+        ? "\(client.displayName) already up to date at \(client.wiring.path.path)"
+        : "configured \(client.displayName) at \(client.wiring.path.path)")
+    return outcome
   }
 
   // MARK: - Keeping configs current
@@ -678,21 +684,25 @@ enum ClientWiring {
     into path: URL,
     newFileMode: Int?,
     merge: ([String: Any]) -> [String: Any]
-  ) throws -> URL? {
+  ) throws -> ClientWiringMerge.WriteOutcome {
     let attempts = 2
     for attempt in 1...attempts {
       let stamp = ClientWiringMerge.stamp(of: path)
-      var root: [String: Any] = [:]
+      var root: [String: Any]?
       if case .present = stamp { root = try ClientWiringMerge.readJSON(path) }
       do {
-        let backup = try ClientWiringMerge.write(
-          merge(root), to: path, backupSuffix: "cupertino-backup",
+        // Nil `root` is "no file", which is always a write. A file whose merge
+        // changes nothing is not written at all — see `writeMerged` for the
+        // backup that used to cost.
+        let outcome = try ClientWiringMerge.writeMerged(
+          merge(root ?? [:]), over: root, to: path, backupSuffix: "cupertino-backup",
           expecting: stamp, newFileMode: newFileMode)
         // Hopped to the main actor rather than called: this enum is not isolated
         // and its callers are not all on the main thread. One runloop later is
         // soon enough for a redraw, and it is the only thing the revision drives.
-        Task { @MainActor in ClientConfigRevision.shared.bump() }
-        return backup
+        // Not bumped for a write that did not happen: nothing on disk moved.
+        if outcome != .unchanged { Task { @MainActor in ClientConfigRevision.shared.bump() } }
+        return outcome
       } catch ClientWiringMerge.WriteError.changedUnderneath(_) where attempt < attempts {
         continue
       }
@@ -809,13 +819,13 @@ enum ClientWiring {
   ///
   /// A file that does not exist is nothing to do rather than a file to create.
   @discardableResult
-  static func unwire(_ client: Client) throws -> URL? {
+  static func unwire(_ client: Client) throws -> ClientWiringMerge.WriteOutcome {
     let path = client.wiring.path
-    guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-    let backup: URL?
+    guard FileManager.default.fileExists(atPath: path.path) else { return .unchanged }
+    let outcome: ClientWiringMerge.WriteOutcome
     switch client.wiring {
     case .json(_, let rootKey):
-      backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+      outcome = try mergeWrite(into: path, newFileMode: 0o600) { root in
         ClientWiringMerge.unmerged(from: root, rootKey: rootKey)
       }
     case .toml:
@@ -824,10 +834,10 @@ enum ClientWiring {
       // being able to clear.
       let servers = (try? read(client))?.servers ?? [:]
       let ours = servers.filter { ClientWiringMerge.isOurs($0.value) }.keys
-      backup = try spliceWrite(into: path, upserting: [:], removing: Set(ours))
+      outcome = try spliceWrite(into: path, upserting: [:], removing: Set(ours))
     }
     hostLog("cupertino", .info, "removed our entries from \(client.displayName) at \(path.path)")
-    return backup
+    return outcome
   }
 
   /// One named entry that this app did NOT write, out of one client's config.
@@ -841,13 +851,13 @@ enum ClientWiring {
   @discardableResult
   static func removeEntry(
     _ key: String, from client: Client, inLocalScope folder: String? = nil
-  ) throws -> URL? {
+  ) throws -> ClientWiringMerge.WriteOutcome {
     let path = client.wiring.path
-    guard FileManager.default.fileExists(atPath: path.path) else { return nil }
-    let backup: URL?
+    guard FileManager.default.fileExists(atPath: path.path) else { return .unchanged }
+    let outcome: ClientWiringMerge.WriteOutcome
     switch client.wiring {
     case .json(_, let rootKey):
-      backup = try mergeWrite(into: path, newFileMode: 0o600) { root in
+      outcome = try mergeWrite(into: path, newFileMode: 0o600) { root in
         if let folder {
           return ClientWiringMerge.removing(key: key, inLocalScope: folder, from: root)
         }
@@ -858,30 +868,32 @@ enum ClientWiring {
       // `.codex/config.toml` inside each repository rather than a block in this
       // file, so there is nothing per-folder to remove. `hasLocalScope` is false
       // for this client and the pane draws no such rows.
-      backup = try spliceWrite(into: path, upserting: [:], removing: [key])
+      outcome = try spliceWrite(into: path, upserting: [:], removing: [key])
     }
     hostLog(
       "cupertino", .info,
       "removed '\(key)' from \(client.displayName)"
         + (folder.map { " in \($0)" } ?? ""))
-    return backup
+    return outcome
   }
 
   /// Read, splice, write — the TOML counterpart to `mergeWrite`, with the same
   /// stamp, the same one retry, the same backup and the same atomic swap.
   ///
-  /// Two things it does that the JSON path does not need to. It refuses to
+  /// One thing it does that the JSON path does not need to: it refuses to
   /// delete a span whose entry is not ours, because a splice removes lines by
   /// name and has no `isOurs` gate built into a dictionary merge the way
-  /// `ClientWiringMerge.merged` does. And it skips the write entirely when the
-  /// spliced text is identical to what is already there — which is what makes a
-  /// second Configure a no-op rather than a fresh backup of an unchanged file.
+  /// `ClientWiringMerge.merged` does. Like the JSON path, it skips the write
+  /// entirely when the spliced text is identical to what is already there —
+  /// which is what makes a second Configure a no-op rather than a fresh backup
+  /// of an unchanged file. The JSON path learned that from this one, and
+  /// compares parsed objects where this compares text; see `writeMerged`.
   @discardableResult
   private static func spliceWrite(
     into path: URL,
     upserting: [String: [String: Any]],
     removing: Set<String>
-  ) throws -> URL? {
+  ) throws -> ClientWiringMerge.WriteOutcome {
     let attempts = 2
     for attempt in 1...attempts {
       let stamp = ClientWiringMerge.stamp(of: path)
@@ -895,13 +907,13 @@ enum ClientWiring {
       }
       let text = ClientWiringTOML.spliced(
         document, removing: Set(ours), upserting: upserting)
-      guard text != document.text else { return nil }
-      guard let data = text.data(using: .utf8) else { return nil }
+      guard text != document.text else { return .unchanged }
       do {
         let backup = try ClientWiringMerge.write(
-          data, to: path, backupSuffix: "cupertino-backup", expecting: stamp, newFileMode: 0o600)
+          Data(text.utf8), to: path, backupSuffix: "cupertino-backup", expecting: stamp,
+          newFileMode: 0o600)
         Task { @MainActor in ClientConfigRevision.shared.bump() }
-        return backup
+        return .written(backup: backup)
       } catch ClientWiringMerge.WriteError.changedUnderneath(_) where attempt < attempts {
         continue
       }
@@ -978,33 +990,33 @@ enum ClientWiring {
   /// is not a special case of writing, it is the same write at a different
   /// path, and routing it anywhere else is how the two would drift.
   @discardableResult
-  static func configureProject(_ folder: URL) throws -> URL? {
-    let backup = try mergeWrite(into: projectConfig(in: folder), newFileMode: nil) { root in
+  static func configureProject(_ folder: URL) throws -> ClientWiringMerge.WriteOutcome {
+    let outcome = try mergeWrite(into: projectConfig(in: folder), newFileMode: nil) { root in
       ClientWiringMerge.merged(
         into: root, rootKey: "mcpServers", entries: entries(for: claudeCodeID), legacy: legacyKeys,
         remove: disabledKeys)
     }
     hostLog("cupertino", .info, "configured folder \(folder.path)")
-    return backup
+    return outcome
   }
 
   /// The same merge, one level deeper: into `projects[<dir>].mcpServers` of
   /// Claude Code's config, leaving every other project block untouched.
   @discardableResult
-  static func configureLocal(_ folder: URL) throws -> URL? {
-    let backup = try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
+  static func configureLocal(_ folder: URL) throws -> ClientWiringMerge.WriteOutcome {
+    let outcome = try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
       ClientWiringMerge.mergedIntoLocalScope(
         into: root, folder: folder.path, entries: entries(for: claudeCodeID), legacy: legacyKeys,
         remove: disabledKeys)
     }
     hostLog("cupertino", .info, "configured folder \(folder.path) in Claude Code")
-    return backup
+    return outcome
   }
 
   /// What the folder row calls. The scope picks the file; nothing else about
   /// the two paths differs any more.
   @discardableResult
-  static func configure(folder: URL, scope: ProjectScope) throws -> URL? {
+  static func configure(folder: URL, scope: ProjectScope) throws -> ClientWiringMerge.WriteOutcome {
     switch scope {
     case .local: return try configureLocal(folder)
     case .project: return try configureProject(folder)
@@ -1019,16 +1031,16 @@ enum ClientWiring {
   /// folder and unwiring it are still two things — the list is a convenience and
   /// the file is the fact — but now both are possible.
   @discardableResult
-  static func unwire(folder: URL, scope: ProjectScope) throws -> URL? {
+  static func unwire(folder: URL, scope: ProjectScope) throws -> ClientWiringMerge.WriteOutcome {
     switch scope {
     case .project:
       let path = projectConfig(in: folder)
-      guard FileManager.default.fileExists(atPath: path.path) else { return nil }
+      guard FileManager.default.fileExists(atPath: path.path) else { return .unchanged }
       return try mergeWrite(into: path, newFileMode: nil) { root in
         ClientWiringMerge.unmerged(from: root, rootKey: "mcpServers")
       }
     case .local:
-      guard FileManager.default.fileExists(atPath: claudeCodeConfig.path) else { return nil }
+      guard FileManager.default.fileExists(atPath: claudeCodeConfig.path) else { return .unchanged }
       return try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
         ClientWiringMerge.unmergedFromLocalScope(from: root, folder: folder.path)
       }
