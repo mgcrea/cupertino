@@ -38,6 +38,41 @@ export const toFileUri = (path: string, query: string): string =>
 export const escapeLike = (value: string): string =>
   value.replaceAll("\\", "\\\\").replaceAll("%", "\\%").replaceAll("_", "\\_");
 
+/**
+ * Register `cp_lower`, a Unicode-aware `lower()`, on a connection.
+ *
+ * SQLite's own `lower()` and `LIKE` fold ASCII only, and the system library
+ * has no ICU, so `LIKE '%ÉTÉ%'` never matched "été" and a search for an
+ * accented word in capitals found nothing. A JavaScript function is the only
+ * folding a read-only handle can add. Deterministic, so SQLite may reuse a
+ * result within a statement; anything but a string (NULL above all) passes
+ * through unchanged rather than throwing mid-scan.
+ */
+export const registerCaseFold = (db: DatabaseSync): void => {
+  db.function("cp_lower", { deterministic: true }, (value) =>
+    typeof value === "string" ? value.toLowerCase() : value,
+  );
+};
+
+/**
+ * `column` contains `query`, case-insensitively, as a predicate and its one
+ * bound parameter.
+ *
+ * An ASCII query keeps SQLite's own `LIKE`, which already folds it and costs
+ * no call into JavaScript per row. Only a query with a non-ASCII character
+ * pays for `cp_lower`, which the connection must carry (`openReadOnly`
+ * registers it on every handle it returns).
+ */
+export const likeContains = (column: string, query: string): { sql: string; param: string } => {
+  const ascii = [...query].every((ch) => (ch.codePointAt(0) ?? 0) < 0x80);
+  return ascii
+    ? { sql: `${column} LIKE ? ESCAPE '\\'`, param: `%${escapeLike(query)}%` }
+    : {
+        sql: `cp_lower(${column}) LIKE ? ESCAPE '\\'`,
+        param: `%${escapeLike(query.toLowerCase())}%`,
+      };
+};
+
 export type OpenOptions<T> = {
   /** Named in the error when `mode` is "off", so the message says how to re-enable. */
   envVar?: string | undefined;
@@ -87,6 +122,7 @@ export const openReadOnly = <T = undefined>(
       db = new DatabaseSync(uri, { readOnly: true, allowExtension: false });
       // Belt and braces: no caller can issue DML even by accident.
       db.exec("PRAGMA query_only = 1");
+      registerCaseFold(db);
       const validated = opts.validate?.(db) as T;
       if (attempt === "immutable") opts.onFallback?.();
       return { db, mode: attempt, validated };

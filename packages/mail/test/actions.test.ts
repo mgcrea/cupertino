@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ProtocolError } from "@mgcrea/mcp-apple-core";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
@@ -279,6 +280,96 @@ describe("batching and refs", () => {
       arguments: { refs: [refFor("INBOX", 1)], confirm: true },
     });
     expect(JSON.parse(textOf(result)).movedToTrash).toBe(true);
+  });
+
+  /*
+   * One script runs per mailbox, and each one APPLIES before the next starts.
+   * When a later mailbox's script threw, the rows already collected were
+   * dropped and the tool answered with a bare error: INBOX's two messages had
+   * been deleted (or moved, or flagged) and the caller was told nothing had.
+   */
+  describe("when one mailbox's script fails", () => {
+    const failingArchive = () => {
+      const { runner: base, recorded } = harness();
+      const runner: OsascriptRunner = {
+        run: vi.fn(async (script: string, params?: unknown) => {
+          if ((params as { mailbox?: string } | undefined)?.mailbox === "Archive") {
+            recorded.push({ script, params: (params ?? {}) as Record<string, unknown> });
+            throw new ProtocolError("No mailbox Archive in that account.", {
+              code: "MAILBOX_NOT_FOUND",
+            });
+          }
+          return base.run(script, params);
+        }) as OsascriptRunner["run"],
+      };
+      return { runner, recorded };
+    };
+    const refs = [refFor("INBOX", 1), refFor("INBOX", 2), refFor("Archive", 3)];
+
+    it("keeps the record of the mailboxes a delete already reached", async () => {
+      const client = await connect(WRITES, failingArchive().runner);
+      const result = await client.callTool({
+        name: "apple_mail_delete_messages",
+        arguments: { refs, confirm: true },
+      });
+      expect(result.isError).toBeFalsy();
+      const payload = JSON.parse(textOf(result));
+      expect(payload.deleted).toBe(2);
+      expect(payload.failed).toBe(1);
+      expect(payload.results.find((r: { ok: boolean }) => r.ok === false)).toMatchObject({
+        ref: refFor("Archive", 3),
+        ok: false,
+        code: "MAILBOX_NOT_FOUND",
+      });
+      expect(
+        payload.results.filter((r: { ok: boolean }) => r.ok).map((r: { ref: string }) => r.ref),
+      ).toEqual([refFor("INBOX", 1), refFor("INBOX", 2)]);
+    });
+
+    it("keeps the record of the mailboxes a move already reached", async () => {
+      const client = await connect(WRITES, failingArchive().runner);
+      const result = await client.callTool({
+        name: "apple_mail_move_messages",
+        arguments: { refs, destinationMailbox: "Archive", confirm: true },
+      });
+      expect(result.isError).toBeFalsy();
+      const payload = JSON.parse(textOf(result));
+      expect(payload.moved).toBe(2);
+      expect(payload.failed).toBe(1);
+      const failed = payload.results.find((r: { ok: boolean }) => r.ok === false);
+      expect(failed).toMatchObject({
+        previousRef: refFor("Archive", 3),
+        ref: null,
+        code: "MAILBOX_NOT_FOUND",
+      });
+    });
+
+    it("keeps the record of the mailboxes a flag change already reached", async () => {
+      const client = await connect(WRITES, failingArchive().runner);
+      const result = await client.callTool({
+        name: "apple_mail_set_message_flags",
+        arguments: { refs, read: true },
+      });
+      expect(result.isError).toBeFalsy();
+      const payload = JSON.parse(textOf(result));
+      expect(payload.changed).toBe(2);
+      expect(payload.failed).toBe(1);
+      expect(payload.results.find((r: { ok: boolean }) => r.ok === false)).toMatchObject({
+        ref: refFor("Archive", 3),
+        ok: false,
+        code: "MAILBOX_NOT_FOUND",
+      });
+    });
+
+    it("still answers with a plain error when no mailbox was reached", async () => {
+      const client = await connect(WRITES, failingArchive().runner);
+      const result = await client.callTool({
+        name: "apple_mail_delete_messages",
+        arguments: { refs: [refFor("Archive", 3)], confirm: true },
+      });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/No mailbox Archive/);
+    });
   });
 
   it("rejects a hand-built ref before any Apple Event", async () => {

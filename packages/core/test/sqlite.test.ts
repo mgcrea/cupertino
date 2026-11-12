@@ -6,7 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { IndexUnavailableError } from "../src/errors.js";
-import { openReadOnly } from "../src/sqlite.js";
+import { likeContains, openReadOnly, registerCaseFold } from "../src/sqlite.js";
 
 /**
  * These are about the handle, not the ladder.
@@ -99,5 +99,49 @@ describe("openReadOnly", () => {
     expect(store.db.prepare("SELECT x FROM t").get()).toEqual({ x: 1 });
     expect(() => store.db.exec("INSERT INTO t VALUES (2)")).toThrow();
     store.db.close();
+  });
+
+  /**
+   * SQLite's own `lower()` and `LIKE` fold ASCII only, and this build has no
+   * ICU, so "ÉTÉ" never matched "été". Every read-only handle carries a
+   * Unicode-aware lower() for the search lanes to fold with.
+   */
+  it("registers a Unicode-aware, null-safe cp_lower on the handle", () => {
+    const store = openReadOnly(path, "auto");
+    const one = (sql: string) => (store.db.prepare(sql).get() as { v: unknown }).v;
+    expect(one("SELECT lower('ÉTÉ') AS v")).toBe("ÉtÉ"); // SQLite's own: ASCII only
+    expect(one("SELECT cp_lower('ÉTÉ') AS v")).toBe("été");
+    expect(one("SELECT cp_lower(NULL) AS v")).toBeNull();
+    store.db.close();
+  });
+});
+
+describe("likeContains", () => {
+  const db = new DatabaseSync(":memory:");
+  registerCaseFold(db);
+  db.exec("CREATE TABLE m (text TEXT)");
+  for (const text of ["Bon été à tous", "HELLO world", "100% sure", null]) {
+    db.prepare("INSERT INTO m VALUES (?)").run(text);
+  }
+  const find = (query: string) => {
+    const { sql, param } = likeContains("text", query);
+    return (db.prepare(`SELECT text FROM m WHERE ${sql}`).all(param) as { text: string }[]).map(
+      (r) => r.text,
+    );
+  };
+
+  it("folds non-ASCII case both ways", () => {
+    expect(find("ÉTÉ")).toEqual(["Bon été à tous"]);
+    expect(find("BON ÉTÉ")).toEqual(["Bon été à tous"]);
+  });
+
+  it("keeps SQLite's own LIKE for an ASCII query, which already folds it", () => {
+    expect(likeContains("text", "hello").sql).toBe("text LIKE ? ESCAPE '\\'");
+    expect(find("hello")).toEqual(["HELLO world"]);
+  });
+
+  it("still searches a wildcard literally on the folded path", () => {
+    expect(find("100%")).toEqual(["100% sure"]);
+    expect(find("%É")).toEqual([]);
   });
 });

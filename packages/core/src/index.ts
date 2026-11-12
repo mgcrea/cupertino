@@ -8,6 +8,7 @@ export {
   type Interference,
   type InterferenceWatch,
 } from "./ax.js";
+export { settleGroups, type SettledGroups, type UnsettledRow } from "./batch.js";
 export { readPackageIdentity, type BuildInfo, type PackageIdentity } from "./build-info.js";
 export { runStdioServer, type Era, type StdioServerOptions } from "./cli.js";
 export {
@@ -98,7 +99,9 @@ export {
 } from "./schema.js";
 export {
   escapeLike,
+  likeContains,
   openReadOnly,
+  registerCaseFold,
   toFileUri,
   type OpenedStore,
   type OpenOptions,

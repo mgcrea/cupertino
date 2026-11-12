@@ -330,11 +330,14 @@ export const rebuildDraft = async (
 
   const reach = await lane.reach();
   if (!reach.ok) {
-    return refuse(
-      "accessibility",
-      MailAxLane.grantMessage("replacement"),
-      MailAxLane.nothingWritten,
-    );
+    // A refused lend is the app's answer, not a missing grant: see `MailAxLane.reach`.
+    return reach.refusal === null
+      ? refuse("accessibility", MailAxLane.grantMessage("replacement"), MailAxLane.nothingWritten)
+      : refuse(
+          "accessibility",
+          MailAxLane.refusalMessage("replacement", reach.refusal),
+          "Open Cupertino to see why; this is not an Accessibility grant.",
+        );
   }
 
   const clash = (await lane.composers()).filter((c) => c.subject === facts.subject);

@@ -126,7 +126,7 @@ describe("composerAccess()", () => {
  */
 describe("a missing Accessibility grant", () => {
   const unreachable = {
-    reach: async () => ({ ok: false, reason: "accessibility", windows: null }),
+    reach: async () => ({ ok: false, reason: "accessibility", refusal: null, windows: null }),
     composers: async () => [],
     watch: () => ({ check: async () => null }),
   } as unknown as MailAxLane;
@@ -221,5 +221,74 @@ describe("a missing Accessibility grant", () => {
     const result = await bare.listOpenDrafts();
     expect(String(result["reason"])).toContain("not started by Cupertino");
     expect(String(result["reason"])).not.toBe(text);
+  });
+});
+
+/**
+ * The app declining to lend its driver at all (Mail switched off, no licence),
+ * which is not a grant. Every draft entry point used to read it as a missing
+ * Accessibility grant and send somebody to a pane that was already right.
+ */
+describe("a refused lend", () => {
+  const REFUSAL = "Mail is switched off in Cupertino";
+  const refused = {
+    reach: async () => ({ ok: false, reason: "refused", refusal: REFUSAL, windows: null }),
+    composers: async () => [],
+    watch: () => ({ check: async () => null }),
+  } as unknown as MailAxLane;
+  const REF = "m1:98AC2C3D-408C-47E4-8FE4-6E64D1F58E99/Drafts#42";
+  const runner = {
+    run: async () => ({
+      subject: "Re: Quarterly numbers",
+      isReply: true,
+      attachments: 0,
+      saved: true,
+      note: "ok",
+      contentHead: "ALPHA",
+      draftsMailbox: "Drafts",
+    }),
+  } as unknown as OsascriptRunner;
+  const client = new AppleMailClient({
+    config: loadConfig({ APPLE_MAIL_ALLOW_WRITES: "1" }),
+    osascript: runner,
+    ax: refused,
+  });
+  const grant = MailAxLane.grantMessage("edit");
+
+  it("is what composing throws, in the app's words", async () => {
+    const error = await composeNatively(refused, runner, {
+      accountUuid: "U",
+      mailbox: "INBOX",
+      id: 1,
+      mode: "reply",
+      body: "x",
+      to: [],
+      replyToAll: false,
+      sendNow: false,
+    } as never).catch((e: unknown) => e);
+    expect(String(error)).toContain(REFUSAL);
+    expect(String(error)).toContain("nothing was written");
+    expect(String(error)).not.toContain(grant);
+  });
+
+  it("is the reason when editing an open composer", async () => {
+    const result = await client.updateDraft({ composer: "mc-0" }, { body: "x" });
+    expect(result).toMatchObject({ capability: "accessibility", replaced: false });
+    expect(String(result["reason"])).toContain(REFUSAL);
+    expect(String(result["reason"])).not.toContain(grant);
+  });
+
+  it("is the reason when rebuilding a closed draft", async () => {
+    const result = await client.updateDraft({ ref: REF }, { body: "x" });
+    expect(result).toMatchObject({ capability: "accessibility", replaced: false });
+    expect(String(result["reason"])).toContain(REFUSAL);
+    expect(String(result["reason"])).not.toContain(grant);
+  });
+
+  it("is the reason when listing open drafts", async () => {
+    const result = await client.listOpenDrafts();
+    expect(result).toMatchObject({ capability: "accessibility", drafts: [] });
+    expect(String(result["reason"])).toContain(REFUSAL);
+    expect(String(result["reason"])).toContain("does NOT mean no draft is open");
   });
 });

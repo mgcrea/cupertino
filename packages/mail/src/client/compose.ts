@@ -410,8 +410,13 @@ export const composeNatively = async (
   // established: the failure this tool was best known for left an empty reply
   // window on screen on every attempt.
   const reach = await lane.reach();
-  if (!reach.ok)
-    throw new Error(`${MailAxLane.grantMessage(params.mode)} ${MailAxLane.nothingWritten}`);
+  if (!reach.ok) {
+    throw new Error(
+      reach.refusal === null
+        ? `${MailAxLane.grantMessage(params.mode)} ${MailAxLane.nothingWritten}`
+        : MailAxLane.refusalMessage(params.mode, reach.refusal),
+    );
+  }
 
   // Files go through the verb below, never to Mail's scripting object.
   const { attachments: files = [], ...toOpen } = params;

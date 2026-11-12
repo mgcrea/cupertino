@@ -1,5 +1,6 @@
 import {
   createOsascriptRunner,
+  settleGroups,
   withBusyRetry,
   type Logger,
   type OsascriptRunner,
@@ -112,6 +113,25 @@ const AVAILABILITY_FREE = 1;
  */
 const BUSY_SCAN_BOUND = 5_000;
 
+/**
+ * Where a set of capped, ordered legs stops being complete.
+ *
+ * A leg that came back holding `limit` rows may have more past its last one,
+ * and the status filters run after the LIMIT, so nothing at or beyond that
+ * row's start is the whole picture. With several legs the cut is the one met
+ * first in the order. `null` when no leg filled its limit.
+ */
+const legCutoff = (legs: EventRow[][], limit: number, order: "asc" | "desc"): number | null => {
+  let cut: number | null = null;
+  for (const leg of legs) {
+    if (leg.length < limit) continue;
+    const last = leg.at(-1)?.startApple;
+    if (last === null || last === undefined) continue;
+    if (cut === null || (order === "asc" ? last < cut : last > cut)) cut = last;
+  }
+  return cut;
+};
+
 export type EventSummary = {
   /** Opaque; feed it back to get_event or a write tool. */
   ref: string;
@@ -153,6 +173,19 @@ export type EventPage = {
    * indistinguishable from a free afternoon.
    */
   hasMore: boolean;
+  /**
+   * Where the next page of a list starts. Pass it back as `from` with the same
+   * `to`. Events that overlap it and were already listed come back again; none
+   * are skipped.
+   *
+   * Absent while `hasMore` is true when no later `from` would move: paging is by
+   * start time, and a full page whose events all start at or before `from` (a
+   * crowd sharing one start) has no later one to give. Narrow the window or the
+   * calendars instead.
+   */
+  nextFrom?: string;
+  /** The same for search, which runs newest first: pass it back as `to`. */
+  nextTo?: string;
   expansion: ExpansionState;
   expansionReason?: string;
   /** The window actually queried, echoed so a clamp is visible. */
@@ -499,9 +532,11 @@ export class AppleCalendarClient {
     const legLimit = Math.min(filters.limit * 4 + 50, 5_000);
     const q = { fromApple, toApple, limit: legLimit, ...(calendarUuids ? { calendarUuids } : {}) };
 
+    const items = store.rangeItems(q);
+    const occurrences = store.rangeOccurrences(q);
     const merged = mergeRange({
-      items: store.rangeItems(q),
-      occurrences: store.rangeOccurrences(q),
+      items,
+      occurrences,
       coverage: store.coverage(),
       hasOccurrenceCache: store.caps.hasOccurrenceCache,
       fromApple,
@@ -510,9 +545,25 @@ export class AppleCalendarClient {
       epochOffset: store.caps.epochOffset,
     });
 
+    // Both legs run `ORDER BY start ASC LIMIT legLimit`, and the merge keeps
+    // the first legLimit of their union, so any of the three that came back
+    // full may have dropped the END of the window. Past the earliest such last
+    // start the rows are incomplete, so they are cut here and the caller is
+    // sent back for them. Without the cut, 300 declined invites filled a leg,
+    // the status filter below hid them all, and the five real meetings after
+    // them were lost with `hasMore: false`.
+    //
+    // A cut at or before `from` would empty the page without moving the next
+    // one: every row the leg held starts at one instant, or before the window.
+    // Those rows are kept instead, and no resume point is offered below.
+    const cutoff = legCutoff([items, occurrences, merged.rows], legLimit, "asc");
+    const cutAt = cutoff !== null && cutoff > fromApple ? cutoff : null;
+    const complete =
+      cutAt === null ? merged.rows : merged.rows.filter((r) => (r.startApple ?? 0) < cutAt);
+
     const declined = filters.includeDeclined ?? this.config.includeDeclined;
     const cancelled = filters.includeCancelled ?? this.config.includeCancelled;
-    const visible = merged.rows.filter((r) => this.#visible(r, { declined, cancelled }));
+    const visible = complete.filter((r) => this.#visible(r, { declined, cancelled }));
     const events = visible.slice(0, filters.limit).map((r) => this.#summarise(r, store));
 
     // A page that filled its limit is not the same as a week with nothing more
@@ -520,15 +571,16 @@ export class AppleCalendarClient {
     // about COVERAGE — the range running past what the store has expanded — and
     // an empty tail there reads as free time. A dense day of 80 events answered
     // with the default 50 and looked like the whole day.
-    //
-    // Both legs run `ORDER BY start ASC LIMIT legLimit`, so a leg that came back
-    // exactly full may have dropped the END of the window rather than the
-    // middle, which is worse than a short page and is reported separately.
-    const hasMore = visible.length > filters.limit;
+    const hasMore = visible.length > filters.limit || cutoff !== null;
+    const resumeAt = visible[filters.limit]?.startApple ?? cutAt;
+    // Only a resume point that moves: handing back `from` again sent a caller
+    // following it round the same page forever.
+    const advances = resumeAt !== null && resumeAt > fromApple;
 
     return {
       events,
       hasMore,
+      ...(hasMore && advances ? { nextFrom: this.#fromApple(resumeAt, store) } : {}),
       expansion: merged.expansion,
       ...(merged.expansionReason ? { expansionReason: merged.expansionReason } : {}),
       window: {
@@ -590,21 +642,37 @@ export class AppleCalendarClient {
       : Number.MAX_SAFE_INTEGER;
     const calendarUuids = this.#calendarUuids(store, args.calendar);
 
+    const legLimit = Math.min(args.limit * 4 + 50, 5_000);
     const rows = store.searchItems({
       fromApple,
       toApple,
-      limit: Math.min(args.limit * 4 + 50, 5_000),
+      limit: legLimit,
       text: args.query,
       scope: args.scope ?? "summary",
       ...(calendarUuids ? { calendarUuids } : {}),
     });
 
+    // The mirror of listEvents: the leg runs newest first, so a full one may
+    // have dropped the OLDEST matches. Rows at or before its last start are
+    // cut, and `nextTo` sends the caller back for them.
+    // As there, a cut that could not move `to` back is not made.
+    const cutoff = legCutoff([rows], legLimit, "desc");
+    const cutAt = cutoff !== null && cutoff + 1 < toApple ? cutoff : null;
+    const complete =
+      cutAt === null ? rows : rows.filter((r) => r.startApple !== null && r.startApple > cutAt);
+
     const declined = args.includeDeclined ?? this.config.includeDeclined;
     const cancelled = args.includeCancelled ?? this.config.includeCancelled;
-    const visible = rows.filter((r) => this.#visible(r, { declined, cancelled }));
+    const visible = complete.filter((r) => this.#visible(r, { declined, cancelled }));
+    const hasMore = visible.length > args.limit || cutoff !== null;
+    const resumeAt = visible[args.limit]?.startApple ?? cutAt;
+    const advances = resumeAt !== null && resumeAt + 1 < toApple;
     return {
       events: visible.slice(0, args.limit).map((r) => this.#summarise(r, store)),
-      hasMore: visible.length > args.limit,
+      hasMore,
+      // `to` is exclusive (`start_date < ?`), so one second past the row it
+      // must still reach.
+      ...(hasMore && advances ? { nextTo: this.#fromApple(resumeAt + 1, store) } : {}),
       // Search does not expand, and says so rather than implying it did.
       expansion: "unavailable",
       expansionReason:
@@ -1175,7 +1243,9 @@ export class AppleCalendarClient {
    * rather than silently deleting the whole series, which is the same shape of
    * refusal `updateEvent` makes and for the same underlying reason.
    */
-  async deleteEvents(refs: readonly string[]): Promise<{ results: unknown[]; scope: string }> {
+  async deleteEvents(
+    refs: readonly string[],
+  ): Promise<{ results: unknown[]; unknown?: number; scope: string }> {
     const decoded = refs.map((r, i) => ({ ref: refs[i]!, parsed: decodeRef(r) }));
 
     const occurrence = decoded.find((d) => d.parsed.isOccurrence);
@@ -1192,21 +1262,39 @@ export class AppleCalendarClient {
 
     // Grouped by calendar: findEvent costs one bulk uid fetch per calendar, so
     // deleting five events from one calendar should pay that once, not five times.
-    const byCalendar = new Map<string, string[]>();
-    for (const { parsed } of decoded) {
+    const byCalendar = new Map<string, { ref: string; uid: string }[]>();
+    for (const { ref, parsed } of decoded) {
       const key = parsed.calendarUid || "";
-      byCalendar.set(key, [...(byCalendar.get(key) ?? []), parsed.eventUid]);
+      byCalendar.set(key, [...(byCalendar.get(key) ?? []), { ref, uid: parsed.eventUid }]);
     }
-    const results: unknown[] = [];
-    for (const [calendar, uids] of byCalendar) {
-      const data = await this.#run<{ results: unknown[] }>(DELETE_EVENTS, {
-        calendar: this.#nameForRefCalendar(calendar) ?? null,
-        uids,
-      });
-      results.push(...(data.results ?? []));
+
+    // One script per calendar, and each one deletes before the next starts, so
+    // a calendar that throws (a read-only one, say) must not erase the record
+    // of the calendars already done; core's `settleGroups` keeps it. The store
+    // is invalidated whatever happened, since any of them may have changed it.
+    try {
+      const { rows, unknown } = await settleGroups(
+        byCalendar,
+        ([, events]) => events.map((e) => e.ref),
+        async ([calendar, events]) => {
+          const data = await this.#run<{ results?: { uid?: unknown }[] }>(DELETE_EVENTS, {
+            calendar: this.#nameForRefCalendar(calendar) ?? null,
+            uids: events.map((e) => e.uid),
+          });
+          const refOf = new Map(events.map((e) => [e.uid, e.ref]));
+          return (data.results ?? []).map((r) => ({
+            ref: refOf.get(String(r.uid)) ?? null,
+            ...r,
+          }));
+        },
+      );
+      // A row for a calendar whose script threw says `deleted` as the rest do:
+      // false when it failed, null when it timed out and may have gone through.
+      const results = rows.map((r) => ("ok" in r ? { ...r, deleted: r.ok } : r));
+      return { results, ...(unknown ? { unknown } : {}), scope: "series" };
+    } finally {
+      this.invalidate();
     }
-    this.invalidate();
-    return { results, scope: "series" };
   }
 
   lanes(): LaneStatus {

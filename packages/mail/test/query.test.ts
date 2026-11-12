@@ -12,23 +12,35 @@ import type { OsascriptRunner } from "../src/client/osascript.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
-/** Mail itself is never reached by this lane; the runner just has to exist. */
-const fakeRunner = (): OsascriptRunner => ({
+const iCloudAccount = () => ({
+  id: ICLOUD,
+  name: "iCloud",
+  enabled: true,
+  accountType: "iCloud",
+  emailAddresses: ["me@icloud.com"],
+  fullName: "Me",
+  directory: `/tmp/does-not-exist/V10/${ICLOUD}`,
+  mailboxes: ["INBOX", "Archive"],
+});
+
+const gmailAccount = () => ({
+  id: GMAIL,
+  name: "Gmail",
+  enabled: true,
+  accountType: "IMAP",
+  emailAddresses: ["me@gmail.com"],
+  fullName: "Me",
+  directory: `/tmp/does-not-exist/V10/${GMAIL}`,
+  mailboxes: ["[Gmail]/All Mail", "INBOX"],
+});
+
+/**
+ * Mail itself is never reached by this lane; the runner just has to exist. It
+ * answers the account listing only, with iCloud alone unless told otherwise.
+ */
+const fakeRunner = (accounts: object[] = [iCloudAccount()]): OsascriptRunner => ({
   run: vi.fn(async (script: string) =>
-    script.includes("a.emailAddresses()")
-      ? [
-          {
-            id: ICLOUD,
-            name: "iCloud",
-            enabled: true,
-            accountType: "iCloud",
-            emailAddresses: ["me@icloud.com"],
-            fullName: "Me",
-            directory: `/tmp/does-not-exist/V10/${ICLOUD}`,
-            mailboxes: ["INBOX", "Archive"],
-          },
-        ]
-      : [],
+    script.includes("a.emailAddresses()") ? accounts : [],
   ) as OsascriptRunner["run"],
 });
 
@@ -210,10 +222,10 @@ const call = async (client: Client, args: Record<string, unknown>) => {
  * parsing, the projection, the envelope — is exercised, not just the SQL.
  */
 describe("apple_mail_query over MCP", () => {
-  const connect = async (env: Record<string, string>) => {
+  const connect = async (env: Record<string, string>, runner = fakeRunner()) => {
     const { server } = createServer({
       config: loadConfig({ APPLE_MAIL_ENVELOPE_INDEX: dbPath, ...env }),
-      osascript: fakeRunner(),
+      osascript: runner,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const client = new Client({ name: "test", version: "0.0.0" });
@@ -267,6 +279,43 @@ describe("apple_mail_query over MCP", () => {
       await connect({})
     ).callTool({ name: "apple_mail_query", arguments: { groupBy: "sendr" } });
     expect(result.isError).toBe(true);
+  });
+
+  /*
+   * The account allowlist, with neither an account nor a mailbox named.
+   *
+   * Both accounts exist in Mail and in the index; APPLE_MAIL_ACCOUNTS admits
+   * iCloud only. With no scope the query used to run unscoped (`1=1`), so the
+   * aggregate counted Gmail's rows and named its senders, and a search page was
+   * cut by LIMIT before the allowlist dropped Gmail's rows: the newest two
+   * messages are Gmail's, so page one came back empty though iCloud holds four.
+   */
+  describe("with an account allowlist and no scope", () => {
+    const bothAccounts = () => fakeRunner([iCloudAccount(), gmailAccount()]);
+    const restricted = () => connect({ APPLE_MAIL_ACCOUNTS: "iCloud" }, bothAccounts());
+
+    it("aggregates over the admitted accounts only", async () => {
+      const body = await call(await restricted(), { groupBy: "sender" });
+      expect(body.totalRows).toBe(4); // 101-104, iCloud's INBOX and Archive
+      // 105 and 106 sit in Gmail's All Mail.
+      expect(body.groups.map((g: { key: string }) => g.key)).not.toContain("me@icloud.com");
+    });
+
+    it("fills a search page from the admitted accounts", async () => {
+      const result = await (
+        await restricted()
+      ).callTool({ name: "apple_mail_search_messages", arguments: { limit: 2, offset: 0 } });
+      const body = JSON.parse((result.content as { text: string }[])[0]?.text ?? "{}");
+      expect(body.messages.map((m: { subject: string }) => m.subject)).toEqual([
+        "Re: Lunch on Friday?",
+        "100% off everything_now",
+      ]);
+    });
+
+    it("leaves a query without an allowlist over every account", async () => {
+      const body = await call(await connect({}, bothAccounts()), { groupBy: "sender" });
+      expect(body.totalRows).toBe(6);
+    });
   });
 
   it("degrades like the other index tools when there is no index", async () => {

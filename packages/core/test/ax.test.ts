@@ -150,6 +150,27 @@ describe("openAxChannel", () => {
     );
   });
 
+  /*
+   * A caller has to tell "the app would not lend" from "the read failed": the
+   * first is a setting or a licence, the second a grant.
+   */
+  it("carries the host's sentence as `refusal` on a refused handshake only", async () => {
+    const refused = await hostStub({ handshake: () => "err Mail is switched off" });
+    open.add(refused.server);
+    const error = await openAxChannel(SURFACE, envFor(refused.path))
+      ?.call({ tool: "apple_desktop_press", args: {} })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AxChannelError);
+    expect((error as AxChannelError).refusal).toBe("Mail is switched off");
+
+    const hungUp = await hostStub({ reply: () => null });
+    open.add(hungUp.server);
+    const other = await openAxChannel(SURFACE, envFor(hungUp.path))
+      ?.call({ tool: "apple_desktop_press", args: {} })
+      .catch((e: unknown) => e);
+    expect((other as AxChannelError).refusal).toBeNull();
+  });
+
   it("throws when the host hangs up mid-call", async () => {
     const { path, server } = await hostStub({ reply: () => null });
     open.add(server);

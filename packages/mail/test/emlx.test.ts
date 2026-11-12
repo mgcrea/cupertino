@@ -448,4 +448,42 @@ describe("raw source", () => {
     expect(next.source).toBe("ng@domaine.fr>\r\nTo: ");
     expect(next.totalBytes).toBe(head.totalBytes);
   });
+
+  /*
+   * Pages are cut in bytes and each one decoded on its own, so a cut inside a
+   * multibyte character used to turn both halves into U+FFFD and the pages no
+   * longer joined back into the message. The boundary now backs off to the
+   * start of the character, and `nextOffset` says where the next page begins.
+   */
+  it("never splits a UTF-8 character across pages", () => {
+    const mime = "Subject: Réunion été \u{1F600}\r\n\r\nCafé\r\n";
+    const path = join(dir, "multibyte.emlx");
+    writeFileSync(path, emlx(mime));
+    // "Subject: R" is 10 bytes, so an 11-byte page ends inside the é.
+    expect(Buffer.from(mime, "utf8")[10]).toBe(0xc3);
+
+    const pages: string[] = [];
+    let offset = 0;
+    for (;;) {
+      const page = readEmlxSource(path, { offset, maxBytes: 11 });
+      pages.push(page.source);
+      expect(page.totalBytes).toBe(Buffer.byteLength(mime));
+      if (!page.truncated) break;
+      expect(page.nextOffset).toBeGreaterThan(offset);
+      offset = page.nextOffset;
+    }
+    expect(pages[0]).toBe("Subject: R");
+    expect(pages.join("")).toBe(mime);
+    expect(pages.join("")).not.toContain("�");
+  });
+
+  it("starts a page at the character an offset lands inside", () => {
+    const mime = "Subject: Réunion\r\n\r\nok\r\n";
+    const path = join(dir, "midchar.emlx");
+    writeFileSync(path, emlx(mime));
+    // Byte 11 is the é's continuation byte; the page still ends at byte 17.
+    const page = readEmlxSource(path, { offset: 11, maxBytes: 6 });
+    expect(page.source).toBe("éunion");
+    expect(page.nextOffset).toBe(17);
+  });
 });

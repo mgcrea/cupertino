@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { basename, extname, isAbsolute, join, resolve as resolvePath } from "node:path";
 
-import { writeConfinedFile } from "@mgcrea/mcp-apple-core";
+import { settleGroups, writeConfinedFile } from "@mgcrea/mcp-apple-core";
 
 import type { Config } from "../config.js";
 import { MailAxLane } from "./ax.js";
@@ -22,10 +22,12 @@ import { composeNatively } from "./compose.js";
 import {
   extractAttachment,
   lookupEmlx,
+  pageUtf8,
   readEmlx,
   readEmlxSource,
   type EmlxLookup,
   type ParsedMessage,
+  type SourcePage,
 } from "./emlx.js";
 import {
   EnvelopeIndex,
@@ -190,6 +192,9 @@ const FDA_HINT =
   "The message file could not be read. Grant Full Disk Access to the app running this server " +
   "and restart it.";
 
+/** The refs a mailbox group was given, for the rows of a group whose script threw. */
+const refsOfGroup = (group: MessageRef[]): string[] => group.map((r) => encodeRef(r));
+
 export type AppleMailClientOptions = {
   config: Config;
   logger?: Logger | undefined;
@@ -352,10 +357,14 @@ export class AppleMailClient {
    *
    * Null when there is no native lane, which is not a failure — see `#ax`.
    */
-  async composerAxReach(): Promise<{ ok: boolean; windows: string[] | null } | null> {
+  async composerAxReach(): Promise<{
+    ok: boolean;
+    refusal: string | null;
+    windows: string[] | null;
+  } | null> {
     if (!this.#ax) return null;
     const reach = await this.#ax.reach();
-    return { ok: reach.ok, windows: reach.windows };
+    return { ok: reach.ok, refusal: reach.refusal, windows: reach.windows };
   }
 
   async lanes(): Promise<LaneStatus> {
@@ -708,7 +717,21 @@ export class AppleMailClient {
     account?: string | undefined;
     mailbox?: string | undefined;
   }): Promise<number[] | undefined> {
-    if (!opts.account && !opts.mailbox) return undefined;
+    if (!opts.account && !opts.mailbox) {
+      if (!this.mailboxes.restricted) return undefined;
+      // With an allowlist, "no scope" means the admitted accounts, in SQL.
+      // Returning undefined here made the predicate `1=1`: groupBy counted and
+      // named senders from excluded accounts, and search applied LIMIT/OFFSET
+      // before `#rowToSummary` dropped their rows, so pages came back short or
+      // empty. That drop stays as a second line of defence. An allowlist that
+      // admits no indexed mailbox scopes to `[]`, which narrows to nothing.
+      const index = await this.index();
+      const rowids: number[] = [];
+      for (const row of index?.mailboxes() ?? []) {
+        if (await this.mailboxes.admitsIndexUrl(row.url)) rowids.push(row.rowid);
+      }
+      return rowids;
+    }
     const lookup = await this.mailboxLookup();
     const account = opts.account ? await this.mailboxes.resolveAccount(opts.account) : null;
     const wanted = opts.mailbox
@@ -1052,13 +1075,12 @@ export class AppleMailClient {
   async getMessageSource(
     ref: string,
     opts: { offset: number; maxBytes: number },
-  ): Promise<{
-    source: string;
-    totalBytes: number | null;
-    truncated: boolean;
-    via: "emlx" | "applescript";
-    fallbackReason?: string;
-  }> {
+  ): Promise<
+    SourcePage & {
+      via: "emlx" | "applescript";
+      fallbackReason?: string;
+    }
+  > {
     const decoded = decodeRef(ref);
     const located = await this.#lookupMessageFile(decoded);
     if (located.found) {
@@ -1066,12 +1088,11 @@ export class AppleMailClient {
     }
     const [summary] = await this.getMessages(decoded, [decoded.id], { withSource: true });
     if (!summary) throw new MessageNotFoundError(ref);
-    const full = summary.source ?? "";
-    const slice = full.slice(opts.offset, opts.offset + opts.maxBytes);
+    // Paged in UTF-8 bytes like the file lane, not in the string's UTF-16
+    // units, so an offset means the same thing whichever lane answers.
+    const full = Buffer.from(summary.source ?? "", "utf8");
     return {
-      source: slice,
-      totalBytes: full.length,
-      truncated: opts.offset + slice.length < full.length,
+      ...pageUtf8(full, opts.offset, opts.maxBytes),
       via: "applescript",
       ...(located.found ? {} : { fallbackReason: located.explain }),
     };
@@ -1524,19 +1545,22 @@ export class AppleMailClient {
   // Every mutation reports the state Mail re-read after the change. Verifying a
   // write against the search index instead would race Mail's own update of it.
 
-  /** Set flags across refs, one Apple Event per distinct mailbox. */
+  /**
+   * Set flags across refs, one Apple Event per distinct mailbox.
+   *
+   * This and the move and delete below settle each mailbox on its own (see
+   * core's `settleGroups`): a mailbox whose script throws gets a failed row
+   * per ref while the mailboxes already changed keep theirs, and `unknown`
+   * counts refs whose script timed out mid-change.
+   */
   async setFlags(
     refs: string[],
     flags: { read?: boolean; flagged?: boolean; flagIndex?: number; junk?: boolean },
-  ): Promise<{ changed: number; failed: number; results: unknown[] }> {
+  ): Promise<{ changed: number; failed: number; unknown?: number; results: unknown[] }> {
     const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
-    const results: unknown[] = [];
-    let changed = 0;
-    let failed = 0;
-
-    for (const [, group] of groups) {
+    const { rows, unknown } = await settleGroups(groups.values(), refsOfGroup, async (group) => {
       const first = group[0];
-      if (!first) continue;
+      if (!first) return [];
       const res = await withBusyRetry(() =>
         this.runner.run<{ mailbox: string; results: { id: number; ok: boolean }[] }>(SET_FLAGS, {
           accountUuid: first.accountUuid,
@@ -1545,34 +1569,38 @@ export class AppleMailClient {
           ...flags,
         }),
       );
-      for (const r of res.results) {
-        if (r.ok) changed += 1;
-        else failed += 1;
-        results.push({
-          ref: encodeRef({ accountUuid: first.accountUuid, mailbox: first.mailbox, id: r.id }),
-          ...r,
-        });
-      }
-    }
-    return { changed, failed, results };
+      return res.results.map((r) => ({
+        ref: encodeRef({ accountUuid: first.accountUuid, mailbox: first.mailbox, id: r.id }),
+        ...r,
+      }));
+    });
+    return {
+      changed: rows.filter((r) => r.ok === true).length,
+      failed: rows.filter((r) => r.ok === false).length,
+      ...(unknown ? { unknown } : {}),
+      results: rows,
+    };
   }
 
   async moveMessages(
     refs: string[],
     opts: { destinationMailbox: string; destinationAccount?: string },
-  ): Promise<{ moved: number; failed: number; destination: string; results: unknown[] }> {
+  ): Promise<{
+    moved: number;
+    failed: number;
+    unknown?: number;
+    destination: string;
+    results: unknown[];
+  }> {
     const destAccount = opts.destinationAccount
       ? await this.mailboxes.resolveAccount(opts.destinationAccount)
       : null;
     const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
-    const results: unknown[] = [];
-    let moved = 0;
-    let failed = 0;
     let destination = opts.destinationMailbox;
 
-    for (const [, group] of groups) {
+    const { rows, unknown } = await settleGroups(groups.values(), refsOfGroup, async (group) => {
       const first = group[0];
-      if (!first) continue;
+      if (!first) return [];
       const res = await withBusyRetry(() =>
         this.runner.run<{
           destination: string;
@@ -1587,47 +1615,52 @@ export class AppleMailClient {
         }),
       );
       destination = res.destination;
-      for (const r of res.results) {
-        if (r.ok) moved += 1;
-        else failed += 1;
-        results.push({
-          previousRef: encodeRef({
-            accountUuid: first.accountUuid,
-            mailbox: first.mailbox,
-            id: r.id,
-          }),
-          // A moved message has a new row id, so the old ref is dead. Null here
-          // means Mail moved it but we could not re-locate it by Message-ID.
-          ref:
-            r.ok && r.newId
-              ? encodeRef({
-                  accountUuid: res.destinationAccountUuid || first.accountUuid,
-                  mailbox: res.destination,
-                  id: r.newId,
-                })
-              : null,
-          ...r,
-        });
-      }
-    }
-    return { moved, failed, destination, results };
+      return res.results.map((r) => ({
+        previousRef: encodeRef({
+          accountUuid: first.accountUuid,
+          mailbox: first.mailbox,
+          id: r.id,
+        }),
+        // A moved message has a new row id, so the old ref is dead. Null here
+        // means Mail moved it but we could not re-locate it by Message-ID.
+        ref:
+          r.ok && r.newId
+            ? encodeRef({
+                accountUuid: res.destinationAccountUuid || first.accountUuid,
+                mailbox: res.destination,
+                id: r.newId,
+              })
+            : null,
+        ...r,
+      }));
+    });
+    // A row for a mailbox whose script threw names the message it was given,
+    // which is the previous ref here: `ref` is the fresh one, and there is none.
+    const results = rows.map((r) =>
+      "previousRef" in r ? r : { ...r, previousRef: r.ref, ref: null },
+    );
+    return {
+      moved: rows.filter((r) => r.ok === true).length,
+      failed: rows.filter((r) => r.ok === false).length,
+      ...(unknown ? { unknown } : {}),
+      destination,
+      results,
+    };
   }
 
   async deleteMessages(refs: string[]): Promise<{
     deleted: number;
     failed: number;
+    unknown?: number;
     movedToTrash: boolean | null;
     results: unknown[];
   }> {
     const groups = groupRefsByMailbox(refs.map((r) => decodeRef(r)));
-    const results: unknown[] = [];
-    let deleted = 0;
-    let failed = 0;
     let movedToTrash: boolean | null = null;
 
-    for (const [, group] of groups) {
+    const { rows, unknown } = await settleGroups(groups.values(), refsOfGroup, async (group) => {
       const first = group[0];
-      if (!first) continue;
+      if (!first) return [];
       const res = await withBusyRetry(() =>
         this.runner.run<{ movedToTrash: boolean | null; results: { id: number; ok: boolean }[] }>(
           DELETE_MESSAGES,
@@ -1635,13 +1668,18 @@ export class AppleMailClient {
         ),
       );
       movedToTrash = res.movedToTrash;
-      for (const r of res.results) {
-        if (r.ok) deleted += 1;
-        else failed += 1;
-        results.push(r);
-      }
-    }
-    return { deleted, failed, movedToTrash, results };
+      return res.results.map((r) => ({
+        ref: encodeRef({ accountUuid: first.accountUuid, mailbox: first.mailbox, id: r.id }),
+        ...r,
+      }));
+    });
+    return {
+      deleted: rows.filter((r) => r.ok === true).length,
+      failed: rows.filter((r) => r.ok === false).length,
+      ...(unknown ? { unknown } : {}),
+      movedToTrash,
+      results: rows,
+    };
   }
 
   /**
@@ -1939,6 +1977,19 @@ export class AppleMailClient {
     attachments: string[],
   ): Promise<Record<string, unknown>> {
     const reach = await lane.reach();
+    if (!reach.ok && reach.refusal !== null) {
+      // The app declining to lend, not a missing grant: see `MailAxLane.reach`.
+      return {
+        replaced: false,
+        degraded: true,
+        method: "inPlace",
+        capability: "accessibility",
+        reason:
+          "Cupertino would not lend Mail its Accessibility driver, which is the only route into " +
+          `an open composer, so nothing was edited. The app said: ${reach.refusal}`,
+        hint: "Open Cupertino to see why; this is not an Accessibility grant.",
+      };
+    }
     if (!reach.ok) {
       return {
         replaced: false,
@@ -2044,6 +2095,17 @@ export class AppleMailClient {
       };
     }
     const reach = await this.#ax.reach();
+    if (!reach.ok && reach.refusal !== null) {
+      return {
+        degraded: true,
+        capability: "accessibility",
+        drafts: [],
+        reason:
+          "Cupertino would not lend its Accessibility driver, so nothing was checked — this " +
+          `does NOT mean no draft is open. The app said: ${reach.refusal}`,
+        hint: "Open Cupertino to see why; this is not an Accessibility grant.",
+      };
+    }
     if (!reach.ok) {
       return {
         degraded: true,

@@ -23,10 +23,12 @@ type Answer = Record<string, unknown> | { refusal: string };
  *
  * `answers` maps a bare verb — `list_windows`, `expand` — to what it replies,
  * either a document or a refusal. `seen` records the calls in order, which is
- * what pins the sequence a paste has to follow.
+ * what pins the sequence a paste has to follow. `handshake` is the line the
+ * host answers the handshake with, so a refusal can be staged as the app sends it.
  */
 const hostStub = async (
   answers: Record<string, Answer | ((args: Record<string, unknown>, n: number) => Answer)>,
+  handshake = "ok",
 ): Promise<{ env: NodeJS.ProcessEnv; seen: { tool: string; args: Record<string, unknown> }[] }> => {
   const dir = mkdtempSync(join(tmpdir(), "mail-ax-"));
   scratch.add(dir);
@@ -46,7 +48,7 @@ const hostStub = async (
         buffer = buffer.slice(newline + 1);
         if (!greeted) {
           greeted = true;
-          socket.write("ok\n");
+          socket.write(`${handshake}\n`);
           continue;
         }
         const message = JSON.parse(line);
@@ -100,6 +102,7 @@ describe("reach", () => {
     await expect(lane.reach()).resolves.toEqual({
       ok: true,
       reason: null,
+      refusal: null,
       windows: ["Re: lunch"],
     });
     lane.close();
@@ -122,9 +125,40 @@ describe("reach", () => {
     await expect(lane.reach()).resolves.toEqual({
       ok: false,
       reason: "accessibility",
+      refusal: null,
       windows: null,
     });
     lane.close();
+  });
+
+  /*
+   * The app would not lend at all, which is not a grant. Reading it as one sent
+   * somebody to the Accessibility pane — already right — when the host had said
+   * Mail was switched off, or that there was no licence.
+   */
+  it("a refused handshake is reported with the host's own sentence, not as a grant", async () => {
+    const { env, seen } = await hostStub(
+      { list_windows: { windows: [] } },
+      "err Mail is switched off in Cupertino — turn it back on in the app",
+    );
+    const lane = MailAxLane.open(env)!;
+    await expect(lane.reach()).resolves.toEqual({
+      ok: false,
+      reason: "refused",
+      refusal: "Mail is switched off in Cupertino — turn it back on in the app",
+      windows: null,
+    });
+    expect(seen).toEqual([]);
+    lane.close();
+  });
+});
+
+describe("refusalMessage", () => {
+  it("names the host's refusal and says nothing was written", () => {
+    const message = MailAxLane.refusalMessage("reply", "no licence key");
+    expect(message).toContain("no licence key");
+    expect(message).toContain("nothing was written");
+    expect(message).not.toContain("System Settings");
   });
 });
 

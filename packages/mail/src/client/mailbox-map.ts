@@ -24,6 +24,13 @@ export type MailAccount = {
   mailboxes: string[];
 };
 
+/** Split an Envelope Index mailbox URL into its account host and mailbox path. */
+const parseIndexUrl = (url: string): { host: string; path: string } | null => {
+  const m = /^([a-z-]+):\/\/([^/]*)\/?(.*)$/i.exec(url);
+  if (!m) return null;
+  return { host: decodeURIComponent(m[2] ?? ""), path: decodeURIComponent(m[3] ?? "") };
+};
+
 export type MailboxMapOptions = {
   runner: OsascriptRunner;
   /** Names or UUIDs. Empty = every account. */
@@ -47,6 +54,16 @@ export class MailboxMap {
     this.#allowlist = opts.allowlist;
     this.#ttlMs = opts.ttlMs;
     this.#now = opts.now ?? Date.now;
+  }
+
+  /**
+   * True when an allowlist is set. A query that names no account then has a
+   * scope of its own, the admitted accounts, rather than none: a SQL lane that
+   * read "no account given" as "no filter" would count, name and page through
+   * mail the user excluded before any row reached this map.
+   */
+  get restricted(): boolean {
+    return this.#allowlist.length > 0;
   }
 
   /** True when the allowlist admits this account, by UUID or by display name. */
@@ -172,17 +189,29 @@ export class MailboxMap {
     accounts: readonly MailAccount[],
     url: string,
   ): { account: MailAccount; mailbox: string } | null {
-    const m = /^([a-z-]+):\/\/([^/]*)\/?(.*)$/i.exec(url);
-    if (!m) return null;
-    const host = decodeURIComponent(m[2] ?? "");
-    const path = decodeURIComponent(m[3] ?? "");
-    const account = accounts.find((a) => a.id === host);
+    const parsed = parseIndexUrl(url);
+    if (!parsed) return null;
+    const account = accounts.find((a) => a.id === parsed.host);
     if (!account) return null;
     try {
-      return { account, mailbox: this.resolveMailboxName(account, path) };
+      return { account, mailbox: this.resolveMailboxName(account, parsed.path) };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * True when an Envelope Index `mailboxes.url` belongs to an admitted account.
+   *
+   * The host alone decides, on purpose. `resolveIndexUrl` also needs the path
+   * to name a mailbox Mail scripts, and a row whose path does not resolve is
+   * still that account's mail: scoping by the host keeps it in the admitted
+   * set, where the per-row lookup decides what it can show.
+   */
+  async admitsIndexUrl(url: string): Promise<boolean> {
+    const parsed = parseIndexUrl(url);
+    if (!parsed) return false;
+    return (await this.accounts()).some((a) => a.id === parsed.host);
   }
 
   invalidate(): void {

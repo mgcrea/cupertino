@@ -4,6 +4,7 @@ import {
   columnsOf,
   escapeLike,
   fingerprintSchema,
+  likeContains,
   openReadOnly,
   SchemaDriftError,
   type Logger,
@@ -407,7 +408,9 @@ export class MessagesStore {
    */
   search(query: string, limit: number, includeReactions = false): MessageRow[] {
     const m = this.caps.messageColumns;
-    const needle = `%${escapeLike(query)}%`;
+    // Folded beyond ASCII when the query needs it, so this pass agrees with
+    // the blob pass below, which lowers in JavaScript.
+    const match = likeContains(`m."text"`, query);
     const reactionFilter =
       !includeReactions && m.has("associated_message_type")
         ? `AND (m."associated_message_type" IS NULL OR m."associated_message_type" = 0)`
@@ -419,11 +422,11 @@ export class MessagesStore {
         `SELECT ${this.#messageColumns()}
            FROM "message" m
            ${this.#joins()}
-          WHERE m."text" LIKE ? ESCAPE '\\' ${reactionFilter}
+          WHERE ${match.sql} ${reactionFilter}
           ORDER BY m."date" DESC
           LIMIT ${cap}`,
       )
-      .all(needle) as Record<string, unknown>[];
+      .all(match.param) as Record<string, unknown>[];
 
     const column = fromColumn.map((r) => this.#toRow(r));
     if (!m.has("attributedBody")) return column.slice(0, cap);

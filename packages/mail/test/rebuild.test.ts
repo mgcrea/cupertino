@@ -203,7 +203,7 @@ const world = (over: Over = {}) => {
 
   const lane = {
     watch: () => ({ check: async () => null }),
-    reach: async () => ({ ok: true, reason: null, windows: [] }),
+    reach: async () => ({ ok: true, reason: null, refusal: null, windows: [] }),
     composers: async (quoteChars?: number) => {
       timeline.push(quoteChars === undefined ? "composers" : `composers:${quoteChars}`);
       return composer(quoteChars);
@@ -728,7 +728,7 @@ describe("the route a closed draft takes through updateDraft", () => {
     };
     const lane = {
       watch: () => ({ check: async () => null }),
-      reach: async () => ({ ok: true, reason: null, windows: [] }),
+      reach: async () => ({ ok: true, reason: null, refusal: null, windows: [] }),
       composers: async () =>
         composers.map((c, at) => ({
           composer: `mc-${at}`,

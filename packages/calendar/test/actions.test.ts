@@ -4,10 +4,12 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 
-import type { OsascriptRunner } from "@mgcrea/mcp-apple-core";
+import { ProtocolError, type OsascriptRunner } from "@mgcrea/mcp-apple-core";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import { AppleCalendarClient } from "../src/client/calendar.js";
+import { encodeRef } from "../src/client/ref.js";
 import { loadConfig } from "../src/config.js";
 import { createServer } from "../src/server.js";
 
@@ -63,7 +65,10 @@ const fakeRunner = (overrides: Record<string, unknown> = {}) => {
   const run = vi.fn(async (source: string, params?: unknown) => {
     if (source.includes("cal.events.push(ev)")) return overrides.created ?? READBACK;
     if (source.includes("p.uids.length")) {
-      const uids = (params as { uids: string[] }).uids;
+      const { uids, calendar } = params as { uids: string[]; calendar: string | null };
+      const fails = overrides.deleteFails as Record<string, Error> | undefined;
+      const thrown = calendar === null ? undefined : fails?.[calendar];
+      if (thrown) throw thrown;
       return (
         overrides.deleted ?? {
           results: uids.map((u) => ({ uid: u, found: true, deleted: true, repeats: false })),
@@ -386,6 +391,49 @@ describe("apple_calendar_delete_events", () => {
     const doc = out.json() as { results: { deleted: boolean; reason: string }[] };
     expect(doc.results[0]!.deleted).toBe(false);
     expect(doc.results[0]!.reason).toMatch(/did not delete/);
+  });
+
+  /**
+   * One script runs per calendar, and each one DELETES before the next starts.
+   * When a later calendar's script threw, the rows already collected were
+   * dropped, the tool answered with a bare error although Work's event was
+   * gone, and the store cache was not invalidated either.
+   */
+  describe("when one calendar's script fails", () => {
+    const notWritable = new ProtocolError("Holidays is read-only.", {
+      code: "CALENDAR_NOT_WRITABLE",
+    });
+
+    it("keeps the record of the calendars it already reached", async () => {
+      const work = await refFor("Design review");
+      const holiday = encodeRef("CAL-2", "E-HOLIDAY");
+      const out = await call(
+        "apple_calendar_delete_events",
+        { refs: [work, holiday], confirm: true },
+        {},
+        { deleteFails: { Holidays: notWritable } },
+      );
+      expect(out.isError).toBe(false);
+      const doc = out.json() as {
+        results: { ref: string; deleted: boolean; ok?: boolean; code?: string }[];
+      };
+      expect(doc.results).toHaveLength(2);
+      expect(doc.results[0]).toMatchObject({ ref: work, uid: "E-ONE", deleted: true });
+      expect(doc.results[1]).toMatchObject({ ref: holiday, ok: false, deleted: false });
+      expect(doc.results[1]!.code).toMatch(/NotWritable/);
+    });
+
+    it("drops its cached store even when a calendar failed", async () => {
+      const { runner } = fakeRunner({ deleteFails: { Holidays: notWritable } });
+      const config = loadConfig({
+        APPLE_CALENDAR_STORE: storePath,
+        APPLE_CALENDAR_ALLOW_WRITES: "1",
+      });
+      const client = new AppleCalendarClient({ config, osascript: runner, now: () => NOW });
+      const invalidate = vi.spyOn(client, "invalidate");
+      await expect(client.deleteEvents([encodeRef("CAL-2", "E-HOLIDAY")])).rejects.toThrow();
+      expect(invalidate).toHaveBeenCalled();
+    });
   });
 
   /**

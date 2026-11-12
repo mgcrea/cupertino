@@ -82,9 +82,21 @@ export type AxChannel = {
  */
 export class AxChannelError extends AppleAutomationError {
   override readonly name: string = "AxChannelError";
+  /**
+   * The host's own sentence when it refused the handshake; null for every
+   * other failure.
+   *
+   * Kept apart because it is a different answer. A refused tool call means the
+   * app tried and the read failed, which is a grant; a refused handshake means
+   * the app would not lend at all — switched off, unlicensed, or not this
+   * server — and a caller that reads both as "grant Accessibility" sends
+   * somebody to a pane that is already right.
+   */
+  readonly refusal: string | null;
 
-  constructor(surface: SurfaceContext, message: string) {
+  constructor(surface: SurfaceContext, message: string, refusal: string | null = null) {
     super(`${surface.appName}: ${message}`, { surface: surface.appName });
+    this.refusal = refusal;
   }
 }
 
@@ -133,7 +145,8 @@ export const openAxChannel = (
         s.off("error", onError);
         if (line !== OK) {
           s.destroy();
-          reject(new AxChannelError(surface, refusal(line)));
+          const reason = refusal(line);
+          reject(new AxChannelError(surface, reason, reason));
           return;
         }
         resolve(s);
