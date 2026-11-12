@@ -1555,6 +1555,22 @@ Known gaps, found in review on 2026-11-11 and left for later:
 - **A drop onto another application.** `to.bundleId` is checked for reach and window, and no drop
   across applications has been posted. Whether a Finder file dragged into Mail needs a pause after
   the press, as some drag sources do before starting a drag session, is not known.
+- **Leads from [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop),
+  read 2026-11-01 at `9eb9b29`, none measured here.** Its retry-safety idea became the section
+  above. The rest:
+  - **Chromium and Electron trees.** Unlike WebKit, which needs nothing (above), a Chromium
+    renderer exposes little until `AXManualAccessibility` (Electron's switch) or
+    `AXEnhancedUserInterface` is set on its application element. This surface sets neither.
+    `crates/macos/src/tree/renderer_probe.rs` prefers the manual switch, since the enhanced one is
+    known to disturb window animation and placement in some apps.
+  - **Say what an action opened.** After every action it lists the menus, sheets, alerts and
+    popovers now open, so the next call targets the overlay rather than the window behind it.
+  - **Read back more writes.** Toggle, check, expand and collapse are read back, and a state that
+    contradicts the request is an error. Here only `set_value` and `select` answer `confirmed`,
+    though `press_menu` already reads `wasChecked`.
+  - **Smaller ones.** A `children_count` on each container a depth cap cut off, refusing `cmd+q`
+    and the other quit chords unless forced, and a test that a secure field's value never comes
+    back.
 
 - **Whether the sweep needs to be a sweep.** `hover` walks the pointer over `durationMs` (default 600) because that is the shape proven by hand against a SwiftUI chart — 24 steps 25 ms apart.
   Whether a single `mouseMoved` would have fired `onContinuousHover` just as well was **never
