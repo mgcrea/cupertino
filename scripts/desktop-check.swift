@@ -472,7 +472,8 @@ struct DesktopCheck {
       "launch by a path whose bundle is not the bundleId given is refused, starting nothing",
       pathMismatchError && pathMismatch.contains("not com.apple.TextEdit")
         && NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.TextEdit")
-          .allSatisfy { !$0.isActive })
+          .allSatisfy { !$0.isActive }
+    )
     let (pathSelf, pathSelfError) = callText(
       "apple_desktop_launch", ["path": Bundle.main.bundlePath], writes: true, anyApp: true)
     check(
@@ -535,6 +536,29 @@ struct DesktopCheck {
       "a bundle is read for its quarantine flag, and one without it is not held back",
       !unflagged && flagged)
 
+    // Bringing an application forward for a click, hover, type or key needs the
+    // grant: the read-back that decides whether it came is Accessibility. Without
+    // one, the verb used to look the application up, open a session (a card, a
+    // countdown) and activate it, then blame the application for "not coming to
+    // the front". The grant is refused first, so nothing is admitted. Which half
+    // asserts depends on the machine; an absent application keeps both from
+    // posting or activating anything.
+    var forwardFailure: AccessibilityDriver.Failure?
+    do {
+      _ = try AccessibilityDriver.activateAndWait(bundleId: "com.example.absent", scope: .any)
+    } catch let failure as AccessibilityDriver.Failure {
+      forwardFailure = failure
+    } catch {}
+    if AccessibilityDriver.isTrusted() {
+      check(
+        "with the grant, bringing forward an application that is not running says so",
+        { if case .appNotRunning = forwardFailure { return true } else { return false } }())
+    } else {
+      check(
+        "without the grant, bringing an application forward is refused for the grant first",
+        { if case .notTrusted = forwardFailure { return true } else { return false } }())
+    }
+
     // The same rule for the session verbs, which name their target now. Each of
     // these is refused BEFORE an event is built — a stale handle, a target that
     // is not running, a target outside the reach — and that is the only reason
@@ -545,6 +569,45 @@ struct DesktopCheck {
     check(
       "type naming a stale handle is refused rather than typed into whatever is in front",
       staleError && staleText.contains("no longer exists"))
+
+    // A handle whose application has quit. `expand` used to read its children
+    // through the walk's silent read, get nothing, and answer an empty tree
+    // that looked complete — no error, no `stoppedBy`. The application here is
+    // /usr/bin/true, gone before the handle is minted, so expand reads from a
+    // process that no longer exists and nothing on screen is touched.
+    if AccessibilityDriver.isTrusted() {
+      let gone = Process()
+      gone.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+      try? gone.run()
+      gone.waitUntilExit()
+      let deadHandle = AccessibilityDriver.handles.put(
+        AXUIElementCreateApplication(gone.processIdentifier), bundleId: "com.example.quit")
+      let (expandText, expandError) = callText(
+        "apple_desktop_expand", ["handle": deadHandle], writes: false, anyApp: true)
+      check(
+        "expand on a handle whose application has quit says it quit, not an empty tree",
+        expandError && expandText.contains("quit (pid \(gone.processIdentifier))"))
+    } else {
+      skip(
+        "expand on a handle whose application has quit says it quit, not an empty tree",
+        "Accessibility is not granted, so expand refuses before it reads anything")
+    }
+    // A closed window in a live application answers `invalidUIElement`, which
+    // expand now reads loudly. The failure names the handle: it used to name
+    // the description, "Element 'Pressing 'e5'' no longer exists".
+    let closed =
+      AccessibilityDriver.failure(
+        for: .invalidUIElement, doing: "Expanding 'e5'", handle: "e5")?.errorDescription ?? ""
+    check(
+      "an element that is gone is named by its handle, not by what was being done",
+      closed.contains("Element 'e5' no longer exists") && !closed.contains("'Expanding"))
+    let closedUnhandled =
+      AccessibilityDriver.failure(
+        for: .invalidUIElement, doing: "Pressing 'File > Close'")?.errorDescription ?? ""
+    check(
+      "and one reached by a menu path, with no handle, says what failed without a handle",
+      closedUnhandled.contains("Pressing 'File > Close' failed")
+        && !closedUnhandled.contains("Take a fresh ui_tree"))
     let (_, absentError) = callText(
       "apple_desktop_key", ["key": "return", "bundleId": "com.example.absent"], writes: true,
       anyApp: true)
@@ -1217,6 +1280,37 @@ struct DesktopCheck {
       selectBareError && selectBare.contains("'handle'"))
     check("select is a step a run can take", DesktopServer.runSteps.contains("select"))
 
+    // A step's arguments are checked by the code its tool checks them with,
+    // not just for presence. Each of these passed the old presence test, ran
+    // step 1 and failed at step 2. Every one is refused before anything is
+    // read or pressed, so a Maps that happens to be running is not touched.
+    for (label, bad) in [
+      (
+        "a menu with no item",
+        ["tool": "press_menu", "bundleId": "com.apple.Maps", "path": ["View"]]
+      ),
+      ("a value that is not a string", ["tool": "set_value", "handle": "e999999", "value": 5]),
+      ("a search with no criteria", ["tool": "find_elements", "bundleId": "com.apple.Maps"]),
+      ("a frame with no component", ["tool": "set_window_frame", "handle": "e999999"]),
+      ("a key no layout names", ["tool": "key", "key": "zzz", "bundleId": "com.example.absent"]),
+    ] as [(String, [String: Any])] {
+      let (text, failed) = runText([["tool": "wait", "ms": 1], bad])
+      check(
+        "a run with \(label) in step 2 is refused before step 1 runs",
+        failed && text.contains("Step 2") && text.contains("Nothing was run")
+          && json(text)?["completed"] == nil)
+    }
+    // And the tool itself refuses an unknown key before it brings anything
+    // forward: the application named here is not running, and the refusal is
+    // about the key, not about that.
+    let (unknownKey, unknownKeyFailed) = callText(
+      "apple_desktop_key", ["key": "zzz", "bundleId": "com.example.absent"], writes: true,
+      anyApp: true)
+    check(
+      "key with a key no layout names is refused for the key, before the app is looked up",
+      unknownKeyFailed && unknownKey.contains("Unknown key 'zzz'")
+        && !unknownKey.contains("not running"))
+
     // What the tree says about menus, without opening one.
     let menuElement = AccessibilityDriver.Element(
       handle: "e1", role: "AXTextField", subrole: nil, identifier: nil, name: nil, value: nil,
@@ -1243,6 +1337,32 @@ struct DesktopCheck {
       "a tree read while a menu is open says so, and how to close it",
       DesktopServer.treeBody(withMenu)["openMenus"] as? Int == 1
         && (DesktopServer.treeBody(withMenu)["menuNote"] as? String)?.contains("escape") == true)
+
+    // The byte cap holds for the text that is SENT. Each element used to be
+    // measured on its own, at the top level, and then emitted two levels deep
+    // inside `"elements": [ ]`, where every line carries four more spaces: a
+    // 40,000 cap emitted 52,130 bytes. Synthetic elements, so nothing is walked.
+    let many = (0..<2000).map { i -> AccessibilityDriver.Element in
+      let x = Double(100 + (i * 37) % 1400) + 0.5
+      let y = Double(80 + (i * 53) % 800) + 0.25
+      return AccessibilityDriver.Element(
+        handle: "e\(10000 + i)", role: i % 3 == 0 ? "AXButton" : "AXStaticText",
+        subrole: i % 5 == 0 ? "AXCloseButton" : nil,
+        identifier: i % 2 == 0 ? "toolbar.item.\(i)" : nil, name: "Message from Somebody \(i)",
+        value: i % 4 == 0 ? "Value \(i)" : nil, rect: [x, y, 120.5, 22],
+        point: [x + 60.25, y + 11], pressable: i % 3 == 0, depth: 3 + i % 6)
+    }
+    let capped = DesktopServer.treeBody(
+      AccessibilityDriver.Tree(
+        elements: many, visited: many.count, seconds: 0.5, stoppedBy: nil, recovered: 0),
+      extra: ["screen": ["note": String(repeating: "x", count: 2000)]])
+    let cappedBytes = InProcessRPC.jsonText(capped).utf8.count
+    check(
+      "a capped tree's emitted text, extra fields included, is within the cap",
+      cappedBytes <= DesktopServer.maxBytes && capped["screen"] != nil)
+    check(
+      "and says it was cut, having used most of the room rather than a fraction",
+      capped["truncated"] != nil && cappedBytes >= DesktopServer.maxBytes - 2000)
     // Non-destructive and idempotent, unlike click: moving the pointer twice to
     // the same place leaves the same state, and it presses nothing.
     let hoverAnnotations =
@@ -1485,6 +1605,28 @@ struct DesktopCheck {
       "once it closes, the same point is not",
       (try? AccessibilityDriver.refuseUnderShellPanel(CGPoint(x: 500, y: 400)))
         != nil)
+
+    // ─── set_value reads back what it wrote ─────────────────────────────────
+    // The read-back trimmed, dropped an empty string and read only strings, so
+    // clearing a field, a trailing space, a slider and a checkbox all reported
+    // "the value did not change" after writes that landed. Pure: nothing is set.
+    let decomposed = "e\u{301}"
+    let readBacks: [(String, Any?, Bool, String)] = [
+      ("", nil, true, "an empty write, read back as no value"),
+      ("", "", true, "an empty write, read back empty"),
+      ("a ", "a ", true, "a trailing space, kept"),
+      ("a ", "a", false, "a trailing space, dropped"),
+      ("0.5", NSNumber(value: 0.5), true, "a number, read back as one"),
+      ("1", kCFBooleanTrue as Any, true, "1, read back as a checked box"),
+      ("true", kCFBooleanTrue as Any, true, "true, read back as a checked box"),
+      ("abc", NSNumber(value: 1), false, "text, read back as a number"),
+      ("\u{e9}", decomposed, true, "é, read back decomposed"),
+    ]
+    for (written, readBack, expected, label) in readBacks {
+      check(
+        "set_value's read-back: \(label)",
+        AccessibilityDriver.valueConfirms(written: written, readBack: readBack) == expected)
+    }
 
     // ─── the table agrees with the server ───────────────────────────────────
     // `runtime == .swift` is also the assertion that it has no npm package:

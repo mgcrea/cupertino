@@ -127,15 +127,39 @@ nonisolated enum AccessibilityDriver {
   /// still answered `kAXErrorCannotComplete` at 2.01 s, and a second press sent
   /// straight after waited behind the first and landed too. Telling the caller
   /// to retry was telling it to press twice.
-  static func failure(for err: AXError, doing what: String, wrote: Bool = false) -> Failure? {
+  ///
+  /// `handle` is the handle the call addressed, when it addressed one: a stale
+  /// element is named by it. It used to be named by `what`, which read "Element
+  /// 'Pressing 'e5'' no longer exists". It also tells a busy application from
+  /// one that quit while the call was in flight, which answer the same code —
+  /// see `quitFailure`; `resolveEntry` asks the same before the call.
+  static func failure(
+    for err: AXError, doing what: String, handle: String? = nil, wrote: Bool = false
+  ) -> Failure? {
     switch err {
     case .success, .attributeUnsupported, .noValue, .actionUnsupported: return nil
     case .apiDisabled: return .notTrusted
-    case .invalidUIElement: return .staleHandle(what)
-    case .cannotComplete where wrote: return .unconfirmed(what)
-    case .cannotComplete: return .busy(what)
+    case .invalidUIElement: return gone(what, handle: handle)
+    case .cannotComplete:
+      if let handle, let quit = quitFailure(handle: handle) { return quit }
+      return wrote ? .unconfirmed(what) : .busy(what)
     default: return .refused("\(what) failed (AXError \(err.rawValue)).")
     }
+  }
+
+  private static func gone(_ what: String, handle: String?) -> Failure {
+    guard let handle else {
+      return .refused("\(what) failed: what it addressed no longer exists.")
+    }
+    return .staleHandle(handle)
+  }
+
+  /// `quitFailure` for the process behind a handle, when the store still has it.
+  private static func quitFailure(handle: String) -> Failure? {
+    guard let entry = handles.get(handle) else { return nil }
+    var pid: pid_t = 0
+    guard AXUIElementGetPid(entry.element, &pid) == .success else { return nil }
+    return quitFailure(pid: pid, bundleId: entry.bundleId)
   }
 
   // ─── permission ────────────────────────────────────────────────────────────
@@ -947,7 +971,8 @@ nonisolated enum AccessibilityDriver {
   ///
   /// A search visits everything and returns almost nothing, so minting a handle
   /// per visited node spends the store's whole capacity on elements the caller
-  /// will never be given. This is the same four fields the search filters on.
+  /// will never be given. This is the same four fields the search filters on,
+  /// and the subrole the simulator surface finds a device screen by.
   struct Candidate {
     let role: String
     let identifier: String?
@@ -955,7 +980,24 @@ nonisolated enum AccessibilityDriver {
     let pressable: Bool
     /// `AXValue`, read only for a walk asked to (`readValue`): one more round
     /// trip per node, which a search that does not test it should not pay.
-    var value: String? = nil
+    var value: String?
+    /// Read only when a test asks for it, and a test that checks the role
+    /// first asks only of the nodes that pass: a round trip per visited node
+    /// would cost a walk that nothing else asks it of.
+    private let readSubrole: () -> String?
+    var subrole: String? { readSubrole() }
+
+    init(
+      role: String, identifier: String?, name: String?, pressable: Bool, value: String? = nil,
+      subrole: @escaping () -> String? = { nil }
+    ) {
+      self.role = role
+      self.identifier = identifier
+      self.name = name
+      self.pressable = pressable
+      self.value = value
+      self.readSubrole = subrole
+    }
   }
 
   /// What `find_elements`, `wait_for` and a `run` step's `match` look for. `id`
@@ -1036,10 +1078,18 @@ nonisolated enum AccessibilityDriver {
     guard isTrusted() else { throw Failure.notTrusted }
     let owner = handles.get(handle)?.bundleId ?? ""
     let element = try resolve(handle, scope: scope)
+    // Read loudly, unlike every read inside the walk. The handle is the one
+    // thing here the caller chose, and the silent read turned a closed window
+    // into an empty tree that looked complete: no error, no `stoppedBy`.
+    var raw: AnyObject?
+    let err = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &raw)
+    if let problem = failure(for: err, doing: "Expanding '\(handle)'", handle: handle) {
+      throw problem
+    }
     // The same recovery the walk applies below: expanding the Simulator's tab
     // bar by handle used to answer nothing for the same reason walking into it
     // did.
-    var roots = children(element)
+    var roots = (raw as? [AXUIElement]) ?? []
     var recovered = 0
     if roots.isEmpty {
       let role = string(element, kAXRoleAttribute as String) ?? "AXUnknown"
@@ -1127,7 +1177,8 @@ nonisolated enum AccessibilityDriver {
         keep = match(
           Candidate(
             role: role, identifier: identifier, name: title ?? description, pressable: pressable,
-            value: readValue ? string(el, kAXValueAttribute as String) : nil))
+            value: readValue ? string(el, kAXValueAttribute as String) : nil,
+            subrole: { string(el, kAXSubroleAttribute as String) }))
       }
 
       if keep {
@@ -1365,7 +1416,9 @@ nonisolated enum AccessibilityDriver {
       }
       throw Failure.refused("That element has no AXPress. Use click with its point instead.")
     }
-    if let problem = failure(for: err, doing: "Pressing '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Pressing '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
   }
 
   // ─── rows ──────────────────────────────────────────────────────────────────
@@ -1405,7 +1458,8 @@ nonisolated enum AccessibilityDriver {
         "The application does not let that row be selected through Accessibility. Click its "
           + "point instead.")
     }
-    if let problem = failure(for: err, doing: "Selecting '\(handle)'", wrote: true) {
+    if let problem = failure(for: err, doing: "Selecting '\(handle)'", handle: handle, wrote: true)
+    {
       throw problem
     }
 
@@ -1465,7 +1519,9 @@ nonisolated enum AccessibilityDriver {
       throw Failure.refused(
         "That element has no AXShowMenu. Use click with button \"right\" at its point instead.")
     }
-    if let problem = failure(for: err, doing: "Opening the menu of '\(handle)'", wrote: true) {
+    if let problem = failure(
+      for: err, doing: "Opening the menu of '\(handle)'", handle: handle, wrote: true)
+    {
       throw problem
     }
   }
@@ -1713,9 +1769,12 @@ nonisolated enum AccessibilityDriver {
   /// with no settle between the two, without bringing the app forward.
   /// `focused` is nil for anything that is not a text element, which is written
   /// exactly as before.
+  ///
+  /// Returns whether it confirmed and what was read back, as `scalar` renders
+  /// it, so a caller told "not as written" can see what is there instead.
   static func setValue(
     handle: String, value: String, scope: Scope
-  ) throws -> (confirmed: Bool, focused: Bool?) {
+  ) throws -> (confirmed: Bool, focused: Bool?, actual: Any?) {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
     try announce(handle)
@@ -1723,7 +1782,9 @@ nonisolated enum AccessibilityDriver {
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
       element, kAXValueAttribute as CFString, &settable)
-    if let problem = failure(for: check, doing: "Checking '\(handle)'") { throw problem }
+    if let problem = failure(for: check, doing: "Checking '\(handle)'", handle: handle) {
+      throw problem
+    }
     guard settable.boolValue else {
       throw Failure.refused("That element's value is not settable.")
     }
@@ -1738,9 +1799,70 @@ nonisolated enum AccessibilityDriver {
 
     let err = AXUIElementSetAttributeValue(
       element, kAXValueAttribute as CFString, value as CFTypeRef)
-    if let problem = failure(for: err, doing: "Setting '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Setting '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
 
-    return (string(element, kAXValueAttribute as String) == value, focused)
+    // The raw value, not `string()`: that trims and calls an empty field no
+    // value, which is right for a tree and wrong for checking a write.
+    let readBack = copy(element, kAXValueAttribute as String)
+    return (valueConfirms(written: value, readBack: readBack), focused, scalar(readBack))
+  }
+
+  /// Whether what an element reads back is what `set_value` wrote.
+  ///
+  /// The comparison this replaced was `string(element) == value`, and every
+  /// part of it was wrong for a write. `string()` trims and answers nil for an
+  /// empty value, so clearing a field and a value ending in a space never
+  /// confirmed; and it reads strings only, so a slider (an `NSNumber`) and a
+  /// checkbox (a `CFBoolean`) never confirmed either. Each was reported as a
+  /// write the application dropped, when it had landed.
+  ///
+  /// The boolean is tested before the number because a `CFBoolean` bridges to
+  /// `NSNumber` too, and `"true"` is not a number. Line endings are compared as
+  /// `\n`, since a text view hands back `\r\n` for what it was given as either;
+  /// nothing else is forgiven.
+  static func valueConfirms(written: String, readBack: Any?) -> Bool {
+    guard let readBack else { return written.isEmpty }
+    if let text = readBack as? String {
+      func normal(_ s: String) -> String {
+        s.replacingOccurrences(of: "\r\n", with: "\n").precomposedStringWithCanonicalMapping
+      }
+      return normal(text) == normal(written)
+    }
+    if let flag = readBack as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() {
+      let wanted = written.lowercased()
+      return flag.boolValue
+        ? ["1", "true", "yes"].contains(wanted) : ["0", "false", "no"].contains(wanted)
+    }
+    if let number = readBack as? NSNumber, let wanted = Double(written) {
+      let actual = number.doubleValue
+      return actual == wanted
+        || abs(actual - wanted) <= 1e-9 * max(abs(actual), abs(wanted))
+    }
+    return false
+  }
+
+  /// A value read off an element, as something JSON can carry: a string or a
+  /// number as itself, anything else described.
+  ///
+  /// Only the scalars a caller can act on. An `AXUIElement` answer would need a
+  /// handle minted for it, and returning one would make this a second and
+  /// undocumented way to walk the tree — `expand` is that, and it carries the
+  /// bounds this does not. A non-finite number is described too: one reaching
+  /// `JSONSerialization` raises an exception `try?` does not catch, for the
+  /// reason `frame(point:size:)` gives.
+  static func scalar(_ raw: Any?) -> Any? {
+    switch raw {
+    case let value as String: return value
+    case let value as NSNumber where CFGetTypeID(value) == CFBooleanGetTypeID():
+      return value
+    case let value as NSNumber where !value.doubleValue.isFinite: return "\(value)"
+    case let value as NSNumber: return value
+    case let value as [Any]: return "<\(value.count) values>"
+    case .some(let other): return "<\(Swift.type(of: other))>"
+    case nil: return nil
+    }
   }
 
   /// The roles that edit through a field editor. A search field is an
@@ -1754,7 +1876,9 @@ nonisolated enum AccessibilityDriver {
     let element = try resolve(handle, scope: scope)
     try announce(handle)
     let err = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
-    if let problem = failure(for: err, doing: "Raising '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Raising '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
   }
 
   /// Move or resize a window, and report what the window actually did.
@@ -1822,14 +1946,18 @@ nonisolated enum AccessibilityDriver {
   ) throws {
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
-    if let problem = failure(for: check, doing: "Checking '\(handle)'") { throw problem }
+    if let problem = failure(for: check, doing: "Checking '\(handle)'", handle: handle) {
+      throw problem
+    }
     guard settable.boolValue else {
       throw Failure.refused(
         "That window's \(what) is not settable. A window with no resize control reports this, and "
           + "so does a full-screen one.")
     }
     let err = AXUIElementSetAttributeValue(element, attribute as CFString, value)
-    if let problem = failure(for: err, doing: "Setting '\(handle)' \(what)", wrote: true) {
+    if let problem = failure(
+      for: err, doing: "Setting '\(handle)' \(what)", handle: handle, wrote: true)
+    {
       throw problem
     }
   }
@@ -1887,14 +2015,18 @@ nonisolated enum AccessibilityDriver {
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
       target, kAXFocusedAttribute as CFString, &settable)
-    if let problem = failure(for: check, doing: "Checking focus on '\(handle)'") { throw problem }
+    if let problem = failure(for: check, doing: "Checking focus on '\(handle)'", handle: handle) {
+      throw problem
+    }
     guard settable.boolValue else {
       throw Failure.refused("That element cannot take the keyboard focus.")
     }
 
     let err = AXUIElementSetAttributeValue(
       target, kAXFocusedAttribute as CFString, kCFBooleanTrue)
-    if let problem = failure(for: err, doing: "Focusing '\(handle)'", wrote: true) { throw problem }
+    if let problem = failure(for: err, doing: "Focusing '\(handle)'", handle: handle, wrote: true) {
+      throw problem
+    }
 
     if holdsFocus(target, in: bundleId) { return true }
 
@@ -2215,6 +2347,13 @@ nonisolated enum AccessibilityDriver {
     // so an application outside this surface's reach passed unrefused whenever
     // it happened to be in front — and the caller then posted into it.
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
+    // The grant before anything else moves. Every caller of this posts input
+    // next, which needs Accessibility, and so does the read-back below: without
+    // it `frontmostBundleId` answers nil whatever is in front. Ungated, a call
+    // with no grant opened a session — card, countdown — activated the app,
+    // waited two seconds and then blamed the APPLICATION for not coming to the
+    // front. `activate` itself stays ungated; it is LaunchServices, see there.
+    guard isTrusted() else { throw Failure.notTrusted }
     // Admitted before the early return and after the lookup. Before, because
     // the application already being in front does not mean nobody is typing
     // into it. After, because a countdown for an application that is not
@@ -2322,7 +2461,8 @@ nonisolated enum AccessibilityDriver {
     // Asked of Launch Services directly: `NSWorkspace.runningApplications` is kept
     // current by the main run loop, and from a thread or a process without one it
     // missed a copy started a moment earlier, which then got a second launch.
-    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
+    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
+    {
       var already = Launched(launched: false)
       already.runningAt = running.bundleURL?.path
       return already
@@ -2454,7 +2594,7 @@ nonisolated enum AccessibilityDriver {
   /// string "acc" on virtual key 0 arrived in Settings' search field as a
   /// single "Q", which is key 0 on the AZERTY layout it was typed from. So a
   /// simulated device is typed into the way a person types, one key at a
-  /// time, with shift for an uppercase letter.
+  /// time, with shift where the layout puts the character on shift.
   ///
   /// Returns the characters this layout has no key for, so the caller can say
   /// which part of the text did not arrive rather than reporting a success it
@@ -2467,24 +2607,19 @@ nonisolated enum AccessibilityDriver {
     var unmapped: [Character] = []
     var events: [(CGEvent, CGEvent)] = []
     for character in text {
-      let lower = String(character).lowercased()
-      let name: String
-      switch lower {
-      case " ": name = "space"
-      case "\n": name = "return"
-      case "\t": name = "tab"
-      default: name = lower
-      }
-      guard let code = keyCode(for: name) else {
+      // The exact character, shift included — see `strokes(layout:)` for the
+      // uppercase guess this replaced and what it typed on AZERTY.
+      guard let stroke = stroke(for: character) else {
         unmapped.append(character)
         continue
       }
-      guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-        let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
+      guard
+        let down = CGEvent(keyboardEventSource: source, virtualKey: stroke.code, keyDown: true),
+        let up = CGEvent(keyboardEventSource: source, virtualKey: stroke.code, keyDown: false)
       else { throw Failure.refused("Could not synthesise typing.") }
-      if String(character) != lower {
-        down.flags = .maskShift
-        up.flags = .maskShift
+      if !stroke.flags.isEmpty {
+        down.flags = stroke.flags
+        up.flags = stroke.flags
       }
       events.append((down, up))
     }
@@ -2523,19 +2658,11 @@ nonisolated enum AccessibilityDriver {
     var raw: AnyObject?
     let err = AXUIElementCopyAttributeValue(element, name as CFString, &raw)
     if err == .attributeUnsupported || err == .noValue { return nil }
-    if let problem = failure(for: err, doing: "Reading \(name) of '\(handle)'") { throw problem }
-
-    // Only the scalars a caller can act on. An `AXUIElement` answer would need a
-    // handle minted for it, and returning one from here would make this a second
-    // and undocumented way to walk the tree — `expand` is that, and it carries
-    // the bounds this does not.
-    switch raw {
-    case let value as String: return value
-    case let value as NSNumber: return value
-    case let value as [Any]: return "<\(value.count) values>"
-    case .some(let other): return "<\(Swift.type(of: other))>"
-    case nil: return nil
+    if let problem = failure(for: err, doing: "Reading \(name) of '\(handle)'", handle: handle) {
+      throw problem
     }
+
+    return scalar(raw)
   }
 
   /// Tell the app that something on somebody's screen is being driven.
@@ -3079,6 +3206,27 @@ nonisolated enum AccessibilityDriver {
     still: (() -> Bool)? = nil
   ) throws {
     guard isTrusted() else { throw Failure.notTrusted }
+    let (code, flags) = try keyStroke(name, modifiers: modifiers)
+    let source = CGEventSource(stateID: .hidSystemState)
+    guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
+      let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
+    else { throw Failure.refused("Could not synthesise a key press.") }
+    down.flags = flags
+    up.flags = flags
+    try announceSessionInput(target, scope: scope, still: still)
+    down.post(tap: .cghidEventTap)
+    up.post(tap: .cghidEventTap)
+    DriveActivity.postedInput()
+  }
+
+  /// A key name and modifier names as the code and flags `key` posts, or the
+  /// refusal naming what is unknown. Its own function so a caller can check a
+  /// key before bringing an application forward for it — `apple_desktop_key`
+  /// and every `run` step do — with the very test `key` applies. The layout is
+  /// read from the cache, so this is safe off the main thread.
+  static func keyStroke(_ name: String, modifiers: [String]) throws -> (
+    code: CGKeyCode, flags: CGEventFlags
+  ) {
     guard let code = keyCode(for: name) else {
       throw Failure.refused(
         "Unknown key '\(name)'. Known: \(knownKeys().joined(separator: ", ")).")
@@ -3094,16 +3242,7 @@ nonisolated enum AccessibilityDriver {
       default: throw Failure.refused("Unknown modifier '\(modifier)'.")
       }
     }
-    let source = CGEventSource(stateID: .hidSystemState)
-    guard let down = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: true),
-      let up = CGEvent(keyboardEventSource: source, virtualKey: code, keyDown: false)
-    else { throw Failure.refused("Could not synthesise a key press.") }
-    down.flags = flags
-    up.flags = flags
-    try announceSessionInput(target, scope: scope, still: still)
-    down.post(tap: .cghidEventTap)
-    up.post(tap: .cghidEventTap)
-    DriveActivity.postedInput()
+    return (code, flags)
   }
 
   /// Deliberately small. These are the keys a driver needs to get unstuck —
@@ -3152,11 +3291,12 @@ nonisolated enum AccessibilityDriver {
   /// found it, being the first single-character key anything sends.
   ///
   /// Hence the split: `refreshLayout` touches TIS and is main-thread-only,
-  /// `layoutKeyCodes` reads the cache and never touches TIS at all.
+  /// `layoutTables` reads the cache and never touches TIS at all.
   ///
   /// `nonisolated(unsafe)` is vouched for by `layoutLock` below: every read and
   /// every write of this var happens while holding it.
-  private nonisolated(unsafe) static var layoutCache: (id: String, map: [String: CGKeyCode])?
+  private nonisolated(unsafe) static var layoutCache:
+    (id: String, map: [String: CGKeyCode], strokes: [Character: Stroke])?
   private static let layoutLock = NSLock()
 
   /// Ask TIS which layout is current, and rebuild the map if it moved.
@@ -3180,8 +3320,10 @@ nonisolated enum AccessibilityDriver {
     if let cached, cached.id == id { return }
 
     var map: [String: CGKeyCode] = [:]
+    var strokes: [Character: Stroke] = [:]
     if let layoutPointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) {
       let data = Unmanaged<CFData>.fromOpaque(layoutPointer).takeUnretainedValue() as Data
+      strokes = Self.strokes(layout: data)
       data.withUnsafeBytes { raw in
         guard let base = raw.baseAddress else { return }
         let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
@@ -3206,7 +3348,7 @@ nonisolated enum AccessibilityDriver {
       }
     }
     layoutLock.lock()
-    layoutCache = (id: id, map: map)
+    layoutCache = (id: id, map: map, strokes: strokes)
     layoutLock.unlock()
   }
 
@@ -3230,8 +3372,8 @@ nonisolated enum AccessibilityDriver {
     ) { _ in MainActor.assumeIsolated { refreshLayout() } }
   }
 
-  /// The map, read from the cache. Touches nothing that asserts a queue.
-  private static func layoutKeyCodes() -> [String: CGKeyCode] {
+  /// The maps, read from the cache. Touches nothing that asserts a queue.
+  private static func layoutTables() -> (map: [String: CGKeyCode], strokes: [Character: Stroke]) {
     layoutLock.lock()
     let cached = layoutCache
     layoutLock.unlock()
@@ -3241,7 +3383,7 @@ nonisolated enum AccessibilityDriver {
       // notification is ever missed, a stale map survives ONE lookup rather
       // than until the next time the layout changes.
       DispatchQueue.main.async { refreshLayout() }
-      return cached.map
+      return (cached.map, cached.strokes)
     }
 
     // Cold, which in the app means something asked before `watchLayout` ran.
@@ -3266,7 +3408,7 @@ nonisolated enum AccessibilityDriver {
     layoutLock.unlock()
     // Empty rather than fatal: `key` turns this into its "Unknown key" refusal,
     // which is a bad answer where the trap was a dead app.
-    return filled?.map ?? [:]
+    return (filled?.map ?? [:], filled?.strokes ?? [:])
   }
 
   /// The code for a named key, position-keyed first and layout-resolved second.
@@ -3274,13 +3416,80 @@ nonisolated enum AccessibilityDriver {
     let wanted = name.lowercased()
     if let fixed = keyCodes[wanted] { return fixed }
     guard wanted.count == 1 else { return nil }
-    return layoutKeyCodes()[wanted]
+    return layoutTables().map[wanted]
+  }
+
+  /// One key press that types a character: the key, and shift or nothing.
+  struct Stroke: Equatable {
+    let code: CGKeyCode
+    let flags: CGEventFlags
+  }
+
+  /// Which keystroke types each character on a layout, keyed by the EXACT
+  /// character the key produces.
+  ///
+  /// `typeByKeyCodes` used to lowercase a character, look it up in the
+  /// unshifted map above and add shift when the character had changed —
+  /// assuming shift on a key gives that key's uppercase. On AZERTY it gives
+  /// the digit row: É went out as "2", È as "7", À as "0", Ç as "9" and Ù as
+  /// "%", each counted as typed. And a character only shift produces, `@ ! ?`
+  /// on a US layout, had no unshifted key and was never typeable at all.
+  ///
+  /// So both states are asked, and what each key produces in each is kept as
+  /// produced. Unshifted is asked first and the first key wins, so a character
+  /// is typed with the fewest modifiers and from the main block before the
+  /// keypad, whose codes come later. A dead key is left out: on the device it
+  /// starts a composition rather than typing its own mark. What no key in
+  /// either state produces — É on AZERTY, which takes caps lock — is absent,
+  /// and the caller reports it untyped.
+  ///
+  /// Pure over the layout's data, so a check can build it for a layout this
+  /// Mac is not using. `refreshLayout` builds it for the one it is.
+  static func strokes(layout data: Data) -> [Character: Stroke] {
+    var out: [Character: Stroke] = [:]
+    data.withUnsafeBytes { raw in
+      guard let base = raw.baseAddress else { return }
+      let layout = base.assumingMemoryBound(to: UCKeyboardLayout.self)
+      // `UCKeyTranslate` takes the Carbon modifier bits shifted down a byte.
+      let shift = UInt32(shiftKey >> 8) & 0xFF
+      for (state, flags) in [(UInt32(0), CGEventFlags()), (shift, CGEventFlags.maskShift)] {
+        for code in 0..<128 as Range<UInt16> {
+          var deadKeys: UInt32 = 0
+          var chars = [UniChar](repeating: 0, count: 4)
+          var length = 0
+          let err = UCKeyTranslate(
+            layout, code, UInt16(kUCKeyActionDown), state, UInt32(LMGetKbdType()), 0,
+            &deadKeys, 4, &length, &chars)
+          // A dead key produces nothing and leaves state behind.
+          guard err == noErr, deadKeys == 0, length > 0 else { continue }
+          let produced = String(utf16CodeUnits: chars, count: length)
+          guard produced.count == 1, let character = produced.first, out[character] == nil
+          else { continue }
+          out[character] = Stroke(code: CGKeyCode(code), flags: flags)
+        }
+      }
+    }
+    return out
+  }
+
+  /// The keystroke that types `character` on the Mac's layout, or nil when
+  /// none does. Read from the cache, so safe off the main thread.
+  ///
+  /// The whitespace keys are positions, like `keyCodes`, and answer whatever
+  /// the cache holds. A line break is return, which no layout produces as `\n`.
+  static func stroke(for character: Character) -> Stroke? {
+    switch character {
+    case " ": return Stroke(code: 49, flags: [])
+    case "\t": return Stroke(code: 48, flags: [])
+    case "\n", "\r", "\r\n": return Stroke(code: 36, flags: [])
+    default: return layoutTables().strokes[character]
+    }
   }
 
   /// Every key this driver can name right now, for a refusal that is worth
   /// reading. Layout-dependent, which is the point.
   static func knownKeys() -> [String] {
-    (Set(keyCodes.keys).union(layoutKeyCodes().keys)).sorted()
+    (Set(keyCodes.keys).union(layoutTables().map.keys)).sorted()
   }
 }
 

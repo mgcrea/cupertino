@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 
 /// Asserts that the in-process `simulator` server speaks MCP, answers in iOS
@@ -37,6 +38,17 @@ struct SimulatorCheck {
       print("  FAIL \(label)")
       failures += 1
     }
+  }
+
+  static var skipped = 0
+
+  /// A check that could not run, counted and named rather than omitted — the
+  /// reason desktop-check gives: a check that vanishes when its subject is
+  /// absent drops the total while the suite still says "passed".
+  static func skip(_ label: String, _ reason: String) {
+    checks += 1
+    skipped += 1
+    print("  SKIP \(label) — \(reason)")
   }
 
   static let surface = Surface.named("simulator")!
@@ -415,6 +427,85 @@ struct SimulatorCheck {
       SimulatorGeometry.resolve(
         groupOrigin: CGPoint(x: 1127, y: 571), groupSize: CGSize(width: 297, height: 647),
         portraitPoints: CGSize(width: 402, height: 874))?.orientation == "portrait")
+
+    // Finding the screen walks up to 1,500 nodes of a DeviceHub window, and
+    // every node the walk keeps is minted a handle. Kept with `.all`, that was
+    // every node, on every call — and the store keeps the newest 10,000, so a
+    // caller's ui_tree handles were evicted after a dozen simulator calls. The
+    // test goes inside the walk, so only a candidate screen earns a handle.
+    func candidate(_ role: String, _ subrole: String?) -> AccessibilityDriver.Candidate {
+      AccessibilityDriver.Candidate(
+        role: role, identifier: nil, name: nil, pressable: false, subrole: { subrole })
+    }
+    let hubTest = SimulatorServer.screenCandidate(host: SimulatorServer.deviceHub)
+    let appTest = SimulatorServer.screenCandidate(host: "com.apple.iphonesimulator")
+    check(
+      "a DeviceHub walk keeps only iOSContentGroup groups",
+      hubTest(candidate("AXGroup", "iOSContentGroup"))
+        && !hubTest(candidate("AXGroup", "AXHostingView")) && !hubTest(candidate("AXGroup", nil))
+        && !hubTest(candidate("AXButton", nil)))
+    check(
+      "a Simulator.app walk keeps only groups",
+      appTest(candidate("AXGroup", nil)) && !appTest(candidate("AXButton", nil))
+        && !appTest(candidate("AXWindow", nil)))
+
+    // The same, live, where there is a window to read: counted by minting a
+    // sentinel handle on either side of the call. Reads only.
+    func sentinel() -> Int {
+      Int(
+        AccessibilityDriver.handles.put(
+          AXUIElementCreateSystemWide(), bundleId: "com.example.sentinel"
+        ).dropFirst()) ?? 0
+    }
+    let label = "resolving the device screens mints a handful of handles, not one per node"
+    if !AccessibilityDriver.isTrusted() {
+      skip(label, "Accessibility is not granted")
+    } else {
+      let before = sentinel()
+      let found = (try? SimulatorServer.targets(surface: surface)) ?? []
+      let minted = sentinel() - before - 1
+      if found.isEmpty {
+        skip(label, "no Simulator or DeviceHub window is open")
+      } else {
+        // Each window is listed once by targets and once per screen walk, and
+        // keeps at most a few screen groups (DeviceHub reaches one along two
+        // paths); everything above that is a node nobody asked for.
+        check(label, minted <= found.count * (found.count + 4))
+      }
+    }
+
+    // ─── typing resolves the exact character, shift included ────────────────
+    // `type` lowercased each character, looked up an unshifted-only map and
+    // added shift when the character had changed. On AZERTY, shift is the digit
+    // row: É went out as "2", À as "0", and both were counted as typed. On a US
+    // layout `@ ! ?` were never typeable. The map is built from two named
+    // layouts here rather than the Mac's own, so it holds whatever this Mac
+    // types on; TIS is asked on the main thread, which is where main() runs.
+    func layoutData(_ id: String) -> Data? {
+      let filter = [kTISPropertyInputSourceID as String: id] as CFDictionary
+      guard
+        let sources = TISCreateInputSourceList(filter, true)?.takeRetainedValue()
+          as? [TISInputSource],
+        let source = sources.first,
+        let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
+      else { return nil }
+      return Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data
+    }
+    typealias Stroke = AccessibilityDriver.Stroke
+    if let french = layoutData("com.apple.keylayout.French").map(AccessibilityDriver.strokes) {
+      check(
+        "on AZERTY, É has no key, so it is not typed rather than typed as 2", french["É"] == nil)
+      check("on AZERTY, é is its own key", french["é"] == Stroke(code: 19, flags: []))
+      check("on AZERTY, A is shift on Q's key", french["A"] == Stroke(code: 12, flags: .maskShift))
+    } else {
+      skip("typing on AZERTY resolves exact characters", "the French layout could not be loaded")
+    }
+    if let abc = layoutData("com.apple.keylayout.ABC").map(AccessibilityDriver.strokes) {
+      check("on ABC, ! is shift-1", abc["!"] == Stroke(code: 18, flags: .maskShift))
+    } else {
+      skip("typing on ABC resolves exact characters", "the ABC layout could not be loaded")
+    }
+
     check(
       "DeviceHub is not brokered either",
       !AccessibilityDriver.inScope(SimulatorServer.deviceHub, scope: .brokered))
@@ -517,7 +608,8 @@ struct SimulatorCheck {
       DriveActivity.notice()?.kind == .driving
         && DriveActivity.notice()?.target == "com.apple.mail")
 
-    print("\n\(checks - failures)/\(checks) passed\n")
+    let summary = "\(checks - failures - skipped)/\(checks) passed"
+    print("\n" + (skipped > 0 ? "\(summary), \(skipped) skipped" : summary) + "\n")
     if failures > 0 { exit(1) }
   }
 }

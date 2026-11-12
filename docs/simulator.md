@@ -388,9 +388,11 @@ as wall-clock and described as "shorter is more of a fling" without a number.
 **The Simulator forwards key codes, not characters.** The driver's `type(text:)` puts a unicode
 string on one event with virtual key 0, which every Mac application reads. Settings' search field
 received a single **"Q"** — key 0 on the AZERTY layout it was typed from. So `apple_simulator_type`
-sends one key code per character, resolved against the Mac's current layout by the same
-`UCKeyTranslate` map `apple_desktop_key` uses, with shift for an uppercase letter, and reports back
-the characters the layout has no key for. **The per-key path is implemented and not yet measured
+sends one key code per character, resolved against the Mac's current layout with `UCKeyTranslate`
+over the unshifted and shifted states, keyed by the exact character each key produces, and reports
+back the characters no key produces in either. It first assumed shift gives a key's uppercase,
+which on AZERTY typed É as "2" and À as "0" while counting them typed; caps lock and dead keys are
+not used, so É is reported untyped there. **The per-key path is implemented and not yet measured
 end to end**: the run that would have measured it was stopped because the person at the keyboard
 was using the Mac, which is exactly the collision the driving notice exists for. `make
 simulator-spike SPIKE_ARGS="--type"` is the measurement, and it needs Settings' root list on screen.

@@ -679,9 +679,11 @@ nonisolated enum DesktopServer {
           "Run a sequence of steps in one call, in order, stopping at the first that fails. Each "
           + "step is {\"tool\": <verb>, ...that verb's arguments}, the verb being a desktop tool "
           + "without its apple_desktop_ prefix: \(runSteps.joined(separator: ", ")). 'wait' takes "
-          + "'ms'. Every step is checked before the first runs, so a mistake in step 5 leaves "
-          + "steps 1 to 4 undone rather than half a form filled. A step that takes a 'handle' "
-          + "can name its element instead with 'match' ({\"id\", \"role\", \"name\", \"value\", "
+          + "'ms'. Every step's arguments are checked before the first runs, so a malformed step "
+          + "5 leaves steps 1 to 4 undone rather than half a form filled. What only the screen "
+          + "can tell, whether a handle still exists or an application is running, is found when "
+          + "that step runs. A step that takes a 'handle' can name its element instead with "
+          + "'match' ({\"id\", \"role\", \"name\", \"value\", "
           + "\"window\"}, as find_elements matches) and 'bundleId': it is found when the step "
           + "runs, waiting up to 'waitMs' (default \(matchWaitDefaultMs), at most "
           + "\(matchWaitCeilingMs)) for it to appear, so a step can press an item in a menu the "
@@ -786,7 +788,7 @@ nonisolated enum DesktopServer {
   /// line — a 60,000-byte compact budget produced **129,420 characters** on the
   /// wire, 2.2x over. Budgeting against a serialisation nobody sends is a cap
   /// that does not cap.
-  private static let maxBytes = 40_000
+  static let maxBytes = 40_000
 
   /// `matched` counts what the walk kept, which for `find_elements` is what
   /// matched rather than everything visited: the filter runs inside the walk.
@@ -797,67 +799,91 @@ nonisolated enum DesktopServer {
   /// `render` and `coordinateSpace` exist for the simulator surface, which
   /// answers the same walk in iOS points: the byte cap and the `matched` /
   /// `returned` / `truncated` contract are one implementation here rather
-  /// than a copy that would drift.
+  /// than a copy that would drift. `extra` is the rest of that surface's
+  /// answer — the device and its screen — passed in rather than added after,
+  /// so it is inside the text the cap measures.
   static func treeBody(
     _ tree: AccessibilityDriver.Tree,
     render: ((AccessibilityDriver.Element) -> [String: Any])? = nil,
-    coordinateSpace: String = "screen points, top-left origin"
+    coordinateSpace: String = "screen points, top-left origin",
+    extra: [String: Any] = [:]
   ) -> [String: Any] {
     let answering = tree.elements
+
+    func compose(_ kept: [[String: Any]]) -> [String: Any] {
+      var body: [String: Any] = [
+        "elements": kept,
+        "returned": kept.count,
+        // What MATCHED, so a truncated answer is obviously partial rather than
+        // looking like a small window.
+        "matched": answering.count,
+        "visited": tree.visited,
+        "seconds": (tree.seconds * 1000).rounded() / 1000,
+        "coordinateSpace": coordinateSpace,
+      ]
+      // Present only when it happened: elements that arrived by hit-testing a
+      // container whose children link was empty (the Simulator's tab bar). A
+      // caller who sees it knows those nodes exist because they are on screen,
+      // and that a scrolled-away sibling would not have been found the same way.
+      if tree.recovered > 0 { body["recovered"] = tree.recovered }
+      // Present only when one is: an open menu is modal, so a caller that reads
+      // past it and presses something in the window underneath is pressing into
+      // a window that will not take it until the menu closes.
+      if tree.menus > 0 {
+        body["openMenus"] = tree.menus
+        body["menuNote"] =
+          "A menu is open and its items come first. Press one, or key escape with the bundleId "
+          + "to close it."
+      }
+
+      // Named rather than implied. A truncated answer that does not say so is
+      // worse than a slow one, and which bound stopped it tells the caller what
+      // to raise — or, for this one, that raising a bound is not the answer.
+      var stops: [String] = []
+      if let stoppedBy = tree.stoppedBy { stops.append(stoppedBy) }
+      if kept.count < answering.count {
+        stops.append("bytes(\(maxBytes))")
+        body["truncated"] =
+          "Returned \(kept.count) of \(answering.count) matching elements. Narrow the query "
+          + "with find_elements, or walk down with expand — raising maxNodes will not return more."
+      }
+      if !stops.isEmpty { body["stoppedBy"] = stops.joined(separator: ",") }
+      body.merge(extra) { _, new in new }
+      return body
+    }
+
+    // Everything but the elements, at its largest — truncated, which is the
+    // case where the room runs out — is room the elements cannot have.
+    var room = maxBytes - InProcessRPC.jsonText(compose([])).utf8.count
     var kept: [[String: Any]] = []
-    var bytes = 0
     for element in answering {
       let json = render?(element) ?? element.json
       // Measured rather than estimated: an element with a long name and a rect
       // is several times the size of a bare button, so a per-element budget
       // would be wrong in both directions. Serialised with the SAME options
-      // `InProcessRPC.jsonText` will use, so the number counted is the number
-      // sent.
-      let size =
-        (try? JSONSerialization.data(
-          withJSONObject: json, options: [.prettyPrinted, .sortedKeys]))?.count ?? 400
-      if bytes + size > maxBytes { break }
-      bytes += size
+      // `InProcessRPC.jsonText` will use — but on its own, at the top level,
+      // while it is emitted two levels deep inside `"elements": [ ]`, where
+      // every line carries four more spaces and a `,\n` follows it. Counting
+      // the bare serialisation let a 40,000 cap emit 52,130 bytes.
+      guard
+        let data = try? JSONSerialization.data(
+          withJSONObject: json, options: [.prettyPrinted, .sortedKeys])
+      else { break }
+      let lines = data.reduce(1) { $1 == UInt8(ascii: "\n") ? $0 + 1 : $0 }
+      let size = data.count + 4 * lines + 2
+      if size > room { break }
+      room -= size
       kept.append(json)
     }
 
-    var body: [String: Any] = [
-      "elements": kept,
-      "returned": kept.count,
-      // What MATCHED, so a truncated answer is obviously partial rather than
-      // looking like a small window.
-      "matched": answering.count,
-      "visited": tree.visited,
-      "seconds": (tree.seconds * 1000).rounded() / 1000,
-      "coordinateSpace": coordinateSpace,
-    ]
-    // Present only when it happened: elements that arrived by hit-testing a
-    // container whose children link was empty (the Simulator's tab bar). A
-    // caller who sees it knows those nodes exist because they are on screen,
-    // and that a scrolled-away sibling would not have been found the same way.
-    if tree.recovered > 0 { body["recovered"] = tree.recovered }
-    // Present only when one is: an open menu is modal, so a caller that reads
-    // past it and presses something in the window underneath is pressing into
-    // a window that will not take it until the menu closes.
-    if tree.menus > 0 {
-      body["openMenus"] = tree.menus
-      body["menuNote"] =
-        "A menu is open and its items come first. Press one, or key escape with the bundleId to "
-        + "close it."
+    // The estimate is close, not exact — `returned` and the truncation note
+    // change length with the count — so the text actually sent has the last
+    // word. That is one more serialisation when the estimate held.
+    var body = compose(kept)
+    while !kept.isEmpty, InProcessRPC.jsonText(body).utf8.count > maxBytes {
+      kept.removeLast()
+      body = compose(kept)
     }
-
-    // Named rather than implied. A truncated answer that does not say so is
-    // worse than a slow one, and which bound stopped it tells the caller what to
-    // raise — or, for this one, that raising a bound is not the answer.
-    var stops: [String] = []
-    if let stoppedBy = tree.stoppedBy { stops.append(stoppedBy) }
-    if kept.count < answering.count {
-      stops.append("bytes(\(maxBytes))")
-      body["truncated"] =
-        "Returned \(kept.count) of \(answering.count) matching elements. Narrow the query "
-        + "with find_elements, or walk down with expand — raising maxNodes will not return more."
-    }
-    if !stops.isEmpty { body["stoppedBy"] = stops.joined(separator: ",") }
     return body
   }
 
@@ -894,6 +920,15 @@ nonisolated enum DesktopServer {
         id,
         "Driving \(surface.displayName) is switched off. Turn on writes for this surface in "
           + "Cupertino.")
+    }
+
+    // The check `run` makes of every step before the first runs, made here of
+    // the verb itself, so a step is malformed exactly when its tool says so.
+    let verb = String(name.dropFirst("apple_desktop_".count))
+    if name.hasPrefix("apple_desktop_"), runSteps.contains(verb),
+      let problem = argumentProblem(verb, args)
+    {
+      return failure(id, problem)
     }
 
     do {
@@ -996,14 +1031,17 @@ nonisolated enum DesktopServer {
           bundleId: bundleId, windowIndex: args["window"] as? Int, matcher: matcher, state: state,
           timeout: Double(timeoutMs) / 1000, bounds: bounds(args), scope: scope,
           cancelled: { isCancelled })
-        var body = treeBody(outcome.tree)
-        body["state"] = state.rawValue
-        body["held"] = outcome.satisfied
-        body["walks"] = outcome.walks
-        body["waitedSeconds"] = (outcome.seconds * 100).rounded() / 100
-        if outcome.satisfied { return ok(id, body) }
-        if let lastError = outcome.lastError { body["lastError"] = lastError }
-        body["note"] =
+        // Handed to treeBody rather than added to its answer, so the byte cap
+        // measures them along with the elements.
+        var extra: [String: Any] = [
+          "state": state.rawValue,
+          "held": outcome.satisfied,
+          "walks": outcome.walks,
+          "waitedSeconds": (outcome.seconds * 100).rounded() / 100,
+        ]
+        if outcome.satisfied { return ok(id, treeBody(outcome.tree, extra: extra)) }
+        if let lastError = outcome.lastError { extra["lastError"] = lastError }
+        extra["note"] =
           outcome.cancelled
           ? "Called off before it held."
           : state == .present
@@ -1012,7 +1050,7 @@ nonisolated enum DesktopServer {
               ? "The last read found nothing but was cut short by its bounds, so absence is not "
                 + "shown. Narrow it with 'window', or raise budgetSeconds or maxNodes."
               : "Still there after \(timeoutMs) ms: 'elements' is what the last read found."
-        return failure(id, body: body)
+        return failure(id, body: treeBody(outcome.tree, extra: extra))
 
       case "apple_desktop_user_activity":
         // Not gated on `isTrusted`: this is CoreGraphics rather than
@@ -1073,11 +1111,22 @@ nonisolated enum DesktopServer {
         }
         let written = try AccessibilityDriver.setValue(
           handle: handle, value: value, scope: scope)
+        // `actual` is what was read back, so a caller told it did not land can
+        // see what is there — the value it replaced, or the application's own
+        // rewrite of it — rather than being told only that it differs.
+        let shown: String
+        switch written.actual {
+        case nil: shown = "no value"
+        case let text as String: shown = "\"\(text)\""
+        case let other?: shown = "\(other)"
+        }
         var answer: [String: Any] = [
           "handle": handle, "confirmed": written.confirmed,
+          "actual": written.actual ?? NSNull(),
           "note": !written.confirmed
-            ? "The application accepted the write and the value did not change. It reported "
-              + "itself settable and dropped it; try focusing the field and typing instead."
+            ? "The application accepted the write and the value read back as \(shown), not as "
+              + "written. It reported itself settable and dropped or changed it; try focusing "
+              + "the field and typing instead."
             : written.focused == false
               ? "The field shows the value, but it would not take the focus, and an application "
                 + "built on SwiftUI only hears a write into a focused field. If the application "
@@ -1093,14 +1142,8 @@ nonisolated enum DesktopServer {
         }
         // Absent is the left button; present and unknown is a mistake, and a
         // left click in place of the menu it asked for would act on the canvas.
-        let button: AccessibilityDriver.MouseButton
-        if let named = args["button"] {
-          guard let name = named as? String,
-            let known = AccessibilityDriver.MouseButton(rawValue: name)
-          else { return failure(id, "The 'button' argument is \"left\" or \"right\".") }
-          button = known
-        } else {
-          button = .left
+        guard let button = mouseButton(args) else {
+          return failure(id, "The 'button' argument is \"left\" or \"right\".")
         }
         // One of our Debug builds with a channel takes the click in its own
         // window, wherever that window is: nothing is brought forward.
@@ -1311,7 +1354,8 @@ nonisolated enum DesktopServer {
         // land, and then the field was focused above.
         if let owner, let channel = channel(for: owner) {
           if landedLate() { return landedInBackground(false, late: true) }
-          let ack = try throughChannel(channel, owner: owner, ["verb": "type", "text": text], scope: scope)
+          let ack = try throughChannel(
+            channel, owner: owner, ["verb": "type", "text": text], scope: scope)
           var typed = channelFields(ack)
           typed["typed"] = text.count
           typed["target"] = owner
@@ -1332,33 +1376,18 @@ nonisolated enum DesktopServer {
         }
         // Absent is no modifiers; present and not a list of names is a mistake,
         // and dropping it would send the bare key in place of the shortcut.
-        let modifiers: [String]
-        if let given = args["modifiers"] {
-          guard let names = given as? [String] else {
-            return failure(
-              id,
-              "The 'modifiers' argument is a list of names: command, shift, option, control, "
-                + "function.")
-          }
-          modifiers = names
-        } else {
-          modifiers = []
+        guard let modifiers = keyModifiers(args) else {
+          return failure(
+            id,
+            "The 'modifiers' argument is a list of names: command, shift, option, control, "
+              + "function.")
         }
         let owner = try sessionTarget(args, scope: scope)
         // Through a channel the app matches a shortcut against its own menu,
         // which is what an app in the background cannot do with a posted key.
         // The channel's names are command, shift, option and control; fn has no
         // menu meaning and goes the old way.
-        let channelModifiers = modifiers.compactMap { name -> String? in
-          switch name.lowercased() {
-          case "command", "cmd": "command"
-          case "shift": "shift"
-          case "option", "alt": "option"
-          case "control", "ctrl": "control"
-          default: nil
-          }
-        }
-        if let owner, channelModifiers.count == modifiers.count,
+        if let owner, let channelModifiers = channelModifiers(modifiers),
           let channel = channel(for: owner)
         {
           let ack = try throughChannel(
@@ -1370,6 +1399,10 @@ nonisolated enum DesktopServer {
           sent["target"] = owner
           return ok(id, sent)
         }
+        // The key is checked before anything is brought forward for it, with the
+        // lookup `key` itself makes. `argumentProblem` made it already unless it
+        // expected a channel, which may have closed since.
+        _ = try AccessibilityDriver.keyStroke(key, modifiers: modifiers)
         if let owner { try bringForward(owner, verb: "key", scope: scope) }
         try AccessibilityDriver.key(key, modifiers: modifiers, scope: scope, announcing: owner)
         var sent: [String: Any] = ["key": key, "modifiers": modifiers]
@@ -1662,6 +1695,151 @@ nonisolated enum DesktopServer {
       name: args["name"] as? String, value: args["value"] as? String)
   }
 
+  /// What is wrong with a step verb's arguments, in the words the tool uses, or
+  /// nil when nothing is. `call` asks it before it runs any step verb, and
+  /// `run` asks it of every step before the first runs, so the two cannot
+  /// disagree about what a malformed step is.
+  ///
+  /// It replaced a pre-pass that checked only that each schema's required
+  /// keys were present, while the verb checked its arguments again, in full,
+  /// when it ran — so a `press_menu` path of one title, a `set_value` given
+  /// the number 5, a `find_elements` with no criteria and a `set_window_frame`
+  /// with no component all passed, ran the steps before them, and failed part
+  /// way. A run promises nothing happens when a step is malformed.
+  ///
+  /// Pure, apart from a key name, which is looked up in the layout cache: a
+  /// key the layout has no key for is a malformed `key` as surely as a missing
+  /// one, and it used to be found only after the application had been brought
+  /// to the front for it. Not for a key that goes through one of our Debug
+  /// builds' channels, which take any single character. What only the screen
+  /// can answer — whether a handle still exists, whether an application is
+  /// running — is left to the step.
+  static func argumentProblem(_ tool: String, _ args: [String: Any]) -> String? {
+    func missing(_ keys: String...) -> Bool { keys.contains { !(args[$0] is String) } }
+    switch tool {
+    case "press", "show_menu", "select", "focus", "raise_window":
+      return missing("handle") ? "The 'handle' argument is required." : nil
+    case "activate", "list_windows":
+      return missing("bundleId") ? "The 'bundleId' argument is required." : nil
+    case "menu":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      return menuPath(args["path"] ?? [String]()) == nil
+        ? "'path' is an array of menu titles, none of them empty." : nil
+    case "press_menu":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      guard let path = args["path"].flatMap(menuPath), path.count >= 2 else {
+        return
+          "'path' names a menu and then an item in it, e.g. [\"View\", \"Show Sidebar\"]: at "
+          + "least two titles, none of them empty."
+      }
+      return nil
+    case "set_value":
+      return missing("handle", "value")
+        ? "Both 'handle' and 'value' are required, and 'value' is a string." : nil
+    case "get_attribute":
+      return missing("handle", "attribute")
+        ? "Both 'handle' and 'attribute' are required." : nil
+    case "click":
+      guard args["x"] is Double, args["y"] is Double else {
+        return "Both 'x' and 'y' are required."
+      }
+      return mouseButton(args) == nil ? "The 'button' argument is \"left\" or \"right\"." : nil
+    case "hover":
+      guard args["handle"] is String || (args["x"] is Double && args["y"] is Double) else {
+        return
+          "Either 'handle', or both 'x' and 'y', are required. Prefer 'handle': its point is "
+          + "re-read at call time, so a window that has moved cannot make the hover miss."
+      }
+      return nil
+    case "drag":
+      func end(_ key: String) -> Bool {
+        guard let spec = args[key] as? [String: Any] else { return false }
+        return spec["handle"] is String || (spec["x"] is Double && spec["y"] is Double)
+      }
+      guard end("from"), end("to") else {
+        return
+          "Both 'from' and 'to' are required, each {\"handle\"} or {\"x\", \"y\"}. Prefer a "
+          + "handle: its point is re-read at call time."
+      }
+      return nil
+    case "type":
+      return missing("text") ? "The 'text' argument is required." : nil
+    case "key":
+      guard let key = args["key"] as? String else { return "The 'key' argument is required." }
+      guard let modifiers = keyModifiers(args) else {
+        return
+          "The 'modifiers' argument is a list of names: command, shift, option, control, "
+          + "function."
+      }
+      // The owner the tool will drive, as `sessionTarget` finds it: a handle's
+      // own application, else the one named.
+      let owner =
+        (args["handle"] as? String).flatMap { AccessibilityDriver.handles.get($0)?.bundleId }
+        ?? args["bundleId"] as? String
+      if let owner, channelModifiers(modifiers) != nil, channel(for: owner) != nil { return nil }
+      do {
+        _ = try AccessibilityDriver.keyStroke(key, modifiers: modifiers)
+      } catch {
+        return error.localizedDescription
+      }
+      return nil
+    case "set_window_frame":
+      if missing("handle") { return "The 'handle' argument is required." }
+      return ["x", "y", "width", "height"].contains(where: { args[$0] is Double })
+        ? nil : "Pass at least one of 'x', 'y', 'width' or 'height'."
+    case "find_elements":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      var matcher = matching(args)
+      matcher.pressableOnly = args["pressableOnly"] as? Bool ?? false
+      return matcher.isEmpty ? "Give at least one of id, role, name, value or pressableOnly." : nil
+    case "wait_for":
+      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      if matching(args).isEmpty { return "Give at least one of id, role, name or value." }
+      if let named = args["state"],
+        (named as? String).flatMap(AccessibilityDriver.WaitState.init(rawValue:)) == nil
+      {
+        return "The 'state' argument is \"present\" or \"absent\"."
+      }
+      return nil
+    case "launch":
+      return args["bundleId"] is String || args["path"] is String
+        ? nil : "Either 'bundleId' or 'path' is required."
+    default:
+      return nil
+    }
+  }
+
+  /// The button a click names: left when absent, nil when present and not
+  /// one this knows — a left click in place of the menu it asked for would act
+  /// on the canvas.
+  static func mouseButton(_ args: [String: Any]) -> AccessibilityDriver.MouseButton? {
+    guard let named = args["button"] else { return .left }
+    return (named as? String).flatMap(AccessibilityDriver.MouseButton.init(rawValue:))
+  }
+
+  /// A key's modifier names: none when absent, nil when present and not a
+  /// list of names — dropping it would send the bare key in place of the
+  /// shortcut.
+  static func keyModifiers(_ args: [String: Any]) -> [String]? {
+    guard let given = args["modifiers"] else { return [] }
+    return given as? [String]
+  }
+
+  /// The modifiers as a channel names them, or nil when one of them has no
+  /// channel name (fn has no menu meaning), which sends the key the old way.
+  static func channelModifiers(_ modifiers: [String]) -> [String]? {
+    let named = modifiers.compactMap { name -> String? in
+      switch name.lowercased() {
+      case "command", "cmd": "command"
+      case "shift": "shift"
+      case "option", "alt": "option"
+      case "control", "ctrl": "control"
+      default: nil
+      }
+    }
+    return named.count == modifiers.count ? named : nil
+  }
+
   /// Find the one element a step's `match` names, waiting up to its `waitMs`
   /// for it to appear. Several matches are a refusal unless `index` picks one:
   /// pressing the first of two "Delete" buttons is the wrong press half the
@@ -1833,6 +2011,15 @@ nonisolated enum DesktopServer {
             "Step \(number) (drag) needs 'from' and 'to', each {\"handle\"} or {\"x\", \"y\"}. "
               + "Nothing was run.")
         }
+      }
+      // Then everything else the tool itself would refuse, by the check it
+      // makes. A step that names its element by `match` is given its handle
+      // when it runs, so a placeholder stands in for it here, one no handle
+      // can be, so it reaches nothing.
+      var probe = step
+      if matched { probe["handle"] = "(match)" }
+      if let problem = argumentProblem(tool, probe) {
+        return failure(id, "Step \(number) (\(tool)): \(problem) Nothing was run.")
       }
     }
 
