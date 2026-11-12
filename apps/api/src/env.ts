@@ -12,6 +12,12 @@
 export interface LicenseRow {
   id: string;
   email: string;
+  /**
+   * The major the key was minted for, and so the releases it covers. The mail
+   * and /thanks read it from here rather than from CURRENT_MAJOR, which is what
+   * NEW keys get: a 1.x key re-sent after 2.0 ships still covers 1.x.
+   */
+  major: number;
   key: string;
   issued_at: string;
   last_sent_at: string | null;

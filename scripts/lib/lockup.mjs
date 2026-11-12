@@ -232,7 +232,7 @@ ${wordmark({ x: textX, baseline, size: FONT_SIZE, fill: ink, word, indent: 2 })}
 
 const CARD = { WIDTH: 1200, HEIGHT: 630, SAFE_INSET: 60 };
 
-/** The card's own scale: a smaller lockup than the README's, over two lines of copy. */
+/** The card's own scale: a smaller lockup than the README's, over a headline and a subhead. */
 const CARD_ICON = 132;
 const CARD_GAP = 33;
 const CARD_WORD = 78;
@@ -243,6 +243,10 @@ const CARD_SUBHEAD = 28;
 const CARD_LOCKUP_MID = 250;
 const CARD_HEADLINE_Y = 404;
 const CARD_SUBHEAD_Y = 460;
+/** Baseline to baseline when the subhead takes a second line. */
+const CARD_SUBHEAD_LEADING = 38;
+/** How wide a copy line may run: the card less its inset on both sides. */
+const CARD_TEXT_WIDTH = CARD.WIDTH - 2 * CARD.SAFE_INSET;
 
 const round2 = (n) => Math.round(n * 100) / 100;
 
@@ -323,7 +327,10 @@ const cardLine = ({ text, y, size, fill, weight, opacity }) =>
  * Composes the og:image card — the lockup reversed out of the site's own
  * background, over a headline and a subhead.
  *
- * The two lines are NOT pinned with `textLength` the way the wordmark is. That
+ * The subhead is one line or two, the caller's choice of break; a third, or a
+ * line wider than the card less its insets, throws.
+ *
+ * The copy lines are NOT pinned with `textLength` the way the wordmark is. That
  * pin exists to survive a reader's font substitution; here the font is resolved
  * once at build time, and pinning arbitrary sentences would distort them for no
  * gain. `text-anchor="middle"` keeps them centred whatever they measure.
@@ -337,7 +344,8 @@ const cardLine = ({ text, y, size, fill, weight, opacity }) =>
  *
  * @param {string} iconSvg contents of `design/cupertino-icon.svg`
  * @param {object} palette parsed `design/colors.json`
- * @param {object} copy `{ ground, headline, subhead }` — the site owns the words
+ * @param {object} copy `{ ground, headline, subhead }` — the site owns the words;
+ *   `subhead` is a string or an array of at most two lines
  * @returns {string} the card SVG, for sharp to rasterise
  */
 export const composeCard = (
@@ -347,7 +355,27 @@ export const composeCard = (
 ) => {
   const light = palette?.colors?.sun;
   expect(light, "colors.json has no `colors.sun` to reverse the wordmark out in");
-  expect(headline && subhead, "the card needs both a headline and a subhead");
+  const subheads = typeof subhead === "string" ? [subhead] : subhead;
+  expect(
+    headline && Array.isArray(subheads) && subheads.length > 0 && subheads.every(Boolean),
+    "the card needs both a headline and a subhead",
+  );
+  expect(subheads.length <= 2, `the subhead has ${subheads.length} lines; the card has room for 2`);
+  // Clipping is as silent as the crop. Both lines used to be drawn centred at a
+  // fixed size with nothing measuring them, and the subhead of twelve surface
+  // names ran off both edges of the PNG. The width is the estimate the release
+  // card wraps on, which over-estimates on purpose; the caller does the
+  // breaking, because where a list of names breaks is a choice about words.
+  for (const [line, size] of [
+    [headline, CARD_HEADLINE],
+    ...subheads.map((s) => [s, CARD_SUBHEAD]),
+  ]) {
+    const width = Math.round(estimateWidth(line, size));
+    expect(
+      width <= CARD_TEXT_WIDTH,
+      `"${line}" estimates ${width}px at ${size}px, wider than the ${CARD_TEXT_WIDTH}px inside the insets`,
+    );
+  }
   const plate = cardGround(ground, CARD.WIDTH, CARD.HEIGHT);
 
   const { iconX, textX } = centredBlock(CARD.WIDTH, CARD_ICON, CARD_GAP, CARD_WORD);
@@ -355,8 +383,9 @@ export const composeCard = (
   const baseline = Math.round(CARD_LOCKUP_MID + (CAP_RATIO * CARD_WORD) / 2);
 
   // The crop is silent, so the check cannot be. Descenders reach roughly a
-  // quarter of the em below the baseline.
-  const lowest = CARD_SUBHEAD_Y + CARD_SUBHEAD * 0.25;
+  // quarter of the em below the baseline of the last line.
+  const lastY = CARD_SUBHEAD_Y + (subheads.length - 1) * CARD_SUBHEAD_LEADING;
+  const lowest = lastY + CARD_SUBHEAD * 0.25;
   expect(iconY >= CARD.SAFE_INSET, "the lockup sits inside the band X crops away");
   expect(
     lowest <= CARD.HEIGHT - CARD.SAFE_INSET,
@@ -371,14 +400,18 @@ ${plate.defs}  <rect width="${CARD.WIDTH}" height="${CARD.HEIGHT}" fill="${plate
 ${embedIcon(iconSvg, { x: iconX, y: iconY, size: CARD_ICON, indent: 2 })}
 ${wordmark({ x: textX, baseline, size: CARD_WORD, fill: light, word, indent: 2 })}
 ${cardLine({ text: headline, y: CARD_HEADLINE_Y, size: CARD_HEADLINE, fill: light, weight: 500 })}
-${cardLine({
-  text: subhead,
-  y: CARD_SUBHEAD_Y,
-  size: CARD_SUBHEAD,
-  fill: light,
-  weight: 400,
-  opacity: "0.62",
-})}
+${subheads
+  .map((text, i) =>
+    cardLine({
+      text,
+      y: CARD_SUBHEAD_Y + i * CARD_SUBHEAD_LEADING,
+      size: CARD_SUBHEAD,
+      fill: light,
+      weight: 400,
+      opacity: "0.62",
+    }),
+  )
+  .join("\n")}
 </svg>
 `;
 };

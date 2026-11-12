@@ -118,15 +118,19 @@ const spelledSurfaces = SPELLED[cardApps.length] ?? String(cardApps.length);
 
 /**
  * The two lines swapped jobs at eight surfaces, and the reason is mechanical:
- * **`composeCard` does not fit text.** Both lines are a fixed font size, centred,
- * with no measuring and no wrap — so a line that outgrows 1200px is clipped at
- * both ends, silently, in a picture nothing in CI looks at. The enumerated
- * headline already spanned nearly edge to edge at six names; Safari would have
- * pushed it over.
+ * **`composeCard` does not fit text.** Every line is a fixed font size, centred,
+ * with no wrap. The enumerated headline already spanned nearly edge to edge at
+ * six names; Safari would have pushed it over.
  *
  * So the COUNT is the headline, where it costs 43 characters however many
  * surfaces there are, and the NAMES moved to the subhead, which is 28px against
- * the headline's 38px and has room for several more. Both still come from
+ * the headline's 38px. That bought several surfaces and ran out at twelve: the
+ * one-line list estimated 1392px against the 1080 inside the card's insets, and
+ * the PNG read "ail, Notes, … Simulato". Nothing measured, so nothing said.
+ * Counting the Apple apps only brought it back inside one line, and
+ * `composeCard` now measures every line and throws past the insets, so the
+ * next app cannot clip it in silence: when it throws, pass the subhead as two
+ * lines, which it also takes. Both still come from
  * `data/surfaces.ts` rather than being typed out, which is the point: the card
  * cannot fall behind what ships.
  *

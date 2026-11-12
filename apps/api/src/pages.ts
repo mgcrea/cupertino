@@ -32,14 +32,15 @@ const shell = (title: string, inner: string): string => `<!doctype html>
 </head><body><main>${inner}</main></body></html>
 `;
 
-export const thanksPage = (key: string, email: string): string =>
+/** `major` is the licence's own, for the reason given beside the mail's body. */
+export const thanksPage = (key: string, email: string, major: number): string =>
   shell(
     "Your Cupertino licence",
     `<h1>Thank you.</h1>
 <p>Your licence key, also sent to ${escapeHtml(email)}:</p>
 <code>${escapeHtml(key)}</code>
 <p>Open Cupertino, choose <strong>Licence…</strong> from the menu bar icon, and paste it in.
-It covers every 1.x release, on every Mac you own, and does not expire.</p>
+It covers every ${major}.x release, on every Mac you own, and does not expire.</p>
 <p>Thirty days, any reason: reply to the email and it is refunded in full.</p>`,
   );
 

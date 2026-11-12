@@ -25,9 +25,9 @@ hold.
 
 ## Surfaces
 
-Fourteen now. The first nine are Apple apps; the last five are the Mac itself, and four of those
-ship inside the app because they need a permission or a framework no published npm package can
-hold.
+The Apple apps with an npm package come first. After them, the surfaces that ship only inside the
+app, because they need a permission or a framework no published npm package can hold: the Mac's
+screen, sound, desktop and shell, and the iOS Simulator.
 
 - Mail — 24 tools (12 always registered, 10 write-gated, 2 behind their own flag for watching
   incoming mail). `@mgcrea/mcp-apple-mail`

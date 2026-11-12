@@ -20,7 +20,10 @@
 
 export type Sent = { ok: true } | { ok: false; reason: string };
 
-const body = (key: string): string =>
+// `major` is the licence row's own, never CURRENT_MAJOR: that is what a NEW key
+// is minted for, and a 1.x key re-sent after 2.0 ships still covers 1.x. This
+// said "1.x" as a literal, true only until the day 2.0 shipped.
+const body = (key: string, major: number): string =>
   [
     "Here is your Cupertino licence key.",
     "",
@@ -29,7 +32,7 @@ const body = (key: string): string =>
     "Open Cupertino, choose Licence… from the menu bar icon, and paste it in — or",
     "drop the attached Cupertino.license file anywhere on that window.",
     "",
-    "It covers every 1.x release, on every Mac you own or control, and it does not",
+    `It covers every ${major}.x release, on every Mac you own or control, and it does not`,
     "expire. Keep this message: replying to it is how you get the key re-sent.",
     "",
     "Thirty days, for any reason or none: reply and it is refunded in full.",
@@ -37,14 +40,19 @@ const body = (key: string): string =>
     "— Olivier",
   ].join("\n");
 
-export const sendLicense = async (env: Env, to: string, key: string): Promise<Sent> => {
+export const sendLicense = async (
+  env: Env,
+  to: string,
+  key: string,
+  major: number,
+): Promise<Sent> => {
   try {
     await env.EMAIL.send({
       to,
       from: { email: env.LICENSE_FROM_EMAIL, name: "Cupertino" },
       replyTo: { email: "olivier@mgcrea.io", name: "Olivier Louvignes" },
       subject: "Your Cupertino licence key",
-      text: body(key),
+      text: body(key, major),
       attachments: [
         {
           disposition: "attachment",

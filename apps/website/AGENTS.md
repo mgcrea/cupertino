@@ -111,11 +111,14 @@ The repo is the authority on what ships, and this site is downstream of it.
   **A string outside a SHIPPED branch has to be true on its own.** That is not theoretical: the
   hero's buttons were never gated at all, so they went on inviting people to "watch the repo" for
   the whole period after the app had actually shipped, with no way to buy it above the fold.
-- **`APP_VERSION` is a mirror of the `app-v*` tag, and nothing checks it.** Nothing bumps
-  `MARKETING_VERSION` in the pbxproj — CI overrides it from the tag name — so the newest `app-v*`
-  tag is what people are actually running, and this file plus the CHANGELOG heading are two hand-
-  kept copies of it. The nav badge and the JSON-LD `softwareVersion` both read it, so a stale value
-  is a version claim in search results as well as on the page. Bump it in the release commit.
+- **`APP_VERSION` is generated, and checked.** It sits in a `generated:version` region of
+  `src/config.ts` that `make version` writes from the root `package.json`, and `make version-check`
+  fails CI ("Version manifest") when it has drifted. The `app-v*` tag still says what people are
+  running, since CI sets `MARKETING_VERSION` from the tag name, and the release job refuses a tag
+  whose commit's root `package.json` names another version. So bump the root `package.json` in the
+  release commit and run `make version`; never edit `APP_VERSION` by hand. The nav badge and the
+  JSON-LD `softwareVersion` both read it, so a stale value is a version claim in search results as
+  well as on the page.
 - **The no-network claim is load-bearing and checked.** `scripts/audit-network.sh` at the repo root
   gates it in CI. If that check is ever relaxed, the Status row here comes down first.
 - **Unofficial, not affiliated with Apple** stays in the hero caption and the footer.
@@ -181,9 +184,10 @@ also that renaming or removing this file breaks a page nothing in this repo buil
 
 ## The social card is baked, and its words live in `config.ts`
 
-`og-image.png` is the lockup reversed out of the page's own background over two lines of copy,
-composed by `composeCard` in `../../scripts/lib/lockup.mjs` — the same module that writes the README
-banner, so the two cannot fork.
+`og-image.png` is the lockup reversed out of the page's own background over a headline and a
+subhead of one or two lines, composed by `composeCard` in `../../scripts/lib/lockup.mjs` — the same
+module that writes the README banner, so the two cannot fork. It measures every line and throws on
+one wider than the card's insets, since a clipped line is as silent as X's crop.
 
 - **The copy is `SOCIAL_CARD` in `src/config.ts`, and the surfaces come from `data/surfaces.ts`.**
   Editing a line there is half the change: `pnpm icons` bakes it into the PNG, and until you run

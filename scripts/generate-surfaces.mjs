@@ -36,6 +36,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { region } from "./lib/region.mjs";
+import { swiftString } from "./lib/swift-string.mjs";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const CHECK = process.argv.includes("--check");
@@ -252,8 +253,6 @@ const target = (path, next, opts = {}) =>
 
 // ─── 1. Surfaces.swift ───────────────────────────────────────────────────────
 
-const swiftString = (v) => JSON.stringify(v);
-
 /** Manifest spelling to Swift case. A lookup, so an unmapped value is a crash
  * here rather than a silent fall-through to Full Disk Access. */
 const STORE_PERMISSION = {
@@ -465,7 +464,10 @@ target("apps/website/src/data/surfaces.ts", (src) =>
     // oxfmt does not collapse a multi-line union back onto one line even when
     // it would fit, so this shape is stable at any length and the two agree by
     // construction rather than by counting characters.
-    `  id:\n${ids.map((id) => `    | ${swiftString(id)}`).join("\n")};\n`,
+    //
+    // JSON.stringify, not swiftString: this is TypeScript, where a JSON string
+    // is a valid literal by definition.
+    `  id:\n${ids.map((id) => `    | ${JSON.stringify(id)}`).join("\n")};\n`,
     "website surfaces.ts",
   ),
 );
@@ -491,7 +493,8 @@ target("apps/website/src/data/surfaces.ts", (src) =>
     `// <generated:kind> ${BANNER}\n`,
     `// </generated:kind>`,
     `export const KIND: Record<Surface["id"], "app" | "capability"> = {\n` +
-      surfaces.map((s) => `  ${tsKey(s.id)}: ${swiftString(s.kind)},`).join("\n") +
+      // TypeScript, so JSON.stringify rather than swiftString, as in the union above.
+      surfaces.map((s) => `  ${tsKey(s.id)}: ${JSON.stringify(s.kind)},`).join("\n") +
       `\n};\n\n` +
       `export const USES_APPLE_EVENTS: Record<Surface["id"], boolean> = {\n` +
       surfaces.map((s) => `  ${tsKey(s.id)}: ${s.usesAppleEvents},`).join("\n") +
