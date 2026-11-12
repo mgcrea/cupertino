@@ -256,7 +256,11 @@ final class Target: NSObject, NSApplicationDelegate {
 final class Lines: @unchecked Sendable {
   private var buffer: [String] = []
   private let lock = NSLock()
-  func push(_ s: String) { lock.lock(); buffer.append(s); lock.unlock() }
+  func push(_ s: String) {
+    lock.lock()
+    buffer.append(s)
+    lock.unlock()
+  }
   func next(prefix: String, timeout: TimeInterval = 5) -> String? {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
@@ -433,51 +437,105 @@ func runDriver() {
   }
 
   let cases: [Case] = [
-    Case(name: "O1 postToPid keys, NSTextField focused by the app",
-         act: { setup("focus nsField"); postKeys("abc") }, check: typed("nsField")),
-    Case(name: "O2 postToPid keys, NSTextView focused by the app",
-         act: { setup("focus textView"); postKeys("abc") }, check: typed("textView")),
-    Case(name: "O3 postToPid keys, NSTextField focused + window made key",
-         act: { setup("focus nsField"); setup("makeKey"); postKeys("abc") },
-         check: typed("nsField")),
-    Case(name: "O4 postToPid keys, SwiftUI field focused through AX",
-         act: { print("      AX focus: \(axFocus("swiftField"))"); postKeys("abc") },
-         check: typed("swiftText")),
-    Case(name: "O5 postToPid click, AppKit button",
-         act: { postClick("nsButton", windowFields: false) }, check: tapped("nsTaps")),
-    Case(name: "O6 postToPid click + window fields, AppKit button",
-         act: { postClick("nsButton", windowFields: true) }, check: tapped("nsTaps")),
-    Case(name: "O7 postToPid click + window fields, SwiftUI button",
-         act: { postClick("swiftButton", windowFields: true) }, check: tapped("swiftTaps")),
-    Case(name: "O8 AXPress, SwiftUI button (baseline)",
-         act: { _ = AXUIElementPerformAction(el["swiftButton"]!, kAXPressAction as CFString) },
-         check: tapped("swiftTaps")),
-    Case(name: "I1 sendEvent keys, NSTextField focused",
-         act: { setup("focus nsField"); send("keys abc"); _ = lines.next(prefix: "state ") },
-         check: typed("nsField")),
-    Case(name: "I2 sendEvent keys, NSTextView focused",
-         act: { setup("focus textView"); send("keys abc"); _ = lines.next(prefix: "state ") },
-         check: typed("textView")),
-    Case(name: "I3 sendEvent keys, SwiftUI field focused through AX",
-         act: { _ = axFocus("swiftField"); send("keys abc"); _ = lines.next(prefix: "state ") },
-         check: typed("swiftText")),
-    Case(name: "I4 sendEvent click, AppKit button",
-         act: { inClick("nsButton") }, check: tapped("nsTaps")),
-    Case(name: "I5 sendEvent click, SwiftUI button",
-         act: { inClick("swiftButton") }, check: tapped("swiftTaps")),
-    Case(name: "I6 sendEvent click into SwiftUI field, then keys",
-         act: { inClick("swiftField"); send("keys abc"); _ = lines.next(prefix: "state ") },
-         check: typed("swiftText")),
-    Case(name: "I7 sendEvent click into NSTextField, then keys",
-         act: { inClick("nsField"); send("keys abc"); _ = lines.next(prefix: "state ") },
-         check: typed("nsField")),
-    Case(name: "I8 NSApp.postEvent keys, NSTextField focused",
-         act: { setup("focus nsField"); send("postKeys abc"); _ = lines.next(prefix: "state ") },
-         check: typed("nsField")),
+    Case(
+      name: "O1 postToPid keys, NSTextField focused by the app",
+      act: {
+        setup("focus nsField")
+        postKeys("abc")
+      }, check: typed("nsField")),
+    Case(
+      name: "O2 postToPid keys, NSTextView focused by the app",
+      act: {
+        setup("focus textView")
+        postKeys("abc")
+      }, check: typed("textView")),
+    Case(
+      name: "O3 postToPid keys, NSTextField focused + window made key",
+      act: {
+        setup("focus nsField")
+        setup("makeKey")
+        postKeys("abc")
+      },
+      check: typed("nsField")),
+    Case(
+      name: "O4 postToPid keys, SwiftUI field focused through AX",
+      act: {
+        print("      AX focus: \(axFocus("swiftField"))")
+        postKeys("abc")
+      },
+      check: typed("swiftText")),
+    Case(
+      name: "O5 postToPid click, AppKit button",
+      act: { postClick("nsButton", windowFields: false) }, check: tapped("nsTaps")),
+    Case(
+      name: "O6 postToPid click + window fields, AppKit button",
+      act: { postClick("nsButton", windowFields: true) }, check: tapped("nsTaps")),
+    Case(
+      name: "O7 postToPid click + window fields, SwiftUI button",
+      act: { postClick("swiftButton", windowFields: true) }, check: tapped("swiftTaps")),
+    Case(
+      name: "O8 AXPress, SwiftUI button (baseline)",
+      act: { _ = AXUIElementPerformAction(el["swiftButton"]!, kAXPressAction as CFString) },
+      check: tapped("swiftTaps")),
+    Case(
+      name: "I1 sendEvent keys, NSTextField focused",
+      act: {
+        setup("focus nsField")
+        send("keys abc")
+        _ = lines.next(prefix: "state ")
+      },
+      check: typed("nsField")),
+    Case(
+      name: "I2 sendEvent keys, NSTextView focused",
+      act: {
+        setup("focus textView")
+        send("keys abc")
+        _ = lines.next(prefix: "state ")
+      },
+      check: typed("textView")),
+    Case(
+      name: "I3 sendEvent keys, SwiftUI field focused through AX",
+      act: {
+        _ = axFocus("swiftField")
+        send("keys abc")
+        _ = lines.next(prefix: "state ")
+      },
+      check: typed("swiftText")),
+    Case(
+      name: "I4 sendEvent click, AppKit button",
+      act: { inClick("nsButton") }, check: tapped("nsTaps")),
+    Case(
+      name: "I5 sendEvent click, SwiftUI button",
+      act: { inClick("swiftButton") }, check: tapped("swiftTaps")),
+    Case(
+      name: "I6 sendEvent click into SwiftUI field, then keys",
+      act: {
+        inClick("swiftField")
+        send("keys abc")
+        _ = lines.next(prefix: "state ")
+      },
+      check: typed("swiftText")),
+    Case(
+      name: "I7 sendEvent click into NSTextField, then keys",
+      act: {
+        inClick("nsField")
+        send("keys abc")
+        _ = lines.next(prefix: "state ")
+      },
+      check: typed("nsField")),
+    Case(
+      name: "I8 NSApp.postEvent keys, NSTextField focused",
+      act: {
+        setup("focus nsField")
+        send("postKeys abc")
+        _ = lines.next(prefix: "state ")
+      },
+      check: typed("nsField")),
   ]
 
   for order in ["front", "back"] {
-    print("== window \(order == "front" ? "in front, app inactive" : "behind other apps' windows") ==")
+    print(
+      "== window \(order == "front" ? "in front, app inactive" : "behind other apps' windows") ==")
     for c in cases {
       _ = state(after: "reset")
       _ = state(after: order)

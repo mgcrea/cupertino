@@ -30,7 +30,8 @@ nonisolated struct AppChannel {
       home.appendingPathComponent("Library/Containers/\(bundleId)/Data/tmp"),
       URL(fileURLWithPath: NSTemporaryDirectory()),
     ]
-    return find(pid: pid, in: candidates.map { $0.appendingPathComponent("SupportKitDriving/\(pid)") })
+    return find(
+      pid: pid, in: candidates.map { $0.appendingPathComponent("SupportKitDriving/\(pid)") })
   }
 
   /// The channel of the running application `bundleId`, if THIS Cupertino
@@ -89,7 +90,8 @@ nonisolated struct AppChannel {
   }
 
   private static let lock = NSLock()
-  private nonisolated(unsafe) static var lastSeq = Int(Date().timeIntervalSince1970 * 1000) % 1_000_000_000
+  private nonisolated(unsafe) static var lastSeq =
+    Int(Date().timeIntervalSince1970 * 1000) % 1_000_000_000
 
   /// Send one command and wait for its answer. An `error` from the app is a
   /// refusal carrying its message; no answer within `timeout` is a refusal too,

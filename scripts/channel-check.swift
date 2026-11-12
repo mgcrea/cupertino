@@ -136,8 +136,10 @@ struct ChannelCheck {
       check(
         "a channel planted for an app Cupertino did not launch with one is not believed",
         AppChannel.find(bundleId: "com.apple.finder") == nil)
-      let clicked = call("apple_desktop_click", ["x": -9000, "y": -9000, "bundleId": "com.apple.finder"])
-      check("and a verb to that app does not go through it", clicked["lane"] as? String != "channel")
+      let clicked = call(
+        "apple_desktop_click", ["x": -9000, "y": -9000, "bundleId": "com.apple.finder"])
+      check(
+        "and a verb to that app does not go through it", clicked["lane"] as? String != "channel")
       try? FileManager.default.removeItem(at: planted)
     } else {
       check("Finder is running, to plant a channel for", false)
@@ -151,7 +153,8 @@ struct ChannelCheck {
     let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     // By path, the way a Debug build that shares its bundle id with an installed
     // copy is started.
-    let fixturePath = FileManager.default.currentDirectoryPath
+    let fixturePath =
+      FileManager.default.currentDirectoryPath
       + "/apps/apple/.build/channel-fixture/CupertinoChannelFixture.app"
     let launched = call("apple_desktop_launch", ["path": fixturePath, "channel": true])
     check("it starts behind, by path", launched["launched"] as? Bool == true)
@@ -227,7 +230,8 @@ struct ChannelCheck {
     let typed = call("apple_desktop_type", ["bundleId": fixture, "text": "abc"])
     check("type goes through the channel", typed["lane"] as? String == "channel")
     check("and the field holds it", (attr(nsField, kAXValueAttribute) as? String) == "abc")
-    let keyed = call("apple_desktop_key", ["bundleId": fixture, "key": "a", "modifiers": ["command"]])
+    let keyed = call(
+      "apple_desktop_key", ["bundleId": fixture, "key": "a", "modifiers": ["command"]])
     print("       key answer: \(keyed)")
     check("a shortcut goes through the channel", keyed["lane"] as? String == "channel")
     // The selection lives in the field editor, which AX reaches as the field's
