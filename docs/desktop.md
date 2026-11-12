@@ -1282,6 +1282,16 @@ timeout answered at 0.61 s, a cancel after 0.5 s ended the wait at 0.57 s, a SIG
 wait ended it at 0.55 s naming the quit, and a handle used afterwards said quit rather than busy.
 Not yet driven against Drakar itself.
 
+To run such a check again without the installed app: compile the `desktop-check` source list from
+the `Makefile` with a `main.swift` that sends JSON-RPC lines to
+`DesktopServer.handle(line, surface: Surface.named("desktop")!, writesAllowed: true, scope: .any)`.
+That list leaves out `DemoSeed`, so the harness declares
+`enum DemoSeed { static let isEnabled = false; static let version = "0.0.0" }`. Run the checks off
+the main thread while the main thread runs `NSApplication.shared.run()` as `.accessory`, since the
+driving notice needs that loop, and pass `-driving.before none` so admission does not wait for the
+notice. The target has to be a real `.app` with its own `CFBundleIdentifier` (`LSUIElement` keeps
+it out of the Dock), because every tool finds its app by `bundleId`.
+
 ## Starting an application, 2026-10-30
 
 An agent asked to work in an application that was not running had two answers: "Safari is not

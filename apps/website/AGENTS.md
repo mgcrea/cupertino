@@ -103,6 +103,12 @@ The repo is the authority on what ships, and this site is downstream of it.
 - **Tool counts come from the tree, not from the root README.** `packages/<surface>/src/tools/`
   is what registers them; the README has drifted before. The v4 design canvas still shows Reminders
   as "in progress, no server yet" — it shipped, with 11 tools, and the site follows the code.
+  A new tool, an in-app Swift one included, changes three hand-kept copies: `src/data/surfaces.ts`,
+  the root README's table, and `public/llms.txt`, whose bullet also splits the count into always
+  registered and write-gated. `pnpm test` (`scripts/lib/website-tools.test.mjs`) checks the first
+  and the last against the registered tools, and `make readme-check` checks the README; none of the
+  Swift side's `make` checks do. A wait-for tool missed `llms.txt` on 2026-10-30, so CI went red
+  and the deploy was skipped.
 - **`SHIPPED` is true, and its other branch is still live code.** The app released at 1.0.0, so
   the nav, hero, pricing plate and closing plate each render their shipped half — a download
   button, a buy button carrying the price, and a `SoftwareApplication` schema that now does carry

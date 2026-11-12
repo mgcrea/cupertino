@@ -1,7 +1,7 @@
 # Desktop waits, step selectors and committed writes: design
 
 Date: 2026-10-30. Status: approved by Olivier in chat on 2026-10-30 ("go"); this document is the
-write-up. Items 1 to 4 are built on `feat/desktop-waits`; 5 and 6 are left for later.
+write-up. Items 1 to 4 landed on main on 2026-10-30 (`bab42f9`); 5 and 6 are left for later.
 
 ## Why
 
