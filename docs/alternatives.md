@@ -193,6 +193,19 @@ So a channel lane would serve one host, the terminal, from a 2025-only mode behi
 flag per session, and reaching the VS Code panel would take a plugin on the official marketplace or
 a managed-settings allowlist. **Decided 2026-11-02: Cupertino does not build a channel lane now.**
 
+Asked upstream the same day: anthropics/claude-code#106696 asks for a watch URI to be subscribable
+(open, `enhancement` and `area:mcp`), and a comment on #105234 reports the VS Code panel result. The
+field report to the Triggers & Events WG is modelcontextprotocol/experimental-ext-triggers-events#16.
+Revisit when one of them moves, or when Claude Code ships SEP-3415 (none in 2.1.316).
+
+To measure again, a raw stdio server of about 90 lines is enough. It answers `server/discover` with
+-32601, declares `experimental: {"claude/channel": {}}`, and sends a few
+`notifications/claude/channel` a while after `notifications/initialized`, logging every frame to a
+file. Pass it to the terminal with `--mcp-config`; its startup banner wrongly says no MCP server of
+that name is configured, so ignore that. To try the VS Code panel, point
+`claudeCode.claudeProcessWrapper` at a script that runs `exec "$@" --mcp-config <file> --dangerously-load-development-channels server:<name>`.
+Setting it restarts every open session's Claude process, so remove it afterwards.
+
 What follows is the channel as first recorded. Anthropic's iMessage plugin declares
 `claude/channel` and `claude/channel/permission` and pushes `notifications/claude/channel`, which
 is the host protocol that lets a phone drive a Claude Code session — including relaying tool
