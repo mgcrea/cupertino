@@ -220,7 +220,54 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_40_0, v1_39_0, v1_38_0, v1_37_1, v1_37_0]
+  static let releases: [Release] = [v1_41_0, v1_40_0, v1_39_0, v1_38_0, v1_37_1]
+
+  // swift-format-ignore
+  private static let v1_41_0: Release = Release(
+    version: "1.41.0",
+    date: "2026-11-16",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Capture one copy of an app by its pid.",
+            body: [
+              "`apple_screen_capture_surface` takes `pid`, and `apple_screen_list_targets` lists each app once, with every running copy's pid and window count. While several copies run, a capture that names none is refused and lists their pids, rather than taking the larger window of whichever copy drew it.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Double and triple clicks.",
+            body: [
+              "`apple_desktop_click` takes `count`, 1 to 3, with the left button: through a driving channel, and on the session lane as the click state an app reads as a double click. A `run` step's count is checked like the tool's.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "Typing into an open or save panel.",
+            body: [
+              "A field in a window its app does not draw, as a sandboxed app's open panel is, is typed into by Accessibility where typing would put it and read back (`lane: \"accessibility\"`), and return and escape are its confirm and cancel actions. Keys and driving channel commands, which reach only the app's own windows, were refused there or could land in another field.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "A key that quits the app says so.",
+            body: [
+              "A ⌘Q through a driving channel answers `quit: true` once the process has ended, instead of reporting that the app did not answer within 2 s.",
+            ]),
+          Entry(
+            ordinal: 4,
+            headline: "A launch that opens no driving channel names the cause.",
+            body: [
+              "An unconfirmed copy, or a sandboxed app's container that Cupertino may not read without Full Disk Access, is said to be that, rather than a build without SupportKitDriving. A copy the launch would quit again is checked once more, just before it is asked to quit.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_40_0: Release = Release(
@@ -654,24 +701,6 @@ nonisolated enum Changelog {
             headline: "`create_reminder` and `move_reminders` find their list about 2 s sooner.",
             body: [
               "Without the Reminders store open, they counted every list's completed reminders to pick one by name, and threw the counts away.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_37_0: Release = Release(
-    version: "1.37.0",
-    date: "2026-11-06",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Mail's `save_attachment` has Mail download an attachment it has not fetched yet.",
-            body: [
-              "On a Gmail account that caches messages without their attachments, most older attachments were never on disk, and saving one failed with \"not stored locally\". Cupertino now asks Mail to save it, which makes Mail fetch it from the server (the result says `from: \"mail\"`); Mail keeps the copy, so the attachment reads as retrievable afterwards. Mail has to be running and online. It writes into a staging folder that is removed after the copy, never into the destination itself.",
             ]),
         ]),
     ])

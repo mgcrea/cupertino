@@ -6,11 +6,46 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.40.0`,
-`notes-v1.40.0`, `reminders-v1.40.0`, `core-v1.40.0` for the npm packages, and `app-v1.40.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.41.0`,
+`notes-v1.41.0`, `reminders-v1.41.0`, `core-v1.41.0` for the npm packages, and `app-v1.41.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.41.0] - 2026-11-16
+
+**Capture one of two copies, and double-click.** Screen captures a worktree's Debug build by its
+pid and never the copy beside it, Desktop clicks twice or three times in a row, and an open panel's
+field takes typing by Accessibility.
+
+### Added
+
+- **Capture one copy of an app by its pid.** `apple_screen_capture_surface` takes `pid`, and
+  `apple_screen_list_targets` lists each app once, with every running copy's pid and window count.
+  While several copies run, a capture that names none is refused and lists their pids, rather than
+  taking the larger window of whichever copy drew it.
+- **Double and triple clicks.** `apple_desktop_click` takes `count`, 1 to 3, with the left button:
+  through a driving channel, and on the session lane as the click state an app reads as a double
+  click. A `run` step's count is checked like the tool's.
+
+### Fixed
+
+- **Typing into an open or save panel.** A field in a window its app does not draw, as a sandboxed
+  app's open panel is, is typed into by Accessibility where typing would put it and read back
+  (`lane: "accessibility"`), and return and escape are its confirm and cancel actions. Keys and
+  driving channel commands, which reach only the app's own windows, were refused there or could
+  land in another field.
+- **A key that quits the app says so.** A ⌘Q through a driving channel answers `quit: true` once
+  the process has ended, instead of reporting that the app did not answer within 2 s.
+- **A launch that opens no driving channel names the cause.** An unconfirmed copy, or a sandboxed
+  app's container that Cupertino may not read without Full Disk Access, is said to be that, rather
+  than a build without SupportKitDriving. A copy the launch would quit again is checked once more,
+  just before it is asked to quit.
+
+### Internal
+
+- `make channel-check` builds swift-support-kit 1.25.1's `SupportKitDrivingCatch`, which it no
+  longer compiled without, and measures two copies captured by pid, double clicks and a ⌘Q.
 
 ## [1.40.0] - 2026-11-16
 
@@ -3633,7 +3668,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.40.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.41.0...HEAD
+[1.41.0]: https://github.com/mgcrea/cupertino/compare/app-v1.40.0...app-v1.41.0
 [1.40.0]: https://github.com/mgcrea/cupertino/compare/app-v1.39.0...app-v1.40.0
 [1.39.0]: https://github.com/mgcrea/cupertino/compare/app-v1.38.0...app-v1.39.0
 [1.38.0]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...app-v1.38.0
