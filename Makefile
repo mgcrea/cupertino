@@ -408,6 +408,10 @@ channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; i
 	@apps/apple/.build/channel-check
 
 mail-composer-check: ## Assert the Mail composer's text matching, handle registry and Mail-only verbs
+	@# Its FakeScreen checks count reads against timeouts of 0.3 to 0.4 s, and on CI's
+	@# macOS runner one of them fails at random: a different one each time on 2026-11-10,
+	@# 11-11, 11-12 and 11-16. The 11-16 one passed 440/440 three times locally and on a
+	@# re-run of the job. Re-run the failed job once before suspecting the change.
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/mail-composer-check \
 		apps/apple/Cupertino/MailComposerText.swift \
