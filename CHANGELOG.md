@@ -6,13 +6,16 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.39.0`,
-`notes-v1.39.0`, `reminders-v1.39.0`, `core-v1.39.0` for the npm packages, and `app-v1.39.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.40.0`,
+`notes-v1.40.0`, `reminders-v1.40.0`, `core-v1.40.0` for the npm packages, and `app-v1.40.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.40.0] - 2026-11-16
+
+**Drive one copy of an app by its pid.** Desktop tells a worktree's Debug build from the copy that
+shares its bundle id, and through a driving channel it scrolls, orbits and pans our own Debug builds.
 
 ### Added
 
@@ -3630,7 +3633,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.39.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.40.0...HEAD
+[1.40.0]: https://github.com/mgcrea/cupertino/compare/app-v1.39.0...app-v1.40.0
 [1.39.0]: https://github.com/mgcrea/cupertino/compare/app-v1.38.0...app-v1.39.0
 [1.38.0]: https://github.com/mgcrea/cupertino/compare/app-v1.37.1...app-v1.38.0
 [1.37.1]: https://github.com/mgcrea/cupertino/compare/app-v1.37.0...app-v1.37.1

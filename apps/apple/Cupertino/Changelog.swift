@@ -220,7 +220,42 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_39_0, v1_38_0, v1_37_1, v1_37_0, v1_36_2]
+  static let releases: [Release] = [v1_40_0, v1_39_0, v1_38_0, v1_37_1, v1_37_0]
+
+  // swift-format-ignore
+  private static let v1_40_0: Release = Release(
+    version: "1.40.0",
+    date: "2026-11-16",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Drive one copy of an app by its pid.",
+            body: [
+              "Every Desktop verb that takes `bundleId` also takes `pid`, so a worktree's Debug build can be driven beside the one from the main checkout, which shares its bundle id. With several copies running, a bundle id alone is refused rather than guessed, and the refusal lists each copy's pid, its path and whether it has a driving channel. `apple_desktop_list_apps` gives each app's path. `apple_desktop_launch` with `path` and `channel: true` starts a copy beside one already running and answers its `pid`, and quits it again if it opens no channel. A handle always reaches the copy it was read from. A pid whose application is out of reach is refused without saying what runs as it.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Scroll, orbit and pan in our own Debug builds.",
+            body: [
+              "Through a driving channel, `apple_desktop_scroll` scrolls the view under a point by lines or by pixels, and `apple_desktop_drag` takes the middle button, modifiers held throughout and pacing, which is how a canvas or a 3D view moves. `apple_desktop_hover` takes `from`, so its moves carry their movement. All of them need swift-support-kit 1.25.0's channel, and to any other app they are refused with the reason rather than dropped.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "The driving channel no longer mixes up two connections or two Cupertinos.",
+            body: [
+              "A command is appended in one write, only one from each Cupertino is in flight per app, its sequence numbers start from a random base, and the app's answers are read from where the last read ended rather than whole every 10 ms.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_39_0: Release = Release(
@@ -641,71 +676,11 @@ nonisolated enum Changelog {
         ]),
     ])
 
-  // swift-format-ignore
-  private static let v1_36_2: Release = Release(
-    version: "1.36.2",
-    date: "2026-11-03",
-    sections: [
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "A Mail draft with no subject is pasted, not assigned, when Cupertino hosts the server.",
-            body: [
-              "It went through Apple Events, which wraps the body in a quotation the recipient sees, and taking that off needed Automation for System Events. It is now filled and saved through Cupertino's own Accessibility driver, like every other draft. Sending a message with no subject at once still takes the old path, because Mail asks about the missing subject before sending it.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Safari brought to the front by `apple_safari_open_url` is announced like any other driving.",
-            body: [
-              "With `activate: true` Safari came forward through an Apple Event, with no notice and no say for the person at the keyboard. It now goes through Cupertino's driver, and the result says whether it happened (`activated`). Safari stays in front afterwards rather than being handed back when the session idles out.",
-            ]),
-        ]),
-    ])
-
   /// Work that is written down but not shipped.
   ///
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  // swift-format-ignore
-  private static let unreleasedRelease: Release = Release(
-    version: "Unreleased",
-    date: "",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Drive one copy of an app by its pid.",
-            body: [
-              "Every Desktop verb that takes `bundleId` also takes `pid`, so a worktree's Debug build can be driven beside the one from the main checkout, which shares its bundle id. With several copies running, a bundle id alone is refused rather than guessed, and the refusal lists each copy's pid, its path and whether it has a driving channel. `apple_desktop_list_apps` gives each app's path. `apple_desktop_launch` with `path` and `channel: true` starts a copy beside one already running and answers its `pid`, and quits it again if it opens no channel. A handle always reaches the copy it was read from. A pid whose application is out of reach is refused without saying what runs as it.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Scroll, orbit and pan in our own Debug builds.",
-            body: [
-              "Through a driving channel, `apple_desktop_scroll` scrolls the view under a point by lines or by pixels, and `apple_desktop_drag` takes the middle button, modifiers held throughout and pacing, which is how a canvas or a 3D view moves. `apple_desktop_hover` takes `from`, so its moves carry their movement. All of them need swift-support-kit 1.25.0's channel, and to any other app they are refused with the reason rather than dropped.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "The driving channel no longer mixes up two connections or two Cupertinos.",
-            body: [
-              "A command is appended in one write, only one from each Cupertino is in flight per app, its sequence numbers start from a random base, and the app's answers are read from where the last read ended rather than whole every 10 ms.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  static let unreleased: Release? = unreleasedRelease
+  static let unreleased: Release? = nil
   // </generated:changelog>
 }
