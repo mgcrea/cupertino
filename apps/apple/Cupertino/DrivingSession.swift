@@ -69,6 +69,11 @@ nonisolated enum DrivingSession {
     /// first verb that does take it is still put to `DrivingPolicy.decide`, or a
     /// background type that fell back to the front would skip the countdown.
     var quiet: Bool = false
+    /// Which copy `handsBackTo` names, read with it: two copies of one
+    /// application share a bundle id, and handing back to the other copy, or
+    /// to none for want of knowing which, would leave the person somewhere
+    /// they were not.
+    var handsBackToPid: pid_t? = nil
 
     /// This session once `target` is admitted into it.
     ///
@@ -76,11 +81,13 @@ nonisolated enum DrivingSession {
     /// is the one in front when it first takes the front, not when it opened:
     /// they may have moved in between.
     func admitting(
-      _ target: String, connection: UUID?, front: String?, at now: Date, background: Bool
+      _ target: String, connection: UUID?, front: String?, frontPid: pid_t? = nil, at now: Date,
+      background: Bool
     ) -> Open {
       var next = self
       if quiet && !background, let front {
         next.handsBackTo = DrivingSession.handBack(front: front, target: target)
+        next.handsBackToPid = next.handsBackTo == nil ? nil : frontPid
       }
       next.quiet = quiet && background
       next.target = target
@@ -192,7 +199,7 @@ nonisolated enum DrivingSession {
       // Read outside the lock, because it is an Accessibility round trip and a
       // slow application must not stall every other reader of this state.
       // Wasted only on the call that finds a session already open.
-      let front = needsFront() ? frontmost() : nil
+      let front = needsFront() ? frontmostCopy() : (bundleId: nil, pid: nil)
 
       lock.lock()
       // A quiet session does not let a front verb through, and does not
@@ -231,7 +238,9 @@ nonisolated enum DrivingSession {
       let waiting: Pending
       switch decision {
       case .open:
-        admitLocked(target, connection: connection, front: front, at: now, background: background)
+        admitLocked(
+          target, connection: connection, front: front.bundleId, frontPid: front.pid, at: now,
+          background: background)
         lock.unlock()
         announce(target)
         return
@@ -257,7 +266,8 @@ nonisolated enum DrivingSession {
       case .countdown, .ask:
         if Thread.isMainThread {
           admitLocked(
-            target, connection: connection, front: front, at: now, background: background)
+            target, connection: connection, front: front.bundleId, frontPid: front.pid, at: now,
+            background: background)
           lock.unlock()
           announce(target)
           return
@@ -279,7 +289,7 @@ nonisolated enum DrivingSession {
       let answer = waiting.wait()
       // Re-read: the person had the countdown to switch to what they wanted to
       // finish, and THAT is the application to hand back to.
-      let frontNow = answer == .go ? frontmost() : nil
+      let frontNow = answer == .go ? frontmostCopy() : (bundleId: nil, pid: nil)
       var endedQuiet: Open?
 
       lock.lock()
@@ -289,7 +299,8 @@ nonisolated enum DrivingSession {
         case .go:
           if open == nil || open?.quiet == true {
             admitLocked(
-              target, connection: connection, front: frontNow, at: Date(), background: false)
+              target, connection: connection, front: frontNow.bundleId, frontPid: frontNow.pid,
+              at: Date(), background: false)
           }
         case .stop:
           // Silence on a question is not a no. Nobody was there to say it.
@@ -423,7 +434,7 @@ nonisolated enum DrivingSession {
     var restored: String?
     if handBack, let back = session.handsBackTo, !session.driven.contains(back),
       let front = frontmost(), session.driven.contains(front),
-      AccessibilityDriver.handBack(to: back)
+      AccessibilityDriver.handBack(to: back, pid: session.handsBackToPid)
     {
       restored = back
     }
@@ -516,9 +527,18 @@ nonisolated enum DrivingSession {
 
   // ─── internals ─────────────────────────────────────────────────────────────
 
-  private static func frontmost() -> String? {
-    AccessibilityDriver.frontmostBundleId()
-      ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+  private static func frontmost() -> String? { frontmostCopy().bundleId }
+
+  /// The application in front and its process: which copy, when two share a
+  /// bundle id.
+  private static func frontmostCopy() -> (bundleId: String?, pid: pid_t?) {
+    if let pid = AccessibilityDriver.frontmostPid(),
+      let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+    {
+      return (bundleId, pid)
+    }
+    let app = NSWorkspace.shared.frontmostApplication
+    return (app?.bundleIdentifier, app?.processIdentifier)
   }
 
   /// Under the lock.
@@ -526,23 +546,27 @@ nonisolated enum DrivingSession {
   /// passed the decision, keeping what it already holds: who to hand back to,
   /// what it drove, and the connections that drove in it.
   private static func admitLocked(
-    _ target: String, connection: UUID?, front: String?, at now: Date, background: Bool
+    _ target: String, connection: UUID?, front: String?, frontPid: pid_t?, at now: Date,
+    background: Bool
   ) {
     guard let session = open else {
-      openLocked(target, connection: connection, front: front, at: now)
+      openLocked(target, connection: connection, front: front, frontPid: frontPid, at: now)
       open?.quiet = background
       return
     }
     open = session.admitting(
-      target, connection: connection, front: front, at: now, background: background)
+      target, connection: connection, front: front, frontPid: frontPid, at: now,
+      background: background)
   }
 
-  private static func openLocked(_ target: String, connection: UUID?, front: String?, at now: Date)
-  {
+  private static func openLocked(
+    _ target: String, connection: UUID?, front: String?, frontPid: pid_t?, at now: Date
+  ) {
     let back = handBack(front: front, target: target)
     open = Open(
       target: target, driven: [target], since: now, lastCall: now, handsBackTo: back,
-      connections: connection.map { [$0] } ?? [], orphanedAt: nil)
+      connections: connection.map { [$0] } ?? [], orphanedAt: nil,
+      handsBackToPid: back == nil ? nil : frontPid)
     if awake == nil {
       awake = ProcessInfo.processInfo.beginActivity(
         options: .idleDisplaySleepDisabled, reason: awakeReason)

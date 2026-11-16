@@ -466,6 +466,7 @@ simulator-spike: ## Drive a booted Simulator through the Accessibility lane, by 
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/simulator-spike \
 		apps/apple/Cupertino/AccessibilityDriver.swift \
+		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/ShellInput.swift \
 		apps/apple/Cupertino/DriveActivity.swift \
 		apps/apple/Cupertino/DrivingPolicy.swift \

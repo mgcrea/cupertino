@@ -92,6 +92,16 @@ nonisolated enum DesktopServer {
       "type": "string",
       "description": bundleIdDescription,
     ]
+    // Two copies of one application share a bundle id: a worktree's Debug build
+    // beside the one from the main checkout. A verb named by the bundle id alone
+    // while both run is refused, listing them.
+    let pidProperty: [String: Any] = [
+      "type": "integer",
+      "description":
+        "Process id of one running copy, from apple_desktop_list_apps or apple_desktop_launch. "
+        + "Names that copy when several share a bundle identifier, which a bundleId alone then "
+        + "cannot; 'bundleId' may be left out, and must agree when given.",
+    ]
     // Not from list_apps, which lists only what is running: the point of the
     // verb is an application that is not.
     let launchBundleIdProperty: [String: Any] = [
@@ -147,7 +157,7 @@ nonisolated enum DesktopServer {
       "type": "object",
       "properties": [
         "handle": ["type": "string"], "x": ["type": "number"], "y": ["type": "number"],
-        "bundleId": ["type": "string"],
+        "bundleId": ["type": "string"], "pid": ["type": "integer"],
       ],
       "description": "Where the button goes down: {\"handle\"} or {\"x\", \"y\"}.",
     ]
@@ -185,7 +195,9 @@ nonisolated enum DesktopServer {
         "name": "apple_desktop_list_apps",
         "description":
           "List the applications in reach that are running now — \(scope.described) — with their "
-          + "bundle identifiers and process ids. Works with no Accessibility grant at all.",
+          + "bundle identifiers, process ids and paths: two copies of one application share a "
+          + "bundle identifier, and their path tells them apart. Works with no Accessibility grant "
+          + "at all.",
         "inputSchema": empty,
         "annotations": ["readOnlyHint": true],
       ],
@@ -198,12 +210,12 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": [
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "includeTitles": [
               "type": "boolean",
               "description": "Return window titles. Defaults to false.",
             ],
           ],
-          "required": ["bundleId"],
         ],
         "annotations": ["readOnlyHint": true],
       ],
@@ -218,10 +230,10 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": [
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "window": windowProperty,
             "detail": detailProperty,
           ].merging(boundsProperties) { current, _ in current },
-          "required": ["bundleId"],
         ],
         "annotations": ["readOnlyHint": true],
       ],
@@ -254,13 +266,13 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": matchProperties.merging([
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "pressableOnly": [
               "type": "boolean",
               "description": "Only return elements that can be pressed. Defaults to false.",
             ],
             "window": windowProperty,
           ]) { _, new in new }.merging(boundsProperties) { current, _ in current },
-          "required": ["bundleId"],
         ],
         "annotations": ["readOnlyHint": true],
       ],
@@ -277,6 +289,7 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": matchProperties.merging([
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "state": [
               "type": "string", "enum": AccessibilityDriver.WaitState.allCases.map(\.rawValue),
               "description": "present (default) or absent.",
@@ -288,7 +301,6 @@ nonisolated enum DesktopServer {
             ],
             "window": windowProperty,
           ]) { _, new in new }.merging(boundsProperties) { current, _ in current },
-          "required": ["bundleId"],
         ],
         "annotations": ["readOnlyHint": true],
       ],
@@ -327,9 +339,9 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": [
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "path": menuPathProperty,
           ],
-          "required": ["bundleId"],
         ],
         "annotations": ["readOnlyHint": true],
       ],
@@ -386,9 +398,10 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": [
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "path": menuPathProperty.merging(["minItems": 2]) { _, new in new },
           ],
-          "required": ["bundleId", "path"],
+          "required": ["path"],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
       ],
@@ -421,6 +434,7 @@ nonisolated enum DesktopServer {
           "type": "object",
           "properties": [
             "x": ["type": "number"], "y": ["type": "number"], "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "button": [
               "type": "string", "enum": AccessibilityDriver.MouseButton.allCases.map(\.rawValue),
               "description": "Default left.",
@@ -452,6 +466,15 @@ nonisolated enum DesktopServer {
             "x": ["type": "number", "description": "Screen point, when no element carries one."],
             "y": ["type": "number"],
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
+            "from": [
+              "type": "object",
+              "properties": ["x": ["type": "number"], "y": ["type": "number"]],
+              "description":
+                "Where the sweep starts, {\"x\", \"y\"}: the moves then carry their movement "
+                + "from it to the target, which a canvas or a 3D view reads. Only into an app "
+                + "launched with channel: true.",
+            ],
             "durationMs": [
               "type": "integer",
               "description": "How long the pointer takes to travel, default 600. The pointer is "
@@ -506,7 +529,9 @@ nonisolated enum DesktopServer {
           + "{\"x\", \"y\"}; a handle's point is re-read at call time, as for hover. The "
           + "application is brought to the front first, and nothing is posted unless both ends "
           + "are on its windows. A drop on another application's window names that one in "
-          + "'to.bundleId', which is brought to no front but must be in reach.",
+          + "'to.bundleId', which is brought to no front but must be in reach. Into an app "
+          + "launched with channel: true, 'button': \"middle\", 'modifiers' and 'paced' orbit "
+          + "or pan a canvas or a 3D view; anywhere else they are refused.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -517,15 +542,58 @@ nonisolated enum DesktopServer {
                 + "'bundleId' for a drop on another application's window."
             ]) { _, new in new },
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
             "durationMs": [
               "type": "integer",
               "description": "How long the move takes, default 400. The pointer is walked at "
                 + "about 60 steps a second, so what is under it sees a drag with a velocity.",
             ],
+            "button": [
+              "type": "string", "enum": ["left", "middle"],
+              "description": "Default left. middle only into an app launched with channel: true.",
+            ],
+            "modifiers": [
+              "type": "array", "items": ["type": "string"],
+              "description":
+                "Held for the whole drag: command, shift, option, control. Only into an app "
+                + "launched with channel: true.",
+            ],
+            "paced": [
+              "type": "boolean",
+              "description":
+                "Send each step at its time over durationMs, once the app has taken the one "
+                + "before, for a view that animates or throttles between events. Default false, "
+                + "which queues the whole drag at once. Only into an app launched with channel: "
+                + "true.",
+            ],
           ],
           "required": ["from", "to"],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": true, "idempotentHint": false],
+      ],
+      [
+        "name": "apple_desktop_scroll",
+        "description":
+          "Scroll the view under a screen point, in an app launched with channel: true: its own "
+          + "window takes the scroll where it is, covered or behind, and nothing comes forward. "
+          + "'dy' scrolls vertically and 'dx' horizontally, in 'units' line (a mouse wheel's "
+          + "notches, the default) or pixel (a trackpad's points). Refused for any other app: a "
+          + "scroll posted to the session is not measured yet.",
+        "inputSchema": [
+          "type": "object",
+          "properties": [
+            "x": ["type": "number"], "y": ["type": "number"],
+            "dx": ["type": "number", "description": "Horizontal, default 0."],
+            "dy": ["type": "number", "description": "Vertical, default 0."],
+            "units": [
+              "type": "string", "enum": ["line", "pixel"], "description": "Default line.",
+            ],
+            "bundleId": bundleIdProperty,
+            "pid": pidProperty,
+          ],
+          "required": ["x", "y"],
+        ],
+        "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": false],
       ],
       [
         "name": "apple_desktop_type",
@@ -545,6 +613,7 @@ nonisolated enum DesktopServer {
             "text": ["type": "string"],
             "handle": sessionHandleProperty,
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
           ],
           "required": ["text"],
         ],
@@ -569,6 +638,7 @@ nonisolated enum DesktopServer {
             ],
             "handle": sessionHandleProperty,
             "bundleId": bundleIdProperty,
+            "pid": pidProperty,
           ],
           "required": ["key"],
         ],
@@ -597,8 +667,7 @@ nonisolated enum DesktopServer {
           + "a separate call here, which the person at the keyboard can undo before the next one.",
         "inputSchema": [
           "type": "object",
-          "properties": ["bundleId": bundleIdProperty],
-          "required": ["bundleId"],
+          "properties": ["bundleId": bundleIdProperty, "pid": pidProperty],
         ],
         "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
       ],
@@ -615,7 +684,9 @@ nonisolated enum DesktopServer {
           + "bundleId then reach its own windows without bringing it forward (lane: channel), "
           + "shortcuts included. Any other app ignores it and answers channel: false. Pass "
           + "'path' (with or instead of bundleId) to start one exact .app, the Debug build of an "
-          + "App Store app that shares its bundle id with the installed copy.",
+          + "App Store app that shares its bundle id with the installed copy. 'path' with "
+          + "channel: true starts that copy beside one already running; name it afterwards by "
+          + "the 'pid' the answer carries.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -624,8 +695,8 @@ nonisolated enum DesktopServer {
               "type": "string",
               "description":
                 "An .app to start instead of the copy Launch Services picks: a Debug build that "
-                + "shares its bundle id with the installed one. Refused while any copy with that "
-                + "bundle id is running.",
+                + "shares its bundle id with the installed one. While another copy with that "
+                + "bundle id runs, started only with channel: true.",
             ],
             "channel": [
               "type": "boolean",
@@ -913,7 +984,7 @@ nonisolated enum DesktopServer {
       "apple_desktop_release",
       "apple_desktop_press_menu", "apple_desktop_show_menu", "apple_desktop_drag",
       "apple_desktop_select", "apple_desktop_mail_composer_edit", "apple_desktop_mail_release",
-      "apple_desktop_mail_bring_forward", "apple_desktop_lent_release",
+      "apple_desktop_mail_bring_forward", "apple_desktop_lent_release", "apple_desktop_scroll",
     ]
     if driving.contains(name) && !writesAllowed {
       return failure(
@@ -930,6 +1001,16 @@ nonisolated enum DesktopServer {
     {
       return failure(id, problem)
     }
+    // A `pid` names one copy, and the bundle id it runs stands in for a
+    // `bundleId` left out: from here every verb reads `bundleId` as before.
+    var args = args
+    if pinnedVerbs.contains(verb) {
+      do {
+        args = try pinned(args)
+      } catch {
+        return failed(id, error)
+      }
+    }
 
     do {
       switch name {
@@ -938,19 +1019,24 @@ nonisolated enum DesktopServer {
         return ok(
           id,
           [
-            "apps": apps.map {
-              ["name": $0.name, "bundleId": $0.bundleId, "pid": Int($0.pid), "active": $0.active]
+            "apps": apps.map { app -> [String: Any] in
+              var listed: [String: Any] = [
+                "name": app.name, "bundleId": app.bundleId, "pid": Int(app.pid),
+                "active": app.active,
+              ]
+              if let path = app.path { listed["path"] = path }
+              return listed
             },
             "accessibility": AccessibilityDriver.isTrusted() ? "granted" : "not granted",
           ])
 
       case "apple_desktop_list_windows":
         guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+          return failure(id, unnamedApplication)
         }
         let includeTitles = args["includeTitles"] as? Bool ?? false
         let windows = try windowListing {
-          try AccessibilityDriver.windows(bundleId: bundleId, scope: scope)
+          try AccessibilityDriver.windows(bundleId: bundleId, pid: pinnedPid(args), scope: scope)
         }
         return ok(
           id,
@@ -971,10 +1057,10 @@ nonisolated enum DesktopServer {
 
       case "apple_desktop_ui_tree":
         guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+          return failure(id, unnamedApplication)
         }
         let tree = try AccessibilityDriver.tree(
-          bundleId: bundleId, windowIndex: args["window"] as? Int,
+          bundleId: bundleId, pid: pinnedPid(args), windowIndex: args["window"] as? Int,
           detail: detail(args), bounds: bounds(args), scope: scope)
         return ok(id, treeBody(tree))
 
@@ -988,7 +1074,7 @@ nonisolated enum DesktopServer {
 
       case "apple_desktop_find_elements":
         guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+          return failure(id, unnamedApplication)
         }
         var matcher = matching(args)
         matcher.pressableOnly = args["pressableOnly"] as? Bool ?? false
@@ -1004,14 +1090,14 @@ nonisolated enum DesktopServer {
         // afterwards spent 4000 handles to return three, which is how a busy
         // session used to evict handles the caller was still holding.
         let tree = try AccessibilityDriver.tree(
-          bundleId: bundleId, windowIndex: args["window"] as? Int,
+          bundleId: bundleId, pid: pinnedPid(args), windowIndex: args["window"] as? Int,
           detail: .all, bounds: bounds(args), scope: scope,
           match: matcher.accepts, readValue: matcher.value != nil)
         return ok(id, treeBody(tree))
 
       case "apple_desktop_wait_for":
         guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+          return failure(id, unnamedApplication)
         }
         let matcher = matching(args)
         guard !matcher.isEmpty else {
@@ -1028,7 +1114,8 @@ nonisolated enum DesktopServer {
         }
         let timeoutMs = min(waitForCeilingMs, max(0, args["timeoutMs"] as? Int ?? waitForDefaultMs))
         let outcome = try AccessibilityDriver.waitFor(
-          bundleId: bundleId, windowIndex: args["window"] as? Int, matcher: matcher, state: state,
+          bundleId: bundleId, pid: pinnedPid(args), windowIndex: args["window"] as? Int,
+          matcher: matcher, state: state,
           timeout: Double(timeoutMs) / 1000, bounds: bounds(args), scope: scope,
           cancelled: { isCancelled })
         // Handed to treeBody rather than added to its answer, so the byte cap
@@ -1083,17 +1170,18 @@ nonisolated enum DesktopServer {
 
       case "apple_desktop_menu":
         guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+          return failure(id, unnamedApplication)
         }
         guard let path = menuPath(args["path"] ?? [String]()) else {
           return failure(id, "'path' is an array of menu titles, none of them empty.")
         }
-        let menu = try AccessibilityDriver.menu(bundleId: bundleId, path: path, scope: scope)
+        let menu = try AccessibilityDriver.menu(
+          bundleId: bundleId, pid: pinnedPid(args), path: path, scope: scope)
         return ok(id, ["path": menu.path, "items": menu.entries.map(\.json)])
 
       case "apple_desktop_press_menu":
         guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+          return failure(id, unnamedApplication)
         }
         guard let path = args["path"].flatMap(menuPath), path.count >= 2 else {
           return failure(
@@ -1102,7 +1190,7 @@ nonisolated enum DesktopServer {
               + "least two titles, none of them empty.")
         }
         let pressed = try AccessibilityDriver.pressMenuItem(
-          bundleId: bundleId, path: path, scope: scope)
+          bundleId: bundleId, pid: pinnedPid(args), path: path, scope: scope)
         return ok(id, ["pressed": pressed.path, "wasChecked": pressed.wasChecked])
 
       case "apple_desktop_set_value":
@@ -1147,16 +1235,18 @@ nonisolated enum DesktopServer {
         }
         // One of our Debug builds with a channel takes the click in its own
         // window, wherever that window is: nothing is brought forward.
-        if let named = args["bundleId"] as? String, let channel = channel(for: named) {
+        let named = args["bundleId"] as? String
+        if let named, let channel = try channel(for: named, pid: pinnedPid(args), scope: scope) {
           let ack = try throughChannel(
             channel, owner: named,
             ["verb": "click", "x": x, "y": y, "button": button.rawValue], scope: scope)
-          var clicked = channelFields(ack)
+          var clicked = channelFields(ack, channel)
           clicked["clicked"] = [x, y]
           clicked["target"] = named
           if button != .left { clicked["button"] = button.rawValue }
           return ok(id, clicked)
         }
+        if let named { try requireOneCopy(named, pid: pinnedPid(args), verb: "click") }
         // A point has no owner, so the caller names one. Brought forward first
         // because a click lands on whatever window is on top at that point, and
         // the person at the keyboard may have put their own there since.
@@ -1206,26 +1296,55 @@ nonisolated enum DesktopServer {
               + "handle: its point is re-read at call time.")
         }
         let durationMs = min(5000, max(16, (args["durationMs"] as? Int) ?? 400))
+        let options = dragOptions(args)
         // A drag inside one of our Debug builds with a channel. A drop on
         // another application needs the window server's drag session, so that
-        // goes the old way.
-        let pressOwner = start.owner ?? args["bundleId"] as? String
-        if let pressOwner, end.owner == nil || end.owner == pressOwner,
-          let channel = channel(for: pressOwner)
+        // goes the old way, and so does a drop on another copy.
+        let press: (owner: String, pid: pid_t?)? =
+          start.owner.map { ($0, start.pid) }
+          ?? (args["bundleId"] as? String).map { ($0, pinnedPid(args)) }
+        if let press, end.owner == nil || end.owner == press.owner,
+          let channel = try channel(for: press.owner, pid: press.pid, scope: scope),
+          end.pid == nil || end.pid == channel.pid
         {
+          var command: [String: Any] = [
+            "verb": "drag", "from": [start.point.x, start.point.y],
+            "to": [end.point.x, end.point.y], "durationMs": durationMs,
+          ]
+          // Sent only when they differ from what version 1 did, so a drag
+          // without them reaches a version 1 app as it always has.
+          if options.middle { command["button"] = "other" }
+          if !options.modifiers.isEmpty { command["modifiers"] = options.modifiers }
+          if options.paced { command["paced"] = true }
+          // A paced drag takes its time, and the channel gives an app that does
+          // not take a step a second's patience before it sends the next.
+          let timeout =
+            options.paced
+            ? AppChannel.ackTimeout + Double(durationMs) / 1000 + 1 : AppChannel.ackTimeout
           let ack = try throughChannel(
-            channel, owner: pressOwner,
-            [
-              "verb": "drag", "from": [start.point.x, start.point.y],
-              "to": [end.point.x, end.point.y], "durationMs": durationMs,
-            ], scope: scope)
-          var dragged = channelFields(ack)
+            channel, owner: press.owner, command, scope: scope, timeout: timeout)
+          var dragged = channelFields(ack, channel)
           dragged["dragged"] = [
             "from": [start.point.x, start.point.y], "to": [end.point.x, end.point.y],
           ]
           dragged["durationMs"] = durationMs
-          dragged["target"] = pressOwner
+          dragged["target"] = press.owner
+          if options.middle { dragged["button"] = "middle" }
+          if !options.modifiers.isEmpty { dragged["modifiers"] = options.modifiers }
+          if options.paced { dragged["paced"] = true }
           return ok(id, dragged)
+        }
+        // Refused rather than dropped: a left drag in place of the middle one
+        // asked for is a different edit, made without a word.
+        let channelOnly =
+          (options.middle ? ["'button': \"middle\""] : [])
+          + (options.modifiers.isEmpty ? [] : ["'modifiers'"]) + (options.paced ? ["'paced'"] : [])
+        if !channelOnly.isEmpty {
+          throw channelOnlyRefusal(channelOnly, verb: "drag", owner: press?.owner)
+        }
+        if let press { try requireOneCopy(press.owner, pid: press.pid, verb: "drag") }
+        if let dropOwner = end.owner {
+          try requireOneCopy(dropOwner, pid: end.pid, verb: "drop")
         }
         // The press decides which application is driven: a handle names its own,
         // as for hover, and a point is checked as a click's is.
@@ -1259,6 +1378,11 @@ nonisolated enum DesktopServer {
         let settleMs = min(5000, max(0, (args["settleMs"] as? Int) ?? 0))
         let target: CGPoint
         let owner: String
+        // Where the sweep starts, which only a channel takes.
+        let from = (args["from"] as? [String: Any]).flatMap { spec -> CGPoint? in
+          guard let x = spec["x"] as? Double, let y = spec["y"] as? Double else { return nil }
+          return CGPoint(x: x, y: y)
+        }
         if let handle = args["handle"] as? String {
           // Re-read rather than trusting the point the tree reported, and take
           // the owner from the handle rather than from the arguments: the store
@@ -1266,10 +1390,13 @@ nonisolated enum DesktopServer {
           let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
           target = live.point
           owner = live.bundleId
-          if let channel = channel(for: owner) {
+          if let channel = try channel(for: owner, pid: live.pid, scope: scope) {
             return try hoverThroughChannel(
-              channel, owner: owner, at: target, durationMs: durationMs, id: id, scope: scope)
+              channel, owner: owner, at: target, from: from, durationMs: durationMs, id: id,
+              scope: scope)
           }
+          if from != nil { throw channelOnlyRefusal(["'from'"], verb: "hover", owner: owner) }
+          try requireOneCopy(owner, pid: live.pid, verb: "hover")
           // A hover reaches only the frontmost application, so posting into an
           // app that is behind sweeps the pointer across somebody else's window
           // and reports a success that never happened. Refused rather than
@@ -1277,10 +1404,14 @@ nonisolated enum DesktopServer {
           try bringForward(owner, verb: "hover", scope: scope)
         } else if let x = args["x"] as? Double, let y = args["y"] as? Double {
           target = CGPoint(x: x, y: y)
-          if let named = args["bundleId"] as? String, let channel = channel(for: named) {
+          let named = args["bundleId"] as? String
+          if let named, let channel = try channel(for: named, pid: pinnedPid(args), scope: scope) {
             return try hoverThroughChannel(
-              channel, owner: named, at: target, durationMs: durationMs, id: id, scope: scope)
+              channel, owner: named, at: target, from: from, durationMs: durationMs, id: id,
+              scope: scope)
           }
+          if from != nil { throw channelOnlyRefusal(["'from'"], verb: "hover", owner: named) }
+          if let named { try requireOneCopy(named, pid: pinnedPid(args), verb: "hover") }
           owner = try pointOwner(args, at: target, verb: "hover", scope: scope)
         } else {
           return failure(
@@ -1306,7 +1437,8 @@ nonisolated enum DesktopServer {
         guard let text = args["text"] as? String else {
           return failure(id, "The 'text' argument is required.")
         }
-        let owner = try sessionTarget(args, scope: scope)
+        let target = try sessionTarget(args, scope: scope)
+        let owner = target?.bundleId
         // A handle names the field, so it can be typed into where it is, with
         // its application left behind the person's. Only a field that did not
         // change is typed again in front; one that took part of the text is
@@ -1352,16 +1484,21 @@ nonisolated enum DesktopServer {
         // One of our Debug builds with a channel types into its own focused
         // field. Reached with a handle only when the background type did not
         // land, and then the field was focused above.
-        if let owner, let channel = channel(for: owner) {
+        if let target,
+          let channel = try channel(for: target.bundleId, pid: target.pid, scope: scope)
+        {
           if landedLate() { return landedInBackground(false, late: true) }
           let ack = try throughChannel(
-            channel, owner: owner, ["verb": "type", "text": text], scope: scope)
-          var typed = channelFields(ack)
+            channel, owner: target.bundleId, ["verb": "type", "text": text], scope: scope)
+          var typed = channelFields(ack, channel)
           typed["typed"] = text.count
-          typed["target"] = owner
+          typed["target"] = target.bundleId
           return ok(id, typed)
         }
-        if let owner { try bringForward(owner, verb: "text", scope: scope) }
+        if let target {
+          try requireOneCopy(target.bundleId, pid: target.pid, verb: "text")
+          try bringForward(target.bundleId, verb: "text", scope: scope)
+        }
         // Read again after the front came, the longest the app has had.
         if landedLate() { return landedInBackground(false, late: true) }
         try AccessibilityDriver.type(text: text, scope: scope, announcing: owner)
@@ -1382,28 +1519,32 @@ nonisolated enum DesktopServer {
             "The 'modifiers' argument is a list of names: command, shift, option, control, "
               + "function.")
         }
-        let owner = try sessionTarget(args, scope: scope)
+        let target = try sessionTarget(args, scope: scope)
+        let owner = target?.bundleId
         // Through a channel the app matches a shortcut against its own menu,
         // which is what an app in the background cannot do with a posted key.
         // The channel's names are command, shift, option and control; fn has no
         // menu meaning and goes the old way.
-        if let owner, let channelModifiers = channelModifiers(modifiers),
-          let channel = channel(for: owner)
+        if let target, let channelModifiers = channelModifiers(modifiers),
+          let channel = try channel(for: target.bundleId, pid: target.pid, scope: scope)
         {
           let ack = try throughChannel(
-            channel, owner: owner, ["verb": "key", "key": key, "modifiers": channelModifiers],
-            scope: scope)
-          var sent = channelFields(ack)
+            channel, owner: target.bundleId,
+            ["verb": "key", "key": key, "modifiers": channelModifiers], scope: scope)
+          var sent = channelFields(ack, channel)
           sent["key"] = key
           sent["modifiers"] = modifiers
-          sent["target"] = owner
+          sent["target"] = target.bundleId
           return ok(id, sent)
         }
         // The key is checked before anything is brought forward for it, with the
         // lookup `key` itself makes. `argumentProblem` made it already unless it
         // expected a channel, which may have closed since.
         _ = try AccessibilityDriver.keyStroke(key, modifiers: modifiers)
-        if let owner { try bringForward(owner, verb: "key", scope: scope) }
+        if let target {
+          try requireOneCopy(target.bundleId, pid: target.pid, verb: "key")
+          try bringForward(target.bundleId, verb: "key", scope: scope)
+        }
         try AccessibilityDriver.key(key, modifiers: modifiers, scope: scope, announcing: owner)
         var sent: [String: Any] = ["key": key, "modifiers": modifiers]
         if let owner { sent["target"] = owner }
@@ -1457,10 +1598,50 @@ nonisolated enum DesktopServer {
 
       case "apple_desktop_activate":
         guard let bundleId = args["bundleId"] as? String else {
-          return failure(id, "The 'bundleId' argument is required.")
+          return failure(id, unnamedApplication)
         }
-        try AccessibilityDriver.activate(bundleId: bundleId, scope: scope)
-        return ok(id, ["activated": bundleId])
+        try AccessibilityDriver.activate(bundleId: bundleId, pid: pinnedPid(args), scope: scope)
+        var activated: [String: Any] = ["activated": bundleId]
+        if let pid = pinnedPid(args) { activated["pid"] = Int(pid) }
+        return ok(id, activated)
+
+      case "apple_desktop_scroll":
+        guard let x = args["x"] as? Double, let y = args["y"] as? Double else {
+          return failure(id, "Both 'x' and 'y' are required.")
+        }
+        guard let bundleId = args["bundleId"] as? String else {
+          return failure(id, unnamedApplication)
+        }
+        guard scope.admits(bundleId) else {
+          throw AccessibilityDriver.Failure.outOfScope(bundleId)
+        }
+        let pid = pinnedPid(args)
+        if pid == nil, AccessibilityDriver.copies(of: bundleId).isEmpty {
+          throw AccessibilityDriver.Failure.appNotRunning(bundleId)
+        }
+        // Channel-only for now: a scroll posted to the session goes to the
+        // window under the pointer, in front or not, and that lane is not
+        // measured.
+        guard let channel = try channel(for: bundleId, pid: pid, scope: scope) else {
+          return failure(
+            id,
+            "\(bundleId) has no driving channel, and a scroll goes only through one, so nothing "
+              + "was sent. Start a Debug build of it with apple_desktop_launch and channel: true; "
+              + "a scroll posted to the session is not measured yet.")
+        }
+        let dx = (args["dx"] as? NSNumber)?.doubleValue ?? 0
+        let dy = (args["dy"] as? NSNumber)?.doubleValue ?? 0
+        let units = args["units"] as? String ?? "line"
+        var command: [String: Any] = ["verb": "scroll", "x": x, "y": y, "dx": dx, "dy": dy]
+        if units != "line" { command["units"] = units }
+        let ack = try throughChannel(channel, owner: bundleId, command, scope: scope)
+        var scrolled = channelFields(ack, channel)
+        scrolled["scrolled"] = [x, y]
+        scrolled["dx"] = dx
+        scrolled["dy"] = dy
+        scrolled["units"] = units
+        scrolled["target"] = bundleId
+        return ok(id, scrolled)
 
       case "apple_desktop_launch":
         // A path names the copy, a Debug build beside the installed one; its
@@ -1480,42 +1661,60 @@ nonisolated enum DesktopServer {
           return failure(id, "Either 'bundleId' or 'path' is required.")
         }
         let wantsChannel = args["channel"] as? Bool ?? false
+        // A copy by path with a channel starts beside one already running: the
+        // worktree's Debug build beside the person's own, each named by its pid
+        // afterwards. A plain second copy has no use worth the ambiguity, and a
+        // launch by bundle id alone cannot say which copy it means.
+        let beside = path != nil && wantsChannel
         let launched = try AccessibilityDriver.launch(
           bundleId: bundleId, path: path, scope: scope,
-          arguments: wantsChannel ? ["-DrivingChannel", "YES"] : [])
+          arguments: wantsChannel ? ["-DrivingChannel", "YES"] : [], beside: beside)
         guard launched.launched else {
           var note = "Already running."
-          if path != nil {
-            // Two copies under one bundle id would make every bundleId verb,
-            // and the channel's own lookup, ambiguous.
+          let at = launched.runningAt.map { ", at \($0)," } ?? ""
+          let opened =
+            wantsChannel
+            && (try? channel(for: bundleId, pid: launched.runningPid, scope: scope)) != nil
+          if beside {
             note =
-              "A copy of \(bundleId) is already running"
-              + (launched.runningAt.map { ", at \($0)," } ?? "")
-              + " so no second one was started: two copies under one bundle identifier would "
-              + "leave every bundleId verb unsure which it reaches. Ask the person to quit it, "
-              + "then launch again."
+              "This copy of \(bundleId) is already running\(at) so no second one was started."
+              + (opened
+                ? " It already has a driving channel."
+                : " A channel opens only at launch: ask the person to quit it, then launch it "
+                  + "again with channel: true.")
+          } else if path != nil {
+            note =
+              "A copy of \(bundleId) is already running\(at) so no second one was started: a "
+              + "copy is started beside another only with channel: true, and is named by its pid "
+              + "afterwards. Ask the person to quit it, or launch this one with channel: true."
           } else if wantsChannel {
             note +=
-              channel(for: bundleId) != nil
+              opened
               ? " It already has a driving channel."
-              : " A channel opens only at launch: quit it and launch it again with channel: true."
+              : " A channel opens only at launch: quit it and launch it again with channel: "
+                + "true, or start a Debug build beside it by 'path' with channel: true."
           }
-          return ok(id, ["bundleId": bundleId, "launched": false, "note": note])
+          var answer: [String: Any] = ["bundleId": bundleId, "launched": false, "note": note]
+          if let pid = launched.runningPid { answer["pid"] = Int(pid) }
+          return ok(id, answer)
         }
         var body: [String: Any] = [
           "bundleId": bundleId, "launched": true, "ready": launched.ready,
         ]
+        if let pid = launched.pid { body["pid"] = Int(pid) }
         if wantsChannel {
           // Only a process launched here with the argument is believed to have
-          // a channel: see `AppChannel.find(bundleId:)`.
+          // a channel: see `AppChannel.find(bundleId:pid:)`.
           if let pid = launched.pid { AppChannel.register(pid: pid, bundleId: bundleId) }
           // The app opens its channel from its own launch code, which can trail
-          // the window that made `ready` true.
-          var opened = channel(for: bundleId) != nil
+          // the window that made `ready` true. Looked up by the pid it started,
+          // since beside another copy the bundle id names neither.
+          let find = { (try? channel(for: bundleId, pid: launched.pid, scope: scope)) != nil }
+          var opened = find()
           let deadline = Date().addingTimeInterval(2)
           while !opened && Date() < deadline {
             usleep(50_000)
-            opened = channel(for: bundleId) != nil
+            opened = find()
           }
           body["channel"] = opened
           if !opened {
@@ -1668,9 +1867,9 @@ nonisolated enum DesktopServer {
   /// large enough to swamp the one this builds; not `run` or `release`, which are
   /// not steps of a sequence.
   static let runSteps = [
-    "press", "press_menu", "show_menu", "select", "set_value", "click", "hover", "drag", "type",
-    "key", "focus", "activate", "launch", "raise_window", "set_window_frame", "find_elements",
-    "get_attribute", "list_windows", "menu", "user_activity", "wait", "wait_for",
+    "press", "press_menu", "show_menu", "select", "set_value", "click", "hover", "drag", "scroll",
+    "type", "key", "focus", "activate", "launch", "raise_window", "set_window_frame",
+    "find_elements", "get_attribute", "list_windows", "menu", "user_activity", "wait", "wait_for",
   ]
   static let runStepCeiling = 25
   static let runWaitCeilingMs = 5000
@@ -1716,17 +1915,22 @@ nonisolated enum DesktopServer {
   /// running — is left to the step.
   static func argumentProblem(_ tool: String, _ args: [String: Any]) -> String? {
     func missing(_ keys: String...) -> Bool { keys.contains { !(args[$0] is String) } }
+    // Either names the application; a pid alone is resolved when the verb runs.
+    let unnamed = !(args["bundleId"] is String) && args["pid"] == nil
+    if pinnedVerbs.contains(tool), let pid = args["pid"], processId(pid) == nil {
+      return pidShape
+    }
     switch tool {
     case "press", "show_menu", "select", "focus", "raise_window":
       return missing("handle") ? "The 'handle' argument is required." : nil
     case "activate", "list_windows":
-      return missing("bundleId") ? "The 'bundleId' argument is required." : nil
+      return unnamed ? unnamedApplication : nil
     case "menu":
-      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      if unnamed { return unnamedApplication }
       return menuPath(args["path"] ?? [String]()) == nil
         ? "'path' is an array of menu titles, none of them empty." : nil
     case "press_menu":
-      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      if unnamed { return unnamedApplication }
       guard let path = args["path"].flatMap(menuPath), path.count >= 2 else {
         return
           "'path' names a menu and then an item in it, e.g. [\"View\", \"Show Sidebar\"]: at "
@@ -1750,6 +1954,11 @@ nonisolated enum DesktopServer {
           "Either 'handle', or both 'x' and 'y', are required. Prefer 'handle': its point is "
           + "re-read at call time, so a window that has moved cannot make the hover miss."
       }
+      if let from = args["from"] {
+        guard let spec = from as? [String: Any], spec["x"] is Double, spec["y"] is Double else {
+          return "'from' is where the sweep starts, {\"x\", \"y\"}."
+        }
+      }
       return nil
     case "drag":
       func end(_ key: String) -> Bool {
@@ -1761,7 +1970,47 @@ nonisolated enum DesktopServer {
           "Both 'from' and 'to' are required, each {\"handle\"} or {\"x\", \"y\"}. Prefer a "
           + "handle: its point is re-read at call time."
       }
+      for key in ["from", "to"] {
+        if let pid = (args[key] as? [String: Any])?["pid"], processId(pid) == nil {
+          return "'\(key).pid' is a process id, a whole number above 0."
+        }
+      }
+      if let button = args["button"] {
+        guard let name = button as? String, ["left", "middle"].contains(name) else {
+          return "The 'button' argument is \"left\" or \"middle\"."
+        }
+      }
+      if let paced = args["paced"] {
+        // A JSON boolean only: a number bridges to one, and 1 is not an answer.
+        guard CFGetTypeID(paced as CFTypeRef) == CFBooleanGetTypeID() else {
+          return "'paced' is true or false."
+        }
+      }
+      guard let modifiers = keyModifiers(args) else {
+        return "The 'modifiers' argument is a list of names: command, shift, option, control."
+      }
+      if channelModifiers(modifiers) == nil {
+        return
+          "A drag's 'modifiers' are command, shift, option and control: "
+          + "\(modifiers.joined(separator: ", ")) has no meaning to an application's own events."
+      }
       return nil
+    case "scroll":
+      guard args["x"] is Double, args["y"] is Double else {
+        return "Both 'x' and 'y' are required."
+      }
+      for key in ["dx", "dy"] where args[key] != nil && !(args[key] is Double) {
+        return "'\(key)' is a number."
+      }
+      if let units = args["units"] {
+        guard let name = units as? String, ["line", "pixel"].contains(name) else {
+          return "The 'units' argument is \"line\" or \"pixel\"."
+        }
+      }
+      if (args["dx"] as? Double ?? 0) == 0 && (args["dy"] as? Double ?? 0) == 0 {
+        return "Give 'dy' to scroll vertically, 'dx' horizontally, or both: nothing to scroll."
+      }
+      return unnamed ? unnamedApplication : nil
     case "type":
       return missing("text") ? "The 'text' argument is required." : nil
     case "key":
@@ -1772,11 +2021,20 @@ nonisolated enum DesktopServer {
           + "function."
       }
       // The owner the tool will drive, as `sessionTarget` finds it: a handle's
-      // own application, else the one named.
+      // own application and process, else the one named.
+      let handle = args["handle"] as? String
+      let pid =
+        handle.flatMap(AccessibilityDriver.process(ofHandle:)) ?? args["pid"].flatMap(processId)
       let owner =
-        (args["handle"] as? String).flatMap { AccessibilityDriver.handles.get($0)?.bundleId }
+        handle.flatMap { AccessibilityDriver.handles.get($0)?.bundleId }
         ?? args["bundleId"] as? String
-      if let owner, channelModifiers(modifiers) != nil, channel(for: owner) != nil { return nil }
+        ?? pid.flatMap { AccessibilityDriver.runningProcess($0)?.bundleId }
+      // The reach is the verb's to check; here it only decides the lane.
+      if let owner, channelModifiers(modifiers) != nil,
+        (try? channel(for: owner, pid: pid, scope: .any)) != nil
+      {
+        return nil
+      }
       do {
         _ = try AccessibilityDriver.keyStroke(key, modifiers: modifiers)
       } catch {
@@ -1788,12 +2046,12 @@ nonisolated enum DesktopServer {
       return ["x", "y", "width", "height"].contains(where: { args[$0] is Double })
         ? nil : "Pass at least one of 'x', 'y', 'width' or 'height'."
     case "find_elements":
-      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      if unnamed { return unnamedApplication }
       var matcher = matching(args)
       matcher.pressableOnly = args["pressableOnly"] as? Bool ?? false
       return matcher.isEmpty ? "Give at least one of id, role, name, value or pressableOnly." : nil
     case "wait_for":
-      if missing("bundleId") { return "The 'bundleId' argument is required." }
+      if unnamed { return unnamedApplication }
       if matching(args).isEmpty { return "Give at least one of id, role, name or value." }
       if let named = args["state"],
         (named as? String).flatMap(AccessibilityDriver.WaitState.init(rawValue:)) == nil
@@ -1848,10 +2106,12 @@ nonisolated enum DesktopServer {
     _ step: [String: Any], scope: AccessibilityDriver.Scope
   ) throws -> String {
     let spec = step["match"] as? [String: Any] ?? [:]
+    let step = try pinned(step)
     let bundleId = step["bundleId"] as? String ?? ""
     let waitMs = step["waitMs"] as? Int ?? matchWaitDefaultMs
     let outcome = try AccessibilityDriver.waitFor(
-      bundleId: bundleId, windowIndex: spec["window"] as? Int, matcher: matching(spec),
+      bundleId: bundleId, pid: pinnedPid(step), windowIndex: spec["window"] as? Int,
+      matcher: matching(spec),
       state: .present, timeout: Double(waitMs) / 1000, bounds: AccessibilityDriver.Bounds(),
       scope: scope, cancelled: { isCancelled })
     let found = outcome.tree.elements
@@ -1958,11 +2218,14 @@ nonisolated enum DesktopServer {
             "Step \(number) (\(tool)): 'match' is an object with at least one of id, role, name "
               + "or value. Nothing was run.")
         }
-        guard step["bundleId"] is String else {
+        guard step["bundleId"] is String || step["pid"] != nil else {
           return failure(
             id,
-            "Step \(number) (\(tool)): 'match' needs 'bundleId', the application to look in. "
-              + "Nothing was run.")
+            "Step \(number) (\(tool)): 'match' needs 'bundleId' or 'pid', the application to look "
+              + "in. Nothing was run.")
+        }
+        if let pid = step["pid"], processId(pid) == nil {
+          return failure(id, "Step \(number) (\(tool)): \(pidShape) Nothing was run.")
         }
         if let waitMs = step["waitMs"],
           !((waitMs as? Int).map { (0...matchWaitCeilingMs).contains($0) } ?? false)
@@ -2120,13 +2383,17 @@ nonisolated enum DesktopServer {
   /// application the handle came from, and a caller can be wrong. A stale or
   /// out-of-scope handle is a refusal here, before anything is posted, rather
   /// than a reason to fall back on the bundle id and type anyway.
+  ///
+  /// The process comes with it: a handle's is the one its element belongs to,
+  /// else the `pid` the caller named, if any.
   private static func sessionTarget(
     _ args: [String: Any], scope: AccessibilityDriver.Scope
-  ) throws -> String? {
+  ) throws -> (bundleId: String, pid: pid_t?)? {
     if let handle = args["handle"] as? String {
-      return try AccessibilityDriver.owner(of: handle, scope: scope)
+      let owner = try AccessibilityDriver.ownerProcess(of: handle, scope: scope)
+      return (owner.bundleId, owner.pid)
     }
-    return args["bundleId"] as? String
+    return (args["bundleId"] as? String).map { ($0, pinnedPid(args)) }
   }
 
   /// The application a `click` or `hover` at a point is meant for, brought
@@ -2177,15 +2444,19 @@ nonisolated enum DesktopServer {
   /// One end of a drag: a handle's live centre and the application the store
   /// says it came from, or a point with whatever 'bundleId' came with it. Nil
   /// when it is neither, which the caller refuses as a malformed argument.
+  ///
+  /// With the process too: a handle's own, or the end's `pid`, which names its
+  /// application as a verb's does.
   private static func dragEnd(
     _ spec: [String: Any], scope: AccessibilityDriver.Scope
-  ) throws -> (point: CGPoint, owner: String?)? {
+  ) throws -> (point: CGPoint, owner: String?, pid: pid_t?)? {
     if let handle = spec["handle"] as? String {
       let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
-      return (live.point, live.bundleId)
+      return (live.point, live.bundleId, live.pid)
     }
     guard let x = spec["x"] as? Double, let y = spec["y"] as? Double else { return nil }
-    return (CGPoint(x: x, y: y), spec["bundleId"] as? String)
+    let end = try pinned(spec)
+    return (CGPoint(x: x, y: y), end["bundleId"] as? String, pinnedPid(end))
   }
 
   /// Bring `owner` to the front and WAIT for it, refusing when it did not come.
@@ -2206,14 +2477,137 @@ nonisolated enum DesktopServer {
     }
   }
 
+  // ─── one copy of an application, by pid ────────────────────────────────────
+
+  /// The verbs that take `bundleId`, and so `pid`. Not `launch`, whose bundle
+  /// id names what to start, which has no process yet.
+  static let pinnedVerbs: Set<String> = [
+    "list_windows", "ui_tree", "find_elements", "wait_for", "menu", "press_menu", "click",
+    "hover", "drag", "scroll", "type", "key", "activate",
+  ]
+
+  static let unnamedApplication = "Either 'bundleId' or 'pid' is required."
+  static let pidShape =
+    "'pid' is a process id, a whole number above 0, from apple_desktop_list_apps."
+
+  /// A pid from a JSON number: whole, above 0 and no boolean, which a number
+  /// bridges from.
+  static func processId(_ raw: Any) -> pid_t? {
+    guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+      !CFNumberIsFloatType(number), number.int64Value > 0, number.int64Value <= Int64(Int32.max)
+    else { return nil }
+    return pid_t(number.int64Value)
+  }
+
+  /// The `pid` of arguments `pinned` has checked.
+  static func pinnedPid(_ args: [String: Any]) -> pid_t? {
+    args["pid"].flatMap(processId)
+  }
+
+  /// A running process as `pinned` sees it.
+  struct Process {
+    let bundleId: String?
+    let name: String
+  }
+
+  /// `args` with `bundleId` filled from the process `pid` names, or the reason
+  /// nothing can be done.
+  ///
+  /// The pid decides which copy; the bundle id it runs is what the reach is
+  /// checked against, as it always was. Given both, they must agree: a caller
+  /// that named Maquette and the pid of Safari is mistaken about one of them,
+  /// and acting on either would act on what it did not mean. A process with no
+  /// bundle id has nothing to check the reach against, so it is refused.
+  static func pinned(
+    _ args: [String: Any],
+    lookup: (pid_t) -> Process? = { pid in
+      AccessibilityDriver.runningProcess(pid).map { Process(bundleId: $0.bundleId, name: $0.name) }
+    }
+  ) throws -> [String: Any] {
+    guard let raw = args["pid"] else { return args }
+    guard let pid = processId(raw) else { throw AccessibilityDriver.Failure.refused(pidShape) }
+    guard let process = lookup(pid) else {
+      throw AccessibilityDriver.Failure.refused(
+        "No application is running as pid \(pid), so nothing was done. apple_desktop_list_apps "
+          + "lists each with its pid.")
+    }
+    guard let bundleId = process.bundleId else {
+      throw AccessibilityDriver.Failure.refused(
+        "pid \(pid) is \(process.name), which has no bundle identifier to check against this "
+          + "surface's reach, so nothing was done.")
+    }
+    if let named = args["bundleId"] as? String, named != bundleId {
+      throw AccessibilityDriver.Failure.refused(
+        "pid \(pid) is \(bundleId), not \(named), so nothing was done.")
+    }
+    var out = args
+    out["bundleId"] = bundleId
+    out["pid"] = Int(pid)
+    return out
+  }
+
+  /// Refuses input posted to the session for one copy of an application while
+  /// another copy runs.
+  ///
+  /// The session delivers a click or a key to whatever is in front, and the
+  /// front checks this surface makes read a bundle id, which both copies
+  /// share. So the other copy, in front, would take input meant for the one
+  /// named and pass every check. A channel has no such hole: the app it
+  /// reaches is the process that opened it. Without a pid there is nothing to
+  /// add here: the lookup by bundle id refuses several copies itself.
+  private static func requireOneCopy(_ owner: String, pid: pid_t?, verb: String) throws {
+    guard pid != nil else { return }
+    let count = AccessibilityDriver.copies(of: owner).count
+    guard count > 1 else { return }
+    throw AccessibilityDriver.Failure.refused(
+      "\(count) copies of \(owner) are running, and a \(verb) posted to the session lands in "
+        + "whichever of them is in front, so nothing was posted. A copy launched here with a "
+        + "driving channel is driven by its pid alone: start one with apple_desktop_launch, "
+        + "'path' and channel: true. Or ask the person to quit the other copy.")
+  }
+
   // ─── a channel into one of our own Debug builds ────────────────────────────
 
   /// The `SupportKitDriving` channel `owner`'s process opened, if it is a Debug
   /// build of one of our apps launched with one (`apple_desktop_launch` with
   /// `channel: true`). Nil for every other application, which is driven as
-  /// before.
-  private static func channel(for owner: String?) -> AppChannel? {
-    owner.flatMap(AppChannel.find(bundleId:))
+  /// before, and for one out of reach, whose refusal is the verb's.
+  ///
+  /// `pid` is the copy; without one, several copies running is a refusal
+  /// rather than the first copy's channel.
+  private static func channel(
+    for owner: String?, pid: pid_t?, scope: AccessibilityDriver.Scope
+  ) throws -> AppChannel? {
+    guard let owner, scope.admits(owner) else { return nil }
+    return try AppChannel.find(bundleId: owner, pid: pid)
+  }
+
+  /// What a drag asks beyond the left button: the middle one, modifiers held,
+  /// pacing. Each goes only through a channel.
+  private static func dragOptions(_ args: [String: Any]) -> (
+    middle: Bool, modifiers: [String], paced: Bool
+  ) {
+    (
+      args["button"] as? String == "middle",
+      keyModifiers(args).flatMap(channelModifiers) ?? [],
+      args["paced"] as? Bool == true
+    )
+  }
+
+  /// The refusal for arguments only a channel honours, to an application
+  /// without one. Refused rather than dropped: a left drag in place of the
+  /// middle one, or a hover that never moves, is something else done without
+  /// a word.
+  private static func channelOnlyRefusal(_ arguments: [String], verb: String, owner: String?)
+    -> AccessibilityDriver.Failure
+  {
+    let named = arguments.joined(separator: " and ")
+    let whose = owner.map { "\($0) has none" } ?? "no application was named"
+    return .refused(
+      "A \(verb)'s \(named) \(arguments.count == 1 ? "goes" : "go") only through a driving "
+        + "channel, and \(whose), so nothing was posted. Start a Debug build of it with "
+        + "apple_desktop_launch and channel: true, or leave \(arguments.count == 1 ? "it" : "them") "
+        + "out.")
   }
 
   /// One verb through the channel. Admitted as background, so no countdown:
@@ -2227,33 +2621,46 @@ nonisolated enum DesktopServer {
     guard scope.admits(owner) else { throw AccessibilityDriver.Failure.outOfScope(owner) }
     // Background only while the app is behind the person's: in front, the
     // command lands where they are typing, so it gets the countdown.
+    // By process: the copy behind the person's own copy of the same app is
+    // behind, though the two share a bundle id.
     try DrivingSession.admit(
       owner,
       background: DrivingPolicy.isBackground(
-        target: owner, frontmost: AccessibilityDriver.frontmostBundleId()))
+        target: channel.pid, frontmost: AccessibilityDriver.frontmostPid()))
     DriveActivity.record(owner)
     return try channel.send(command, timeout: timeout)
   }
 
   /// A hover takes as long as it sweeps, so its ack is waited on for that long
   /// beyond the usual window.
+  ///
+  /// `from` starts the sweep there, so each move carries its movement.
   private static func hoverThroughChannel(
-    _ channel: AppChannel, owner: String, at point: CGPoint, durationMs: Int, id: Any?,
-    scope: AccessibilityDriver.Scope
+    _ channel: AppChannel, owner: String, at point: CGPoint, from: CGPoint?, durationMs: Int,
+    id: Any?, scope: AccessibilityDriver.Scope
   ) throws -> String {
+    var command: [String: Any] = [
+      "verb": "hover", "x": point.x, "y": point.y, "durationMs": durationMs,
+    ]
+    if let from { command["from"] = [from.x, from.y] }
     let ack = try throughChannel(
-      channel, owner: owner,
-      ["verb": "hover", "x": point.x, "y": point.y, "durationMs": durationMs], scope: scope,
+      channel, owner: owner, command, scope: scope,
       timeout: AppChannel.ackTimeout + Double(durationMs) / 1000)
-    var hovered = channelFields(ack)
+    var hovered = channelFields(ack, channel)
     hovered["hovered"] = [point.x, point.y]
+    if let from { hovered["from"] = [from.x, from.y] }
     hovered["durationMs"] = durationMs
     return ok(id, hovered)
   }
 
-  /// What a channel verb answers beyond the verb's own fields.
-  private static func channelFields(_ ack: [String: Any]) -> [String: Any] {
-    var fields: [String: Any] = ["lane": "channel"]
+  /// What a channel verb answers beyond the verb's own fields: the copy it
+  /// reached, and the ack's own words. `note` is passed on as the app wrote
+  /// it, which is where it says that an event lost its movement or its middle
+  /// button.
+  private static func channelFields(_ ack: [String: Any], _ channel: AppChannel)
+    -> [String: Any]
+  {
+    var fields: [String: Any] = ["lane": "channel", "pid": Int(channel.pid)]
     for key in ["hit", "identifier", "responder", "note"] {
       if let value = ack[key] as? String, !value.isEmpty { fields[key] = value }
     }
@@ -2497,6 +2904,22 @@ nonisolated enum DesktopServer {
       windows included (`lane: channel`). Only a process Cupertino launched that way has one:
       after the app or Cupertino restarts, launch it again with `channel: true`.
 
+      Through a channel, and only there: `apple_desktop_scroll` scrolls the view under a point
+      (`units` line or pixel); a drag takes `button: "middle"`, `modifiers` held throughout and
+      `paced`, which is how a canvas or a 3D view orbits and pans; a hover takes `from`, so its
+      moves carry their movement. The answer's `note` is the app's own word, for instance that
+      an event lost its movement. An app built against swift-support-kit before 1.25.0 would
+      ignore them, so they are refused for it.
+
+      ## Two copies of one application
+
+      A Debug build in a worktree shares its bundle id with the one from the main checkout.
+      Launch it by `path` with `channel: true` beside the other: the answer carries its `pid`.
+      Every verb that takes `bundleId` takes `pid` too, and with several copies running a
+      `bundleId` alone is refused, listing each copy's pid and path (`apple_desktop_list_apps`
+      lists them too). A handle always reaches the copy it was read from. Input posted to the
+      session cannot tell two copies apart, so drive a second copy through its channel.
+
       ## Dragging
 
       `apple_desktop_drag` presses the left button at `from`, walks the pointer to `to` and
@@ -2575,7 +2998,7 @@ nonisolated enum DesktopServer {
       ## Two switches, and they bound different things
 
       \(writesAllowed
-        ? "Writes are ON: press, press_menu, show_menu, select, set_value, click, hover, drag, type, key, focus, activate, launch, raise_window, set_window_frame, run and release are available."
+        ? "Writes are ON: press, press_menu, show_menu, select, set_value, click, hover, drag, scroll, type, key, focus, activate, launch, raise_window, set_window_frame, run and release are available."
         : "Writes are OFF, so this surface can only look. The driving tools are not registered at all.")
 
       \(scope == .any

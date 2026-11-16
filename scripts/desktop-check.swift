@@ -106,6 +106,7 @@ struct DesktopCheck {
     "apple_desktop_set_window_frame", "apple_desktop_type", "apple_desktop_run",
     "apple_desktop_release", "apple_desktop_press_menu", "apple_desktop_show_menu",
     "apple_desktop_drag", "apple_desktop_select", "apple_desktop_launch",
+    "apple_desktop_scroll",
   ]
 
   static func json(_ text: String) -> [String: Any]? {
@@ -1096,6 +1097,14 @@ struct DesktopCheck {
     check(
       "a background verb leaves the hand-back as it was",
       stillQuiet.handsBackTo == "com.apple.Safari" && stillQuiet.quiet)
+    // Two copies of the app in front share its bundle id: the hand-back keeps
+    // which process it was.
+    check(
+      "and the hand-back keeps the copy that was in front",
+      quietOpen.admitting(
+        driven, connection: nil, front: "com.microsoft.VSCode", frontPid: 4242, at: Date(),
+        background: false
+      ).handsBackToPid == 4242)
     let (thenFront, _) = admitOffMain(asked)
     check(
       "after which the session is a full one and asks nothing more",
@@ -1605,6 +1614,322 @@ struct DesktopCheck {
       "once it closes, the same point is not",
       (try? AccessibilityDriver.refuseUnderShellPanel(CGPoint(x: 500, y: 400)))
         != nil)
+
+    // ─── one copy by pid, and the channel's version 2 ───────────────────────
+    // A worktree's Debug build beside the person's own shares its bundle id, so
+    // a verb names its copy by `pid`. Nothing here reaches a running copy: every
+    // call below is refused before the driver, or reads the running list.
+    print("\none copy by pid")
+    let anySchemas =
+      ((ask("tools/list", writes: true, anyApp: true)?["result"] as? [String: Any])?["tools"]
+      as? [[String: Any]] ?? [])
+      .reduce(into: [String: [String: Any]]()) { out, tool in
+        if let name = tool["name"] as? String, let schema = tool["inputSchema"] as? [String: Any] {
+          out[name] = schema
+        }
+      }
+    let byBundle = [
+      "list_windows", "ui_tree", "find_elements", "wait_for", "menu", "press_menu", "click",
+      "hover", "drag", "type", "key", "activate", "scroll",
+    ]
+    for verb in byBundle {
+      let schema = anySchemas["apple_desktop_\(verb)"]
+      let properties = (schema?["properties"] as? [String: Any]) ?? [:]
+      check("\(verb) declares 'pid' beside 'bundleId'", properties["pid"] != nil)
+      check(
+        "and requires no 'bundleId', which a pid stands in for",
+        !((schema?["required"] as? [String]) ?? []).contains("bundleId"))
+    }
+    let dragEndProperties =
+      ((anySchemas["apple_desktop_drag"]?["properties"] as? [String: Any])?["from"]
+      as? [String: Any])?["properties"] as? [String: Any] ?? [:]
+    check("a drag end declares 'pid'", dragEndProperties["pid"] != nil)
+
+    let (noTarget, noTargetError) = callText(
+      "apple_desktop_list_windows", [:], writes: true, anyApp: true)
+    check(
+      "a verb with neither 'bundleId' nor 'pid' is refused, naming both",
+      noTargetError && noTarget.contains("'bundleId'") && noTarget.contains("'pid'"))
+    for bad in ["abc", 3.5, 0, -4, true] as [Any] {
+      let (text, failed) = callText(
+        "apple_desktop_list_windows", ["pid": bad], writes: true, anyApp: true)
+      check(
+        "a pid of \(bad) is refused as no process id",
+        failed && text.contains("'pid'") && text.contains("whole number"))
+    }
+    // A pid the Mac never hands out, so nothing runs as it.
+    let (deadPid, deadPidError) = callText(
+      "apple_desktop_ui_tree", ["pid": 99_998], writes: true, anyApp: true)
+    check(
+      "a pid that is not running is refused, naming it",
+      deadPidError && deadPid.contains("99998") && deadPid.contains("nothing was done"))
+    let (deadStep, deadStepError) = runText([
+      ["tool": "wait", "ms": 0], ["tool": "list_windows", "pid": "nope"],
+    ])
+    check(
+      "a step with a pid that is no process id is refused before step 1 runs",
+      deadStepError && deadStep.contains("Step 2") && deadStep.contains("Nothing was run"))
+
+    // The pid decides, the bundle id is checked against it: a pure lookup, so
+    // no process is asked.
+    let lookup: (pid_t) -> DesktopServer.Process? = { pid in
+      switch pid {
+      case 11: return .init(bundleId: "io.example.app", name: "Example")
+      case 12: return .init(bundleId: nil, name: "daemon")
+      default: return nil
+      }
+    }
+    func pinned(_ args: [String: Any]) -> ([String: Any]?, String) {
+      do {
+        return (try DesktopServer.pinned(args, lookup: lookup), "")
+      } catch {
+        return (nil, error.localizedDescription)
+      }
+    }
+    check(
+      "a pid alone names its application",
+      pinned(["pid": 11]).0?["bundleId"] as? String == "io.example.app")
+    check(
+      "a pid and the bundle id it runs agree",
+      pinned(["pid": 11, "bundleId": "io.example.app"]).0?["pid"] as? Int == 11)
+    let disagree = pinned(["pid": 11, "bundleId": "io.example.other"])
+    check(
+      "a pid and a bundle id that disagree are refused, naming both",
+      disagree.0 == nil && disagree.1.contains("io.example.app")
+        && disagree.1.contains("io.example.other"))
+    let unbundled = pinned(["pid": 12])
+    check(
+      "a pid with no bundle id is refused, since nothing can check its reach",
+      unbundled.0 == nil && unbundled.1.contains("no bundle identifier"))
+    check(
+      "a bundle id alone passes through as it was",
+      pinned(["bundleId": "io.example.app"]).0?["pid"] == nil)
+
+    let several = AccessibilityDriver.severalCopies(
+      "io.example.app",
+      [
+        .init(pid: 4512, path: "/Users/x/worktree/Example.app", channel: true),
+        .init(pid: 3011, path: "/Users/x/main/Example.app", channel: false),
+      ]
+    ).localizedDescription
+    check(
+      "several copies are refused, each with its pid, its path and its channel",
+      several.contains("4512") && several.contains("/Users/x/worktree/Example.app")
+        && several.contains("3011") && several.contains("/Users/x/main/Example.app")
+        && several.contains("driving channel") && several.contains("'pid'")
+        && several.contains("nothing was done"))
+
+    let listed = json(callText("apple_desktop_list_apps", [:], writes: false).0)
+    let listedApps = listed?["apps"] as? [[String: Any]] ?? []
+    check(
+      "list_apps gives each application's path beside its pid",
+      listedApps.allSatisfy { $0["pid"] is Int && $0["path"] is String })
+
+    if NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").isEmpty {
+      skip("launch by bundle id never starts a second copy", "Finder is not running here")
+    } else {
+      let (besideText, besideError) = callText(
+        "apple_desktop_launch", ["bundleId": "com.apple.finder", "channel": true],
+        writes: true, anyApp: true)
+      check(
+        "launch by bundle id with a channel starts no second copy, and points at 'path'",
+        !besideError && json(besideText)?["launched"] as? Bool == false
+          && (json(besideText)?["note"] as? String ?? "").contains("'path'"))
+    }
+
+    print("\nthe channel's version 2")
+    check(
+      "a scroll is a driving verb and a step", DesktopServer.runSteps.contains("scroll"))
+    let scrollSchema = anySchemas["apple_desktop_scroll"]
+    check(
+      "scroll declares its point, its deltas, its units and its application",
+      Set(["x", "y", "dx", "dy", "units", "bundleId", "pid"]).isSubset(
+        of: Set(((scrollSchema?["properties"] as? [String: Any]) ?? [:]).keys))
+        && (scrollSchema?["required"] as? [String]) == ["x", "y"])
+    let dragProperties = (anySchemas["apple_desktop_drag"]?["properties"] as? [String: Any]) ?? [:]
+    check(
+      "drag declares its button, modifiers and pacing",
+      dragProperties["button"] != nil && dragProperties["modifiers"] != nil
+        && dragProperties["paced"] != nil)
+    check(
+      "hover declares where its sweep starts",
+      (anySchemas["apple_desktop_hover"]?["properties"] as? [String: Any])?["from"] != nil)
+
+    let point: [String: Any] = ["x": 1, "y": 1]
+    for (label, args, expected) in [
+      ("a drag with an unknown button", ["from": point, "to": point, "button": "right"], "middle"),
+      ("a drag paced by a number", ["from": point, "to": point, "paced": 1], "'paced'"),
+      (
+        "a drag with an unknown modifier", ["from": point, "to": point, "modifiers": ["hyper"]],
+        "modifiers"
+      ),
+      ("a drag holding fn", ["from": point, "to": point, "modifiers": ["function"]], "function"),
+      ("a hover from half a point", ["x": 1, "y": 1, "from": ["x": 1]], "'from'"),
+    ] as [(String, [String: Any], String)] {
+      let verb = args["from"] is [String: Any] && args["to"] != nil ? "drag" : "hover"
+      let (text, failed) = callText("apple_desktop_\(verb)", args, writes: true, anyApp: true)
+      check("\(label) is refused before anything is looked up", failed && text.contains(expected))
+    }
+    for (label, args, expected) in [
+      ("a scroll with no point", ["dy": 3, "bundleId": "io.example.absent"], "'x'"),
+      (
+        "a scroll by the page",
+        ["x": 1, "y": 1, "dy": 3, "units": "page", "bundleId": "io.example.absent"], "pixel"
+      ),
+      ("a scroll of nothing", ["x": 1, "y": 1, "bundleId": "io.example.absent"], "'dy'"),
+      ("a scroll with no application", ["x": 1, "y": 1, "dy": 3], "'pid'"),
+    ] as [(String, [String: Any], String)] {
+      let (text, failed) = callText("apple_desktop_scroll", args, writes: true, anyApp: true)
+      check("\(label) is refused", failed && text.contains(expected))
+    }
+    // Channel-only arguments to an application with no channel are refused
+    // rather than dropped, before it is looked up or brought forward.
+    for (label, verb, args) in [
+      (
+        "a middle-button drag", "drag",
+        ["from": point, "to": point, "button": "middle", "bundleId": "io.example.absent"]
+      ),
+      (
+        "a drag holding option", "drag",
+        ["from": point, "to": point, "modifiers": ["option"], "bundleId": "io.example.absent"]
+      ),
+      (
+        "a paced drag", "drag",
+        ["from": point, "to": point, "paced": true, "bundleId": "io.example.absent"]
+      ),
+      (
+        "a hover with a start", "hover",
+        ["x": 1, "y": 1, "from": point, "bundleId": "io.example.absent"]
+      ),
+    ] as [(String, String, [String: Any])] {
+      let (text, failed) = callText("apple_desktop_\(verb)", args, writes: true, anyApp: true)
+      check(
+        "\(label) to an application with no channel is refused, saying why",
+        failed && text.contains("channel") && text.contains("nothing was posted"))
+    }
+    let (absentScroll, absentScrollError) = callText(
+      "apple_desktop_scroll", ["x": 1, "y": 1, "dy": 3, "bundleId": "io.example.absent"],
+      writes: true, anyApp: true)
+    check(
+      "a scroll to an application that is not running says so",
+      absentScrollError && absentScroll.contains("not running"))
+    let (scrollStep, scrollStepError) = runText([
+      ["tool": "wait", "ms": 0],
+      [
+        "tool": "scroll", "x": 1, "y": 1, "dy": 3, "units": "page", "bundleId": "io.example.absent",
+      ],
+    ])
+    check(
+      "a scroll step with unknown units is refused before step 1 runs",
+      scrollStepError && scrollStep.contains("Step 2") && scrollStep.contains("Nothing was run"))
+
+    // What a version 1 app would silently do differently.
+    check(
+      "a version 1 channel takes a left drag, a plain hover, a line scroll and a click",
+      AppChannel.versionTwoFields(["verb": "drag", "from": [1, 2], "to": [3, 4]]).isEmpty
+        && AppChannel.versionTwoFields([
+          "verb": "drag", "from": [1, 2], "to": [3, 4], "button": "left", "paced": false,
+          "modifiers": [String](),
+        ]).isEmpty
+        && AppChannel.versionTwoFields(["verb": "hover", "x": 1, "y": 2]).isEmpty
+        && AppChannel.versionTwoFields(["verb": "scroll", "x": 1, "y": 2, "dy": 3]).isEmpty
+        && AppChannel.versionTwoFields(["verb": "click", "x": 1, "y": 2]).isEmpty)
+    check(
+      "and not a middle button, modifiers, pacing, a hover's start or a pixel scroll",
+      AppChannel.versionTwoFields([
+        "verb": "drag", "from": [1, 2], "to": [3, 4], "button": "other", "modifiers": ["option"],
+        "paced": true,
+      ]).count == 3
+        && AppChannel.versionTwoFields(["verb": "hover", "x": 1, "y": 2, "from": [0, 0]]).count
+          == 1
+        && AppChannel.versionTwoFields(["verb": "scroll", "x": 1, "y": 2, "units": "pixel"]).count
+          == 1
+    )
+    check(
+      "a point past any display is refused before it is sent",
+      AppChannel.pointProblem(["verb": "click", "x": 2_000_000, "y": 0]) != nil
+        && AppChannel.pointProblem(["verb": "drag", "from": [0, 0], "to": [0, -1_000_001]])
+          != nil
+        && AppChannel.pointProblem(["verb": "hover", "x": 0, "y": 0, "from": [1e9, 0]]) != nil
+        && AppChannel.pointProblem(["verb": "drag", "from": [-5, 5], "to": [900, 1_000_000]])
+          == nil
+    )
+
+    // A channel planted in a scratch directory, ready from this process: the
+    // version is read from `ready`, and a version-2 field is refused before
+    // anything is written.
+    let channels = FileManager.default.temporaryDirectory
+      .appendingPathComponent("desktop-check-channel-\(UUID().uuidString)")
+    func plant(_ name: String, ready: String) -> URL {
+      let dir = channels.appendingPathComponent(name)
+      try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+      try? (ready + "\n").write(
+        to: dir.appendingPathComponent("events.jsonl"), atomically: true, encoding: .utf8)
+      FileManager.default.createFile(
+        atPath: dir.appendingPathComponent("commands.jsonl").path, contents: nil)
+      return dir
+    }
+    let v1 = AppChannel.find(
+      pid: getpid(), in: [plant("v1", ready: "{\"kind\":\"ready\",\"pid\":\(getpid())}")])
+    let v2 = AppChannel.find(
+      pid: getpid(),
+      in: [plant("v2", ready: "{\"kind\":\"ready\",\"pid\":\(getpid()),\"version\":2}")])
+    check("a ready without a version is version 1", v1?.version == 1)
+    check("a ready with version 2 is version 2", v2?.version == 2)
+    var v1Refusal = ""
+    do {
+      _ = try v1?.send([
+        "verb": "drag", "from": [1, 2], "to": [3, 4], "button": "other", "durationMs": 300,
+      ])
+    } catch {
+      v1Refusal = error.localizedDescription
+    }
+    let v1Commands =
+      (try? String(
+        contentsOf: channels.appendingPathComponent("v1/commands.jsonl"), encoding: .utf8)) ?? "?"
+    check(
+      "a version 2 field sent to a version 1 channel is refused, naming the version and the fix",
+      v1Refusal.contains("version 1") && v1Refusal.contains("1.25.0")
+        && v1Refusal.contains("nothing was sent"))
+    check("and nothing was written to it", v1Commands.isEmpty)
+    try? FileManager.default.removeItem(at: channels)
+
+    // Two Cupertinos, a Debug one and the installed one, must not count from
+    // one base: the old one was the clock's milliseconds mod 10^9.
+    let bases = (0..<20).map { _ in AppChannel.randomSeqBase() }
+    check(
+      "the seq base is drawn from 52 bits",
+      bases.allSatisfy { (0..<(1 << 52)).contains($0) } && bases.contains { $0 > 1_000_000_000 }
+        && Set(bases).count > 1)
+
+    // `events.jsonl` is read from where the last read ended, a partial line
+    // held back until its newline, and whole again once the file is replaced.
+    let eventsFile = FileManager.default.temporaryDirectory
+      .appendingPathComponent("desktop-check-events-\(UUID().uuidString).jsonl")
+    func append(_ text: String) {
+      if let handle = try? FileHandle(forWritingTo: eventsFile) {
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: Data(text.utf8))
+        try? handle.close()
+      }
+    }
+    func lines(_ read: [Data]) -> [String] { read.map { String(decoding: $0, as: UTF8.self) } }
+    try? "{\"a\":1}\n{\"b\":".write(to: eventsFile, atomically: false, encoding: .utf8)
+    var tail = AppChannel.EventTail()
+    check(
+      "the first read is the whole file's complete lines",
+      lines(tail.read(eventsFile)) == ["{\"a\":1}"])
+    append("2}\n{\"c\":3}\n")
+    check(
+      "the next is only what was appended, the held line finished",
+      lines(tail.read(eventsFile)) == ["{\"b\":2}", "{\"c\":3}"])
+    check("and one with nothing new reads nothing", tail.read(eventsFile).isEmpty)
+    try? FileManager.default.removeItem(at: eventsFile)
+    try? "{\"d\":4}\n".write(to: eventsFile, atomically: false, encoding: .utf8)
+    check(
+      "a file that shrank, a new process in the directory, is read whole",
+      lines(tail.read(eventsFile)) == ["{\"d\":4}"])
+    try? FileManager.default.removeItem(at: eventsFile)
 
     // ─── set_value reads back what it wrote ─────────────────────────────────
     // The read-back trimmed, dropped an empty string and read only strings, so

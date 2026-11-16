@@ -133,7 +133,9 @@ nonisolated enum DrivingPolicy {
   /// a channel command still moves their caret and mixes with their own
   /// keystrokes, so it gets the countdown as before. A front that cannot be
   /// read counts as the target, which errs toward warning.
-  static func isBackground(target: String, frontmost: String?) -> Bool {
+  /// Generic so that two copies of one app, which share a bundle id, are told
+  /// apart by their pids.
+  static func isBackground<ID: Equatable>(target: ID, frontmost: ID?) -> Bool {
     guard let frontmost else { return false }
     return frontmost != target
   }

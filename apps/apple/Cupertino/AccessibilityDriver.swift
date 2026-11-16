@@ -326,6 +326,28 @@ nonisolated enum AccessibilityDriver {
     try resolveEntry(handle, scope: scope).bundleId
   }
 
+  /// The same, with the process the element belongs to: a handle reaches the
+  /// copy it was read from, never another copy of the application.
+  static func ownerProcess(of handle: String, scope: Scope) throws -> (
+    bundleId: String, pid: pid_t?
+  ) {
+    let entry = try resolveEntry(handle, scope: scope)
+    return (entry.bundleId, process(of: entry.element))
+  }
+
+  /// The process an element belongs to, or nil when it cannot say. A store
+  /// read, with no round trip to the application.
+  static func process(of element: AXUIElement) -> pid_t? {
+    var pid: pid_t = 0
+    return AXUIElementGetPid(element, &pid) == .success && pid > 0 ? pid : nil
+  }
+
+  /// The process a handle's element belongs to, without the scope check: for
+  /// an argument check that decides only which lane a verb will take.
+  static func process(ofHandle handle: String) -> pid_t? {
+    handles.get(handle).flatMap { process(of: $0.element) }
+  }
+
   // ─── raw reads ─────────────────────────────────────────────────────────────
 
   /// A hung app must not hang a tool call. Measured as available; without it
@@ -518,6 +540,9 @@ nonisolated enum AccessibilityDriver {
     let bundleId: String
     let pid: pid_t
     let active: Bool
+    /// Where its bundle lives: what tells two copies of one app apart, the
+    /// Debug build in a worktree from the one in the main checkout.
+    let path: String?
   }
 
   /// `NSWorkspace.runningApplications` is not TCC-gated — it reads the launch
@@ -597,7 +622,7 @@ nonisolated enum AccessibilityDriver {
         guard let bundleId = app.bundleIdentifier else { return nil }
         return RunningApp(
           name: app.localizedName ?? bundleId, bundleId: bundleId,
-          pid: pid(of: app), active: app.isActive)
+          pid: pid(of: app), active: app.isActive, path: app.bundleURL?.path)
       }
       .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
   }
@@ -635,12 +660,80 @@ nonisolated enum AccessibilityDriver {
     }
   }
 
-  private static func app(forBundleId bundleId: String) throws -> NSRunningApplication {
-    guard
-      let app = NSWorkspace.shared.runningApplications
-        .first(where: { $0.bundleIdentifier == bundleId })
-    else { throw Failure.appNotRunning(bundleId) }
-    return app
+  /// The running copy of `bundleId` a verb reaches: the process `pid` when the
+  /// caller named one, else the only copy.
+  ///
+  /// **Several copies and no pid is a refusal, never a guess.** A worktree's
+  /// Debug build runs beside the one from the main checkout under one bundle
+  /// id, and this used to take the first of them: a check by eye of the one
+  /// read, pressed or typed into the other. The refusal lists each copy, so
+  /// the caller can pass `pid`. With one copy, nothing changes.
+  ///
+  /// Asked of Launch Services rather than of `NSWorkspace.runningApplications`,
+  /// which the main run loop keeps current: a process without one, or a thread
+  /// asking just after a launch, missed a copy started a moment earlier.
+  static func app(forBundleId bundleId: String, pid: pid_t? = nil) throws
+    -> NSRunningApplication
+  {
+    if let pid {
+      guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated,
+        app.bundleIdentifier == bundleId
+      else {
+        throw Failure.refused(
+          "No copy of \(bundleId) is running as pid \(pid), so nothing was done. "
+            + "apple_desktop_list_apps lists each copy with its pid.")
+      }
+      return app
+    }
+    let running = copies(of: bundleId)
+    guard let only = running.first else { throw Failure.appNotRunning(bundleId) }
+    guard running.count == 1 else { throw severalCopies(bundleId, running) }
+    return only
+  }
+
+  /// The application running as `pid`, or nil when none does.
+  static func runningProcess(_ pid: pid_t) -> (bundleId: String?, name: String)? {
+    guard let app = NSRunningApplication(processIdentifier: pid), !app.isTerminated else {
+      return nil
+    }
+    return (app.bundleIdentifier, app.localizedName ?? "pid \(pid)")
+  }
+
+  /// Every running copy of `bundleId`, one per process.
+  static func copies(of bundleId: String) -> [NSRunningApplication] {
+    var seen = Set<pid_t>()
+    return NSRunningApplication.runningApplications(withBundleIdentifier: bundleId)
+      .filter { !$0.isTerminated && seen.insert(pid(of: $0)).inserted }
+  }
+
+  /// One copy of an application, as the refusal below names it.
+  struct Copy {
+    let pid: pid_t
+    let path: String?
+    /// This Cupertino launched it with a driving channel.
+    let channel: Bool
+  }
+
+  /// The refusal for a verb named by a bundle id alone while several copies run.
+  static func severalCopies(_ bundleId: String, _ running: [NSRunningApplication]) -> Failure {
+    severalCopies(
+      bundleId,
+      running.map {
+        Copy(
+          pid: pid(of: $0), path: $0.bundleURL?.path,
+          channel: AppChannel.launchedWithChannel($0))
+      })
+  }
+
+  static func severalCopies(_ bundleId: String, _ copies: [Copy]) -> Failure {
+    let listed = copies.map { copy in
+      "pid \(copy.pid) at \(copy.path ?? "an unknown path")"
+        + (copy.channel ? ", launched here with a driving channel" : "")
+    }
+    return .refused(
+      "\(copies.count) copies of \(bundleId) are running, and a bundle identifier alone does not "
+        + "say which one is meant, so nothing was done. Pass 'pid' to name one: "
+        + listed.joined(separator: "; ") + ".")
   }
 
   // ─── windows ───────────────────────────────────────────────────────────────
@@ -687,8 +780,9 @@ nonisolated enum AccessibilityDriver {
   /// a geometry one: Finder's other two children are a menu bar and the desktop
   /// scroll area, neither of which is a window. `kAXWindows` still leads, so an
   /// app that answers it properly keeps the order and the indices it had.
-  static func windows(bundleId: String, scope: Scope) throws -> [WindowRef] {
-    try windowElements(bundleId: bundleId, scope: scope).enumerated().map { index, window in
+  static func windows(bundleId: String, pid: pid_t? = nil, scope: Scope) throws -> [WindowRef] {
+    try windowElements(bundleId: bundleId, pid: pid, scope: scope).enumerated().map {
+      index, window in
       WindowRef(
         handle: handles.put(window, bundleId: bundleId),
         index: index,
@@ -703,11 +797,13 @@ nonisolated enum AccessibilityDriver {
   /// its own, as `AXComposerWindow` does. Read through an application element
   /// carrying `messagingTimeout`, so a hung application answers `busy` rather
   /// than holding the connection thread.
-  static func windowElements(bundleId: String, scope: Scope) throws -> [AXUIElement] {
+  static func windowElements(bundleId: String, pid: pid_t? = nil, scope: Scope) throws
+    -> [AXUIElement]
+  {
     guard isTrusted() else { throw Failure.notTrusted }
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
-    let running = try app(forBundleId: bundleId)
-    let appElement = element(for: pid(of: running))
+    let running = try app(forBundleId: bundleId, pid: pid)
+    let appElement = element(for: Self.pid(of: running))
 
     var raw: AnyObject?
     let err = AXUIElementCopyAttributeValue(
@@ -1037,10 +1133,10 @@ nonisolated enum AccessibilityDriver {
   }
 
   static func tree(
-    bundleId: String, windowIndex: Int?, detail: Detail, bounds: Bounds, scope: Scope,
-    match: ((Candidate) -> Bool)? = nil, readValue: Bool = false
+    bundleId: String, pid: pid_t? = nil, windowIndex: Int?, detail: Detail, bounds: Bounds,
+    scope: Scope, match: ((Candidate) -> Bool)? = nil, readValue: Bool = false
   ) throws -> Tree {
-    let all = try windows(bundleId: bundleId, scope: scope)
+    let all = try windows(bundleId: bundleId, pid: pid, scope: scope)
     let chosen: [WindowRef]
     if let windowIndex {
       guard windowIndex >= 0, windowIndex < all.count else {
@@ -1055,8 +1151,9 @@ nonisolated enum AccessibilityDriver {
     // what the next press has to deal with, and it walks first so the byte cap
     // can only cut a window short, never the menu. Skipped where the walk
     // reaches it again from below, or every item would carry two handles.
-    let running = try app(forBundleId: bundleId)
-    let menus = openMenus(pid: pid(of: running), app: element(for: pid(of: running)))
+    let running = try app(forBundleId: bundleId, pid: pid)
+    let menus = openMenus(
+      pid: Self.pid(of: running), app: element(for: Self.pid(of: running)))
     let roots = menus + chosen.compactMap { handles.get($0.handle)?.element }
     let tree = walk(
       roots: roots, detail: detail, bounds: bounds, bundleId: bundleId, match: match,
@@ -1277,13 +1374,16 @@ nonisolated enum AccessibilityDriver {
   /// than failing: a sheet closing can take the last window with it. A walk
   /// that meets `busy` is retried, and named if the wait times out. The
   /// application quitting ends the wait with `.appQuit`.
+  ///
+  /// Every walk reads the copy found at the start, so a second copy started
+  /// while it waits does not make the wait ambiguous part way.
   static func waitFor(
-    bundleId: String, windowIndex: Int?, matcher: Matcher, state: WaitState,
+    bundleId: String, pid: pid_t? = nil, windowIndex: Int?, matcher: Matcher, state: WaitState,
     timeout: TimeInterval, bounds: Bounds, scope: Scope, cancelled: () -> Bool = { false }
   ) throws -> WaitOutcome {
     guard isTrusted() else { throw Failure.notTrusted }
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
-    let target = pid(of: try app(forBundleId: bundleId))
+    let target = Self.pid(of: try app(forBundleId: bundleId, pid: pid))
     let started = Date()
     let deadline = started.addingTimeInterval(timeout)
     let wake = Wake(pid: target)
@@ -1298,18 +1398,20 @@ nonisolated enum AccessibilityDriver {
       walkBounds.seconds = min(bounds.seconds, max(0.05, deadline.timeIntervalSinceNow))
       do {
         last = try tree(
-          bundleId: bundleId, windowIndex: windowIndex, detail: .all, bounds: walkBounds,
-          scope: scope, match: matcher.accepts, readValue: matcher.value != nil)
+          bundleId: bundleId, pid: target, windowIndex: windowIndex, detail: .all,
+          bounds: walkBounds, scope: scope, match: matcher.accepts,
+          readValue: matcher.value != nil)
         lastError = nil
       } catch Failure.noWindows {
         last = Tree(elements: [], visited: 0, seconds: 0, stoppedBy: nil, recovered: 0)
         lastError = nil
       } catch Failure.busy(let what) {
         lastError = Failure.busy(what).errorDescription
+      } catch  where quitFailure(pid: target, bundleId: bundleId) != nil {
+        // Gone from Launch Services before the kernel check above saw it.
+        throw quitFailure(pid: target, bundleId: bundleId)!
       } catch Failure.appNotRunning {
-        // Gone from NSWorkspace before the kernel check above saw it.
-        throw quitFailure(pid: target, bundleId: bundleId)
-          ?? Failure.appNotRunning(bundleId)
+        throw Failure.appNotRunning(bundleId)
       }
       walks += 1
 
@@ -1610,10 +1712,11 @@ nonisolated enum AccessibilityDriver {
   /// background: the whole bar in 45-52 ms, frontmost application unchanged.
   ///
   /// An empty path lists the bar itself.
-  static func menu(bundleId: String, path: [String], scope: Scope) throws
+  static func menu(bundleId: String, pid: pid_t? = nil, path: [String], scope: Scope) throws
     -> (path: [String], entries: [MenuEntry])
   {
-    let (element, resolved) = try menuElement(bundleId: bundleId, path: path, scope: scope)
+    let (element, resolved) = try menuElement(
+      bundleId: bundleId, pid: pid, path: path, scope: scope)
     if !path.isEmpty && !opensMenu(element) {
       throw Failure.refused(
         "'\(resolved.joined(separator: " > "))' is a menu item, not a menu. Press it with "
@@ -1643,10 +1746,11 @@ nonisolated enum AccessibilityDriver {
   /// so polling for a change would wait out its whole timeout on every
   /// ordinary press. `wasChecked` says which way a toggle went; the caller
   /// reads the menu again if it needs to see it land.
-  static func pressMenuItem(bundleId: String, path: [String], scope: Scope) throws
-    -> (path: [String], wasChecked: Bool)
+  static func pressMenuItem(bundleId: String, pid: pid_t? = nil, path: [String], scope: Scope)
+    throws -> (path: [String], wasChecked: Bool)
   {
-    let (element, resolved) = try menuElement(bundleId: bundleId, path: path, scope: scope)
+    let (element, resolved) = try menuElement(
+      bundleId: bundleId, pid: pid, path: path, scope: scope)
     let shown = resolved.joined(separator: " > ")
     guard !opensMenu(element) else {
       throw Failure.refused(
@@ -1673,14 +1777,14 @@ nonisolated enum AccessibilityDriver {
   /// then ignoring case and a trailing ellipsis, so "Settings" finds
   /// "Settings…". A miss names what was there, which is what the caller needs
   /// to correct the path.
-  private static func menuElement(bundleId: String, path: [String], scope: Scope) throws
-    -> (AXUIElement, [String])
-  {
+  private static func menuElement(
+    bundleId: String, pid: pid_t?, path: [String], scope: Scope
+  ) throws -> (AXUIElement, [String]) {
     guard isTrusted() else { throw Failure.notTrusted }
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
-    let running = try app(forBundleId: bundleId)
+    let running = try app(forBundleId: bundleId, pid: pid)
     guard
-      let raw = copy(element(for: pid(of: running)), kAXMenuBarAttribute as String),
+      let raw = copy(element(for: Self.pid(of: running)), kAXMenuBarAttribute as String),
       CFGetTypeID(raw) == AXUIElementGetTypeID()
     else {
       throw Failure.refused("\(running.localizedName ?? bundleId) publishes no menu bar.")
@@ -2043,11 +2147,14 @@ nonisolated enum AccessibilityDriver {
   ///
   /// False when the application cannot be reached, which sends `focus` to the
   /// element's own flag rather than reporting a failure it did not establish.
+  /// Asked of the element's own process, never looked up by bundle id, which
+  /// another copy of the application shares.
   private static func holdsFocus(_ target: AXUIElement, in bundleId: String) -> Bool {
-    guard let running = try? app(forBundleId: bundleId) else { return false }
+    var owner: pid_t = 0
+    guard AXUIElementGetPid(target, &owner) == .success else { return false }
     var raw: AnyObject?
     let read = AXUIElementCopyAttributeValue(
-      element(for: pid(of: running)), kAXFocusedUIElementAttribute as CFString, &raw)
+      element(for: owner), kAXFocusedUIElementAttribute as CFString, &raw)
     guard read == .success, let focused = raw else { return false }
     return CFEqual(focused, target)
   }
@@ -2086,9 +2193,12 @@ nonisolated enum AccessibilityDriver {
   /// either call's return value, because activation is asynchronous and a
   /// `true` that did not actually move the foreground is precisely how a
   /// synthetic keystroke ends up in somebody else's window.
-  static func activate(bundleId: String, scope: Scope) throws {
+  ///
+  /// With `pid`, that copy, and the read-back asks for that process: with two
+  /// copies of one application, the other one in front is not this one.
+  static func activate(bundleId: String, pid: pid_t? = nil, scope: Scope) throws {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
-    let running = try app(forBundleId: bundleId)
+    let running = try app(forBundleId: bundleId, pid: pid)
     // Before anything moves, so the person is warned or asked while their own
     // window is still in front. A no here means nothing was activated.
     try DrivingSession.admit(bundleId)
@@ -2108,9 +2218,9 @@ nonisolated enum AccessibilityDriver {
 
     if !asked {
       AXUIElementSetAttributeValue(
-        element(for: pid(of: running)), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        element(for: Self.pid(of: running)), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
     }
-    guard frontmostSettled(on: bundleId) else {
+    guard frontmostSettled(on: bundleId, pid: pid.map { _ in Self.pid(of: running) }) else {
       throw Failure.refused("\(bundleId) refused to come to the front.")
     }
     // Recorded only once the screen has actually changed. Announcing first put
@@ -2125,13 +2235,16 @@ nonisolated enum AccessibilityDriver {
   /// Simulator and recorded on `activateAndWait` below — so the call that asked
   /// for the foreground returns before the screen has it. This is the only
   /// place that decides whether activation happened.
-  private static func frontmostSettled(on bundleId: String, timeout: TimeInterval = 2) -> Bool {
+  private static func frontmostSettled(
+    on bundleId: String, pid: pid_t? = nil, timeout: TimeInterval = 2
+  ) -> Bool {
+    let settled = { pid.map { frontmostPid() == $0 } ?? (frontmostBundleId() == bundleId) }
     let started = Date()
     repeat {
-      if frontmostBundleId() == bundleId { return true }
+      if settled() { return true }
       usleep(20_000)
     } while Date().timeIntervalSince(started) < timeout
-    return frontmostBundleId() == bundleId
+    return settled()
   }
 
   /// Poll `holds` until it has answered yes for `stable` seconds running, or
@@ -2320,6 +2433,12 @@ nonisolated enum AccessibilityDriver {
   ///
   /// Nil without a grant, which is an answer: the caller cannot post anyway.
   static func frontmostBundleId() -> String? {
+    frontmostPid().flatMap { NSRunningApplication(processIdentifier: $0)?.bundleIdentifier }
+  }
+
+  /// The process behind `frontmostBundleId`: which copy is in front, when two
+  /// copies of one application run.
+  static func frontmostPid() -> pid_t? {
     var raw: AnyObject?
     let systemWide = AXUIElementCreateSystemWide()
     guard
@@ -2329,7 +2448,7 @@ nonisolated enum AccessibilityDriver {
     else { return nil }
     var pid: pid_t = 0
     guard AXUIElementGetPid(focused as! AXUIElement, &pid) == .success else { return nil }
-    return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier
+    return pid
   }
 
   /// `activate`, then WAIT until the window server agrees.
@@ -2385,15 +2504,25 @@ nonisolated enum AccessibilityDriver {
   ///
   /// Returns whether it actually came to the front. Given one second rather
   /// than two: nothing is waiting to post into it.
-  static func handBack(to bundleId: String) -> Bool {
-    guard let running = try? app(forBundleId: bundleId) else { return false }
+  static func handBack(to bundleId: String) -> Bool { handBack(to: bundleId, pid: nil) }
+
+  /// `handBack(to:)` for one copy: `pid` names it when several share the
+  /// bundle id. Without it, an application with several copies is not handed
+  /// back to, since which one the person was in is not known.
+  static func handBack(to bundleId: String, pid: pid_t?) -> Bool {
+    // A copy that has quit since leaves the bundle id, which is right when
+    // one copy is left.
+    guard
+      let running = (try? app(forBundleId: bundleId, pid: pid))
+        ?? (pid == nil ? nil : try? app(forBundleId: bundleId))
+    else { return false }
     let asked = running.activate()
     guard isTrusted() else { return asked }
     if !asked {
       AXUIElementSetAttributeValue(
-        element(for: pid(of: running)), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
+        element(for: Self.pid(of: running)), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
     }
-    return frontmostSettled(on: bundleId, timeout: 1)
+    return frontmostSettled(on: bundleId, pid: pid.map { _ in Self.pid(of: running) }, timeout: 1)
   }
 
   // ─── launching ─────────────────────────────────────────────────────────────
@@ -2415,6 +2544,8 @@ nonisolated enum AccessibilityDriver {
     var pid: pid_t?
     /// Where the copy already running lives, when nothing was started.
     var runningAt: String?
+    /// And its process.
+    var runningPid: pid_t?
   }
 
   /// The bundle identifier of the application at `path`, which a launch by path
@@ -2453,18 +2584,28 @@ nonisolated enum AccessibilityDriver {
   /// `path` starts that copy rather than the one Launch Services would pick: an App
   /// Store app's Debug build shares its bundle identifier with the installed copy,
   /// so a launch by bundle id can start the one without a driving channel.
+  ///
+  /// `beside` starts it while other copies run, a new instance, and is refused
+  /// only by a copy already running from that same path: a repeat is then as
+  /// safe as it was. Every verb after it names the copy by its `pid`.
   static func launch(
     bundleId: String, path: String? = nil, scope: Scope, timeout: TimeInterval = 10,
-    arguments: [String] = []
+    arguments: [String] = [], beside: Bool = false
   ) throws -> Launched {
     guard inScope(bundleId, scope: scope) else { throw Failure.outOfScope(bundleId) }
     // Asked of Launch Services directly: `NSWorkspace.runningApplications` is kept
     // current by the main run loop, and from a thread or a process without one it
     // missed a copy started a moment earlier, which then got a second launch.
-    if let running = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first
-    {
+    let running = copies(of: bundleId)
+    let wanted = path.map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+    let blocking =
+      beside
+      ? running.first { $0.bundleURL?.resolvingSymlinksInPath().path == wanted }
+      : running.first
+    if let blocking {
       var already = Launched(launched: false)
-      already.runningAt = running.bundleURL?.path
+      already.runningAt = blocking.bundleURL?.path
+      already.runningPid = pid(of: blocking)
       return already
     }
     let url: URL
@@ -2491,11 +2632,15 @@ nonisolated enum AccessibilityDriver {
     // without a "before" there is nothing to hand back to. The app's main run
     // loop keeps `frontmostApplication` current enough for a fallback.
     let before = frontmostBundleId() ?? NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+    let beforePid = frontmostPid()
     let config = NSWorkspace.OpenConfiguration()
     config.activates = false
     config.addsToRecentItems = false
     config.promptsUserIfNeeded = false
     config.arguments = arguments
+    // Without it, opening an application that is running hands back the copy
+    // already there.
+    config.createsNewApplicationInstance = beside && !running.isEmpty
     let done = DispatchSemaphore(value: 0)
     let box = ResultBox<pid_t?>()
     NSWorkspace.shared.openApplication(at: url, configuration: config) { app, error in
@@ -2521,8 +2666,14 @@ nonisolated enum AccessibilityDriver {
     var result = Launched(launched: true)
     if case .success(let pid) = box.result { result.pid = pid }
     var readyAt: Date?
+    // By the pid it started when there is one: beside another copy, a lookup
+    // by bundle id is ambiguous.
+    let started = { () -> NSRunningApplication? in
+      if let pid = result.pid { return NSRunningApplication(processIdentifier: pid) }
+      return try? app(forBundleId: bundleId)
+    }
     while Date() < deadline {
-      if let running = try? app(forBundleId: bundleId), running.isFinishedLaunching {
+      if let running = started(), running.isFinishedLaunching {
         if !isTrusted() {
           result.ready = true
           break
@@ -2542,9 +2693,12 @@ nonisolated enum AccessibilityDriver {
     // Some applications take the front whatever they were asked. The person did
     // not choose that, so it goes back to whatever they had, the way a driving
     // session hands back when it ends.
-    if let before, before != bundleId, frontmostBundleId() == bundleId {
+    // Beside another copy, the person may be in that copy: same bundle id,
+    // another process, and the front goes back to that process.
+    let inFront = result.pid.map { frontmostPid() == $0 } ?? (frontmostBundleId() == bundleId)
+    if let before, inFront, before != bundleId || (beforePid != nil && beforePid != result.pid) {
       result.tookFront = true
-      result.handedBack = handBack(to: before)
+      result.handedBack = handBack(to: before, pid: before == bundleId ? beforePid : nil)
     }
     return result
   }
@@ -2994,8 +3148,11 @@ nonisolated enum AccessibilityDriver {
   /// is no control to fail to press and nothing to report, just a readout that
   /// never appears. Re-reading the frame is what makes the handle form worth
   /// preferring over two numbers, and it is the failure that motivated this verb.
+  ///
+  /// `pid` is the process the element belongs to, so a verb sent through a
+  /// driving channel reaches that copy's, never another copy's.
   static func hoverPoint(handle: String, scope: Scope) throws -> (
-    point: CGPoint, bundleId: String
+    point: CGPoint, bundleId: String, pid: pid_t?
   ) {
     guard isTrusted() else { throw Failure.notTrusted }
     let entry = try resolveEntry(handle, scope: scope)
@@ -3003,7 +3160,10 @@ nonisolated enum AccessibilityDriver {
       throw Failure.refused(
         "That element reports no position, so there is no point to move the pointer to.")
     }
-    return (CGPoint(x: rect[0] + rect[2] / 2, y: rect[1] + rect[3] / 2), entry.bundleId)
+    return (
+      CGPoint(x: rect[0] + rect[2] / 2, y: rect[1] + rect[3] / 2), entry.bundleId,
+      process(of: entry.element)
+    )
   }
 
   /// Walk the pointer to a point, posting real `mouseMoved` events along the way.
@@ -3131,8 +3291,8 @@ nonisolated enum AccessibilityDriver {
     // Into the app the person is in, this would move their caret and mix with
     // their keystrokes without a warning: that is the front path's job, with
     // its countdown.
-    guard DrivingPolicy.isBackground(target: entry.bundleId, frontmost: frontmostBundleId())
-    else { return nil }
+    // By process: the other copy of the application in front is behind it.
+    guard DrivingPolicy.isBackground(target: pid, frontmost: frontmostPid()) else { return nil }
 
     try DrivingSession.admit(entry.bundleId, background: true)
     DriveActivity.record(entry.bundleId)

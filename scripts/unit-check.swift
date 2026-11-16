@@ -943,6 +943,15 @@ struct UnitCheck {
     check(
       "and an unreadable front counts as in front, which errs toward the countdown",
       !DrivingPolicy.isBackground(target: "com.apple.mail", frontmost: nil))
+    // Two copies of one app share a bundle id, so the copy behind the person's
+    // is told apart by its process: the worktree's Debug build behind the one
+    // they are using.
+    check(
+      "the other copy of the application in front is behind it",
+      DrivingPolicy.isBackground(target: pid_t(4512), frontmost: pid_t(3011)))
+    check(
+      "and the copy in front is not",
+      !DrivingPolicy.isBackground(target: pid_t(3011), frontmost: pid_t(3011)))
     check(
       "but a recent no still outranks it",
       decide(counting, idle: 0, declinedUntil: noon.addingTimeInterval(10), background: true)

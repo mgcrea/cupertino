@@ -117,7 +117,6 @@ struct ChannelCheck {
     check(
       "a channel whose ready names a live process is",
       AppChannel.find(pid: getpid(), in: [plant(pid: getpid() + 0, readyPid: getpid())]) != nil)
-    try? FileManager.default.removeItem(at: scratch)
 
     // Any process of this user can write this user's temporary directory. A
     // channel planted there for an app Cupertino did not launch with one must
@@ -135,7 +134,7 @@ struct ChannelCheck {
         atPath: planted.appendingPathComponent("commands.jsonl").path, contents: nil)
       check(
         "a channel planted for an app Cupertino did not launch with one is not believed",
-        AppChannel.find(bundleId: "com.apple.finder") == nil)
+        (try? AppChannel.find(bundleId: "com.apple.finder")) == nil)
       let clicked = call(
         "apple_desktop_click", ["x": -9000, "y": -9000, "bundleId": "com.apple.finder"])
       check(
@@ -145,11 +144,37 @@ struct ChannelCheck {
       check("Finder is running, to plant a channel for", false)
     }
 
-    print("\nlaunching the fixture with a channel")
-    if let stale = NSRunningApplication.runningApplications(withBundleIdentifier: fixture).first {
-      stale.forceTerminate()
-      Thread.sleep(forTimeInterval: 0.5)
+    // A version 1 app ignores what it does not know, so a middle-button drag
+    // would arrive as a left one: refused before anything is written.
+    let v1Dir = scratch.appendingPathComponent("v1")
+    try? FileManager.default.createDirectory(at: v1Dir, withIntermediateDirectories: true)
+    try? "{\"kind\":\"ready\",\"pid\":\(getpid())}\n".write(
+      to: v1Dir.appendingPathComponent("events.jsonl"), atomically: true, encoding: .utf8)
+    FileManager.default.createFile(
+      atPath: v1Dir.appendingPathComponent("commands.jsonl").path, contents: nil)
+    let v1 = AppChannel.find(pid: getpid(), in: [v1Dir])
+    check("a ready that names no version is version 1", v1?.version == 1)
+    let v1Refusal = refusal {
+      _ = try v1?.send([
+        "verb": "drag", "from": [1, 2], "to": [30, 40], "button": "other",
+        "modifiers": ["option"],
+      ])
     }
+    print("       version 1: \(v1Refusal)")
+    check(
+      "a version 2 field sent to it is refused, naming the version",
+      v1Refusal.contains("version 1") && v1Refusal.contains("1.25.0"))
+    check(
+      "and nothing was written to it",
+      (try? String(contentsOf: v1Dir.appendingPathComponent("commands.jsonl"), encoding: .utf8))
+        == "")
+    try? FileManager.default.removeItem(at: scratch)
+
+    print("\nlaunching the fixture with a channel")
+    for stale in NSRunningApplication.runningApplications(withBundleIdentifier: fixture) {
+      stale.forceTerminate()
+    }
+    Thread.sleep(forTimeInterval: 0.5)
     let front = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
     // By path, the way a Debug build that shares its bundle id with an installed
     // copy is started.
@@ -159,6 +184,7 @@ struct ChannelCheck {
     let launched = call("apple_desktop_launch", ["path": fixturePath, "channel": true])
     check("it starts behind, by path", launched["launched"] as? Bool == true)
     check("and says it opened a channel", launched["channel"] as? Bool == true)
+    check("and which process it started", launched["pid"] is Int)
     guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: fixture).first
     else {
       print("  FAIL the fixture is not running: \(launched)")
@@ -182,8 +208,9 @@ struct ChannelCheck {
         && (again["note"] as? String ?? "").contains("CupertinoChannelFixture.app"))
     check(
       "and the first copy keeps its channel",
-      AppChannel.find(bundleId: fixture) != nil
+      (try? AppChannel.find(bundleId: fixture)) != nil
         && NSRunningApplication.runningApplications(withBundleIdentifier: fixture).count == 1)
+    check("the channel is version 2", channel.version == 2)
 
     let root = AXUIElementCreateApplication(app.processIdentifier)
     guard let window = (attr(root, kAXWindowsAttribute) as? [AXUIElement])?.first else {
@@ -240,6 +267,164 @@ struct ChannelCheck {
     let selected = focused.flatMap { attr($0, kAXSelectedTextAttribute) as? String }
     check("and selected all of it", selected == "abc")
 
+    print("\nversion 2, read back by the fixture")
+    let probe = find(window, "probe")
+    let dragLog = { text(find(window, "dragLog")) }
+    let scrollLog = { text(find(window, "scrollLog")) }
+    check("the probe is readable", probe != nil)
+    let p = probe.map(centre) ?? .zero
+    let middle = call(
+      "apple_desktop_drag",
+      [
+        "from": ["x": p.x - 100, "y": p.y - 10], "to": ["x": p.x + 60, "y": p.y + 14],
+        "bundleId": fixture, "button": "middle", "modifiers": ["option"],
+      ])
+    print("       middle drag: \(middle)")
+    print("       read back: \(dragLog())")
+    check(
+      "a middle-button drag holding option goes through the channel",
+      middle["lane"] as? String == "channel" && middle["button"] as? String == "middle")
+    check(
+      "and arrives as one, option held, carrying all of its movement",
+      dragLog().hasPrefix("middle ") && dragLog().contains("option true")
+        && dragLog().contains("delta 160,24"))
+    let pacedStarted = Date()
+    let paced = call(
+      "apple_desktop_drag",
+      [
+        "from": ["x": p.x - 100, "y": p.y], "to": ["x": p.x + 100, "y": p.y],
+        "bundleId": fixture, "paced": true, "durationMs": 400,
+      ])
+    let pacedSeconds = Date().timeIntervalSince(pacedStarted)
+    print("       paced drag: \(paced), \(String(format: "%.2f", pacedSeconds)) s")
+    print("       read back: \(dragLog())")
+    check(
+      "a paced drag is acknowledged once it has taken its time",
+      paced["lane"] as? String == "channel" && paced["isError"] == nil && pacedSeconds >= 0.35)
+    check(
+      "and arrives as a left drag over that time, without option",
+      dragLog().hasPrefix("left ") && dragLog().contains("option false")
+        && dragLog().contains("delta 200,0")
+        && (Int(dragLog().split(separator: " ").last ?? "") ?? 0) >= 300)
+    let pixel = call(
+      "apple_desktop_scroll",
+      ["x": p.x, "y": p.y, "dy": -30, "units": "pixel", "bundleId": fixture])
+    print("       pixel scroll: \(pixel)")
+    print("       read back: \(scrollLog())")
+    check("a pixel scroll goes through the channel", pixel["lane"] as? String == "channel")
+    check(
+      "and arrives as a trackpad's, 30 points",
+      scrollLog().hasPrefix("precise true") && scrollLog().hasSuffix("dy -30"))
+    let line = call(
+      "apple_desktop_scroll", ["x": p.x, "y": p.y, "dy": 3, "bundleId": fixture])
+    print("       read back: \(scrollLog())")
+    check(
+      "a line scroll arrives as a wheel's",
+      line["lane"] as? String == "channel" && scrollLog().hasPrefix("precise false"))
+    let hovered = call(
+      "apple_desktop_hover",
+      [
+        "x": p.x, "y": p.y, "from": ["x": p.x - 50, "y": p.y], "durationMs": 100,
+        "bundleId": fixture,
+      ])
+    print("       hover from: \(hovered)")
+    check(
+      "a hover with a start goes through the channel, the app's note passed on as it was",
+      hovered["lane"] as? String == "channel"
+        && (hovered["note"] as? String ?? "").contains("hover is not yet measured"))
+
+    print("\ntwo copies, each by its pid")
+    // A second copy at a second path, as a worktree's Debug build sits beside
+    // the main checkout's.
+    let secondPath =
+      FileManager.default.currentDirectoryPath
+      + "/apps/apple/.build/channel-fixture/second/CupertinoChannelFixture.app"
+    try? FileManager.default.removeItem(atPath: secondPath)
+    try? FileManager.default.createDirectory(
+      atPath: (secondPath as NSString).deletingLastPathComponent,
+      withIntermediateDirectories: true)
+    try? FileManager.default.copyItem(atPath: fixturePath, toPath: secondPath)
+    let plain = call("apple_desktop_launch", ["path": secondPath])
+    check(
+      "a second copy without a channel is not started",
+      plain["launched"] as? Bool == false
+        && NSRunningApplication.runningApplications(withBundleIdentifier: fixture).count == 1)
+    let beside = call("apple_desktop_launch", ["path": secondPath, "channel": true])
+    print("       beside: \(beside)")
+    let firstPid = Int(app.processIdentifier)
+    let secondPid = beside["pid"] as? Int ?? -1
+    check(
+      "with a channel it starts beside the first, and answers its pid",
+      beside["launched"] as? Bool == true && beside["channel"] as? Bool == true
+        && secondPid > 0 && secondPid != firstPid
+        && NSRunningApplication.runningApplications(withBundleIdentifier: fixture).count == 2)
+    let second = NSRunningApplication(processIdentifier: pid_t(secondPid))
+    let listedCopies = (call("apple_desktop_list_apps", [:])["apps"] as? [[String: Any]] ?? [])
+      .filter { $0["bundleId"] as? String == fixture }
+    check(
+      "list_apps tells the two apart by path",
+      Set(listedCopies.compactMap { $0["pid"] as? Int }) == [firstPid, secondPid]
+        && Set(listedCopies.compactMap { $0["path"] as? String }).count == 2)
+    let ambiguous = call("apple_desktop_click", ["x": b.x, "y": b.y, "bundleId": fixture])
+    let ambiguousText = ambiguous["text"] as? String ?? ""
+    print("       by bundle id: \(ambiguousText)")
+    check(
+      "a click by bundle id alone is refused, listing both copies",
+      ambiguous["isError"] as? Bool == true && ambiguousText.contains("\(firstPid)")
+        && ambiguousText.contains("\(secondPid)") && ambiguousText.contains("'pid'"))
+    let ambiguousRead = call("apple_desktop_list_windows", ["bundleId": fixture])
+    check(
+      "and so is a read",
+      ambiguousRead["isError"] as? Bool == true
+        && (ambiguousRead["text"] as? String ?? "").contains("\(secondPid)"))
+    var secondWindow: AXUIElement?
+    for _ in 0..<40 where secondWindow == nil {
+      secondWindow =
+        (attr(AXUIElementCreateApplication(pid_t(secondPid)), kAXWindowsAttribute)
+        as? [AXUIElement])?.first
+      if secondWindow == nil { Thread.sleep(forTimeInterval: 0.05) }
+    }
+    let firstTaps = { text(find(window, "nsTaps")) }
+    let secondTaps = { secondWindow.map { text(find($0, "nsTaps")) } ?? "?" }
+    let before = firstTaps()
+    // The same point: both windows sit in one place, one over the other.
+    let toSecond = call("apple_desktop_click", ["x": b.x, "y": b.y, "pid": secondPid])
+    print("       to the second: \(toSecond)")
+    check(
+      "a click by pid reaches that copy through its channel",
+      toSecond["lane"] as? String == "channel" && toSecond["pid"] as? Int == secondPid
+        && secondTaps() == "1")
+    check("and not the other", firstTaps() == before)
+    let toFirst = call(
+      "apple_desktop_click", ["x": b.x, "y": b.y, "pid": firstPid, "bundleId": fixture])
+    check(
+      "a click by pid and bundle id reaches the first",
+      toFirst["pid"] as? Int == firstPid && firstTaps() == "\((Int(before) ?? 0) + 1)"
+        && secondTaps() == "1")
+    let mismatched = call(
+      "apple_desktop_click", ["x": b.x, "y": b.y, "pid": firstPid, "bundleId": "com.apple.finder"])
+    check(
+      "a pid and a bundle id that disagree reach nothing",
+      mismatched["isError"] as? Bool == true && firstTaps() == "\((Int(before) ?? 0) + 1)")
+    let found = call(
+      "apple_desktop_find_elements", ["pid": secondPid, "id": "nsButton"])
+    let foundHandle = (found["elements"] as? [[String: Any]])?.first?["handle"] as? String
+    check("a search by pid finds that copy's control", foundHandle != nil)
+    let byHandle = call("apple_desktop_hover", ["handle": foundHandle ?? "", "durationMs": 50])
+    print("       hover by its handle: \(byHandle)")
+    check(
+      "and its handle reaches that copy's channel, not the other's",
+      byHandle["lane"] as? String == "channel" && byHandle["pid"] as? Int == secondPid)
+    let scrolledSecond = call(
+      "apple_desktop_scroll",
+      ["x": p.x, "y": p.y, "dy": -12, "units": "pixel", "pid": secondPid])
+    let secondScroll = secondWindow.map { text(find($0, "scrollLog")) } ?? "?"
+    check(
+      "a scroll by pid reaches that copy only",
+      scrolledSecond["pid"] as? Int == secondPid && secondScroll.hasSuffix("dy -12")
+        && !scrollLog().hasSuffix("dy -12"))
+    check("neither copy became active", !app.isActive && second?.isActive != true)
+
     print("\nand the person's Mac")
     check("the fixture never became active", !app.isActive)
     check(
@@ -249,6 +434,7 @@ struct ChannelCheck {
     check("the session it opened is released", released["released"] as? String == fixture)
 
     app.terminate()
+    second?.terminate()
     print("\n\(checks - failures)/\(checks) passed")
     exit(failures == 0 ? 0 : 1)
   }
