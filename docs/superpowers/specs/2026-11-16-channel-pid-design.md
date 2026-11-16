@@ -29,6 +29,7 @@ four ways:
 
    Maquette's viewport orbits and pans only on events that carry a movement, sent with the middle
    button or with Option held.
+
 4. **The channel's known gaps** (`docs/desktop.md`, "A channel into our own apps") include
    interleaved appends, a `seq` base two Cupertinos can share, and `events.jsonl` re-read whole
    every 10 ms for the life of the app.
@@ -53,6 +54,7 @@ four ways:
   - whether this Cupertino launched it with a channel.
 
   It also says to pass `pid`. With one copy running, nothing changes for any caller.
+
 - **`list_apps` gives each app's `path`** beside the `pid` it already gives, so a caller can tell
   two copies apart.
 - **`launch` by `path` with `channel: true` starts a copy beside a running one.** It answers that
@@ -68,7 +70,7 @@ four ways:
 ### Version 2
 
 - **The channel's version.** `AppChannel` reads `version` from the app's `ready` event. It is 1
-  when absent. A version-1 app *ignores* fields it does not know, so a middle-button drag would
+  when absent. A version-1 app _ignores_ fields it does not know, so a middle-button drag would
   silently become a left drag. Cupertino therefore refuses to send a version-2 field to a
   version-1 channel, naming the version and saying to rebuild against swift-support-kit 1.25.0
   or later.
@@ -83,6 +85,7 @@ four ways:
   A paced drag's ack is waited on for `ackTimeout + durationMs / 1000 + 1` seconds. The extra
   second is the channel's patience. A paced drag's command waits for its ack before the next is
   sent, so commands never interleave with a held button.
+
 - **`hover` gains `from: {x, y}`.** It is channel-only, and the sweep runs from it to the target,
   so the moves carry their movement.
 - **`apple_desktop_scroll`: a new verb, channel-only for now.** It takes:
@@ -93,6 +96,7 @@ four ways:
 
   It is refused for an app without a channel, with the reason. A session-lane scroll is a later
   measurement. It is admitted like the other channel verbs, as a write, and it is a `run` step.
+
 - **The ack's `note` reaches the caller unchanged.** `channelFields` already copies it. Version
   2 uses it to say an event lost its movement or its middle button.
 
@@ -118,6 +122,7 @@ Extend it for what this cycle adds:
 
 Everything that can be asserted without a running app goes in the existing no-app checks
 (`desktop-check`, `unit`):
+
 - argument parsing and refusals;
 - the version gate;
 - the `seq` base;
