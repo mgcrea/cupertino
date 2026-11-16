@@ -198,6 +198,17 @@ Asked upstream the same day: anthropics/claude-code#106696 asks for a watch URI 
 field report to the Triggers & Events WG is modelcontextprotocol/experimental-ext-triggers-events#16.
 Revisit when one of them moves, or when Claude Code ships SEP-3415 (none in 2.1.316).
 
+Checked again on 2026-11-14. The Core Maintainers marked SEP-3415 Accepted on 2026-11-11, and it is
+being finalised for merge. Nothing else moved: #106696 and #105234 have had no activity since
+2026-11-02, #16 has no replies, and the Claude Code changelog from 2.1.317 to 2.1.325 has nothing on
+events, `resourceSubscriptions` or channels. One new route appeared: 2.1.319 added MCP tasks in the
+terminal ("when an MCP server runs a tool call as a task, Claude Code moves it to the background
+right away and tells Claude the result when it finishes"). A tool run as a task could wake the agent
+that called it, for example when a draft it saved is sent. That is not measured. Still to check: whether
+SDK v2 serves tasks at all (its upgrade removed experimental tasks, see `packages/core/src/listing.ts`),
+whether the VS Code panel supports them, and how long a task may stay open. Note that a watch or an
+event never reports a sent draft: both leave out Sent, Drafts and the account's own addresses.
+
 To measure again, a raw stdio server of about 90 lines is enough. It answers `server/discover` with
 -32601, declares `experimental: {"claude/channel": {}}`, and sends a few
 `notifications/claude/channel` a while after `notifications/initialized`, logging every frame to a
