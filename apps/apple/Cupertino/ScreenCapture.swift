@@ -267,8 +267,15 @@ enum ScreenCapture {
     let copy = try chooseCopy(of: displayName, pid: pid, copies: copies(of: bundleID))
     let content = try await shareableContent()
     // By the copy whenever one runs, so a copy started between the two reads
-    // is not captured in its place.
-    let candidates = realWindows(content, bundleID: bundleID, pid: copy)
+    // is not captured in its place. With none in Launch Services, the window
+    // server may still list some, one started between the two reads: they
+    // are refused unless they are all one process's.
+    var candidates = realWindows(content, bundleID: bundleID, pid: copy)
+    if copy == nil {
+      let owners = Set(candidates.compactMap { $0.owningApplication?.processID })
+      if owners.count > 1 { throw Failure.severalCopies(displayName, pids: owners.sorted()) }
+      candidates = candidates.filter { $0.owningApplication?.processID == owners.first }
+    }
     guard
       let window = candidates.max(by: {
         $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height

@@ -1,4 +1,5 @@
 import AppKit
+import Security
 
 /// Cupertino's half of swift-support-kit's `SupportKitDriving`: a Debug build of
 /// one of our own apps, launched with `-DrivingChannel YES`, reads commands from
@@ -177,6 +178,28 @@ nonisolated struct AppChannel {
     case EPERM, EACCES: return .refused
     default: return .none
     }
+  }
+
+  /// Whether the process `pid` runs sandboxed, by the entitlements its code
+  /// is signed with; nil when its signature cannot be read.
+  static func isSandboxed(_ pid: pid_t) -> Bool? {
+    var code: SecCode?
+    let attributes = [kSecGuestAttributePid: NSNumber(value: pid)] as CFDictionary
+    guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess,
+      let code
+    else { return nil }
+    var staticCode: SecStaticCode?
+    guard SecCodeCopyStaticCode(code, [], &staticCode) == errSecSuccess, let staticCode else {
+      return nil
+    }
+    var info: CFDictionary?
+    guard
+      SecCodeCopySigningInformation(
+        staticCode, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+      let info = info as? [String: Any]
+    else { return nil }
+    let entitlements = info[kSecCodeInfoEntitlementsDict as String] as? [String: Any]
+    return entitlements?["com.apple.security.app-sandbox"] as? Bool ?? false
   }
 
   /// Whether `pid` is a live process: a zombie is not, nor one this process
@@ -375,9 +398,12 @@ nonisolated struct AppChannel {
       if !Self.isRunning(pid) { return try answer() ?? quit }
     }
     // Quitting can take a moment past the ack window, a document app closing
-    // its windows: a second more, watching only for the end.
+    // its windows: a second more, for its end. An answer that arrives in it
+    // is still the answer: the command was done, and reporting a timeout
+    // would invite a retry that does it twice.
     let grace = Date().addingTimeInterval(1)
     while Date() < grace {
+      if let event = try answer() { return event }
       if !Self.isRunning(pid) { return try answer() ?? quit }
       usleep(20_000)
     }

@@ -1552,6 +1552,9 @@ nonisolated enum DesktopServer {
             // handle names is in one it does not draw, which the window list
             // did not say. Nothing was typed through the channel.
             guard let handle = args["handle"] as? String else { throw refusal }
+            // Keys the background type posted can have landed since the
+            // read above: writing the text by value as well would double it.
+            if landedLate() { return landedInBackground(false, late: true) }
             return try byValue(handle, found: noWindowFound)
           }
           var typed = channelFields(ack, channel)
@@ -1830,8 +1833,9 @@ nonisolated enum DesktopServer {
             opened
             ? ""
             : noChannelReason(
-              bundleId: bundleId, pid: launched.pid ?? 0, confirmed: ours,
-              container: AppChannel.containerAccess(bundleId: bundleId))
+              bundleId: bundleId, pid: launched.pid, confirmed: ours,
+              container: AppChannel.containerAccess(bundleId: bundleId),
+              sandboxed: launched.pid.flatMap(AppChannel.isSandboxed))
           // Started beside another copy and opened no channel: the plain second
           // copy a launch by path without a channel refuses to start. It would
           // leave every bundleId verb refused and the session lane unable to
@@ -2816,16 +2820,21 @@ nonisolated enum DesktopServer {
   /// Why a launch with `channel: true` found no channel for `pid`. The first
   /// version said "no SupportKitDriving" for all three, and two of them are
   /// something else (review N2, N6).
+  ///
+  /// The container is blamed only for a copy that is sandboxed, or may be:
+  /// an unsandboxed Debug build beside an installed sandboxed copy finds that
+  /// copy's container refused, and its own channel would never be there.
   static func noChannelReason(
-    bundleId: String, pid: pid_t, confirmed: Bool, container: AppChannel.ContainerAccess
+    bundleId: String, pid: pid_t?, confirmed: Bool, container: AppChannel.ContainerAccess,
+    sandboxed: Bool?
   ) -> String {
     if !confirmed {
       return
-        "Cupertino could not confirm that pid \(pid) is the process this launch started, so its "
-        + "driving channel is not believed: only the very process a launch is known to have "
-        + "started is driven through one."
+        "Cupertino could not confirm that \(pid.map { "pid \($0)" } ?? "the copy it found") is "
+        + "the process this launch started, so its driving channel is not believed: only the "
+        + "very process a launch is known to have started is driven through one."
     }
-    if container == .refused {
+    if container == .refused, sandboxed != false {
       return
         "\(bundleId) is sandboxed, so its driving channel is in its container "
         + "(~/Library/Containers/\(bundleId)/Data/tmp), which macOS lets Cupertino read only with "

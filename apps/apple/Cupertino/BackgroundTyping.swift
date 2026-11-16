@@ -64,7 +64,15 @@ nonisolated enum BackgroundTyping {
   static func inserting(
     _ text: String, into value: String, at range: (location: Int, length: Int)?
   ) -> String {
-    guard let range else { return value + text }
+    insertion(text, into: value, at: range).value
+  }
+
+  /// `inserting`, with where the caret goes after it: the UTF-16 offset just
+  /// past the text, counted from where it really went in.
+  static func insertion(
+    _ text: String, into value: String, at range: (location: Int, length: Int)?
+  ) -> (value: String, caret: Int) {
+    guard let range else { return (value + text, (value + text).utf16.count) }
     let units = value.utf16
     func index(_ offset: Int) -> String.Index {
       let clamped = min(max(0, offset), units.count)
@@ -75,7 +83,8 @@ nonisolated enum BackgroundTyping {
     }
     let start = index(range.location)
     let end = max(start, index(range.location + max(0, range.length)))
-    return String(value[..<start]) + text + String(value[end...])
+    let head = String(value[..<start]) + text
+    return (head + String(value[end...]), head.utf16.count)
   }
 
   /// Non-overlapping, so "abcabc" holds "abc" twice and "aaa" holds "aa" once.

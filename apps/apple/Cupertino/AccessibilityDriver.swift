@@ -3530,7 +3530,7 @@ nonisolated enum AccessibilityDriver {
     // Read after the focus, which can select the whole field.
     let before = copy(field, kAXValueAttribute as String) as? String ?? ""
     let selection = selectedRange(field)
-    let wanted = BackgroundTyping.inserting(
+    let (wanted, caretAt) = BackgroundTyping.insertion(
       text, into: before, at: selection.map { (location: $0.location, length: $0.length) })
     let err = AXUIElementSetAttributeValue(
       field, kAXValueAttribute as CFString, wanted as CFTypeRef)
@@ -3539,8 +3539,8 @@ nonisolated enum AccessibilityDriver {
     {
       throw problem
     }
-    if let selection {
-      var caret = CFRange(location: selection.location + text.utf16.count, length: 0)
+    if selection != nil {
+      var caret = CFRange(location: caretAt, length: 0)
       if let range = AXValueCreate(.cfRange, &caret) {
         _ = AXUIElementSetAttributeValue(
           field, kAXSelectedTextRangeAttribute as CFString, range)

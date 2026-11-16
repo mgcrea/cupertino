@@ -2108,13 +2108,33 @@ struct DesktopCheck {
     // launch started, or its container cannot be read. Both used to be
     // reported as an app without SupportKitDriving.
     let unconfirmed = DesktopServer.noChannelReason(
-      bundleId: "io.example.app", pid: 4512, confirmed: false, container: .readable)
+      bundleId: "io.example.app", pid: 4512, confirmed: false, container: .readable,
+      sandboxed: true)
     let unreadable = DesktopServer.noChannelReason(
-      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .refused)
+      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .refused,
+      sandboxed: true)
     let unlinked = DesktopServer.noChannelReason(
-      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .readable)
+      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .readable,
+      sandboxed: true)
     let unsandboxed = DesktopServer.noChannelReason(
-      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .none)
+      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .none, sandboxed: false)
+    // An unsandboxed Debug build beside an installed sandboxed copy: the
+    // container that refuses is the installed copy's, not where this one's
+    // channel would be.
+    let besideSandboxed = DesktopServer.noChannelReason(
+      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .refused,
+      sandboxed: false)
+    let noPid = DesktopServer.noChannelReason(
+      bundleId: "io.example.app", pid: nil, confirmed: false, container: .none, sandboxed: nil)
+    check(
+      "a container that refuses names Full Disk Access only for a sandboxed copy",
+      besideSandboxed.contains("SupportKitDriving") && !besideSandboxed.contains("Full Disk"))
+    check(
+      "and a launch that answered no pid names none",
+      !noPid.contains("pid 0") && noPid.contains("could not confirm"))
+    check(
+      "this unsandboxed process reads as unsandboxed from its signature",
+      AppChannel.isSandboxed(getpid()) == false)
     check(
       "a copy the launch cannot vouch for is named as that, not as a build without a channel",
       unconfirmed.contains("could not confirm") && unconfirmed.contains("4512")

@@ -1705,7 +1705,9 @@ forward. Five gaps were left on Cupertino's side, all closed here, most useful f
    running copy's `pid` and window count in `copies`. With several copies running and no `pid`,
    nothing is captured: the refusal lists the pids. A pid that is none of the copies is refused.
    The copy is chosen from Launch Services before the window list is read, and the windows are
-   filtered by the owning process, so the other copy's window is never a candidate. A capture by
+   filtered by the owning process, so the other copy's window is never a candidate. When Launch
+   Services lists no copy and the window server lists windows of more than one process, a copy
+   started between the two reads, that is refused too. A capture by
    pid carries it in its file name and its answer. `channel-check` captures each of two fixture
    copies by pid; the second copy's window is 40 points taller, and each picture is that copy's
    own height (744 and 664 pixels).
@@ -1719,7 +1721,8 @@ forward. Five gaps were left on Cupertino's side, all closed here, most useful f
 3. **A key that quits the app says so.** A ⌘Q through the channel ends the process before it
    can answer, and that was reported as "did not answer the key within 2 s. It may be busy on
    its main thread". `AppChannel.send` now watches the pid while it waits, and a second past the
-   deadline for its end alone, and a process that ended is the answer: `quit: true`, with the
+   deadline (an answer arriving in that second still counts, so a slow app's command is not
+   reported undone and retried), and a process that ended is the answer: `quit: true`, with the
    note "The application quit before it answered the key: pid N is no longer running." It is
    not an error. A crash on the command reads the same; `quit` says only that the process is
    gone. `channel-check` quits the second fixture copy with ⌘Q, answered in 0.03 s.
@@ -1737,7 +1740,11 @@ forward. Five gaps were left on Cupertino's side, all closed here, most useful f
    it back, answering `lane: "accessibility"` with `verified`. `key` does what the key stands
    for there, return as `AXConfirm` and escape as `AXCancel` when the field offers it, and
    refuses anything else, naming what the field offers. Should the window list miss one, the
-   channel's own "no visible window to type into" sends a handle's `type` or `key` the same way.
+   channel's own "no visible window to type into" sends a handle's `type` or `key` the same way,
+   unless keys the background type posted have landed since, which would double the text. That
+   backstop covers only an app with no window of its own on screen: with a document window open
+   beside a panel whose window owner cannot be read, the channel types into the document. The
+   owner was read on every panel element measured.
    This holds with or without a channel. Measured on TextEdit's real Open panel, launched behind
    with nothing posted to the session: `type` "zzqx" with the Search field's handle landed, the
    field read `zzqx`, and TextEdit never came forward. Its Search field offers `AXShowMenu` and
@@ -1749,7 +1756,10 @@ forward. Five gaps were left on Cupertino's side, all closed here, most useful f
      (`noChannelReason`): Cupertino could not confirm the pid is the process the launch started,
      so its channel is not believed; or the app is sandboxed and its container may not be read
      without Full Disk Access (`AppChannel.containerAccess`, asked only after the lookup failed,
-     of the directory it tried); or, only otherwise, a build without the channel.
+     of the directory it tried, and only for a process whose signature carries the sandbox
+     entitlement, `AppChannel.isSandboxed`: an unsandboxed Debug build beside an installed
+     sandboxed copy finds that copy's container refused); or, only otherwise, a build without
+     the channel.
    - _N5._ `quitLaunched` takes what `launch` answered and asks `startedByLaunch` again just
      before it asks the copy to quit, and again before it forces it, not only when the launch
      answered: the channel's two-second wait comes between. One it cannot vouch for is left

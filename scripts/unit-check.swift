@@ -1064,6 +1064,15 @@ struct UnitCheck {
     check(
       "and one that would split it goes after it",
       BackgroundTyping.inserting("X", into: "a😀b", at: (location: 2, length: 0)) == "a😀Xb")
+    // The caret goes after what was typed, counted from where it really went
+    // in, not from the range asked: a stale range past the end, or a start
+    // moved off the middle of an emoji, would put it elsewhere.
+    check(
+      "the caret follows the text, in UTF-16",
+      BackgroundTyping.insertion("XY", into: "abcd", at: (location: 1, length: 2)).caret == 3
+        && BackgroundTyping.insertion("X", into: "abc", at: (location: 9, length: 0)).caret == 4
+        && BackgroundTyping.insertion("X", into: "a😀b", at: (location: 2, length: 0)).caret == 4
+        && BackgroundTyping.insertion("😀", into: "ab", at: nil).caret == 4)
     check(
       "an element with no string value is not",
       !BackgroundTyping.eligible(role: "AXWebArea", subrole: nil, value: nil))
