@@ -387,14 +387,45 @@ struct ChannelCheck {
     let firstTaps = { text(find(window, "nsTaps")) }
     let secondTaps = { secondWindow.map { text(find($0, "nsTaps")) } ?? "?" }
     let before = firstTaps()
-    // A label's value can trail the ack by a run-loop turn: read it until it
-    // holds, for a second at most.
-    func soon(_ holds: () -> Bool) -> Bool {
-      for _ in 0..<20 {
-        if holds() { return true }
+    let after = "\((Int(before) ?? 0) + 1)"
+    // swift-support-kit acknowledges a click only after an event queued behind
+    // its up, and the button's action sets the label inside that up, so the
+    // label should read the new count by the time the ack arrives. On six runs
+    // on 2026-11-16 it did, on the first read, in 0 to 2 ms. One earlier run
+    // failed this read once, and how was not logged. So it is read until it
+    // holds, for a second at most, and the log says what the first read gave:
+    // "?" is an Accessibility read that came back empty, a harmless flake; the
+    // old count would be an effect that trailed its ack, which is a question
+    // for swift-support-kit's ack ordering, not a reason to wait longer.
+    func settles(_ label: String, _ read: () -> String, _ expected: String) -> Bool {
+      let started = Date()
+      let first = read()
+      var last = first
+      var reads = 1
+      while last != expected && Date().timeIntervalSince(started) < 1 {
         Thread.sleep(forTimeInterval: 0.05)
+        last = read()
+        reads += 1
       }
-      return holds()
+      let ms = Int(Date().timeIntervalSince(started) * 1000)
+      print(
+        "       \(label): first read \"\(first)\", \(last == expected ? "settled" : "never settled") "
+          + "on read \(reads), \(ms) ms")
+      return last == expected
+    }
+    // A label that must NOT change is watched for the same second a settling
+    // one is given, so a click that reached the wrong copy late is not missed.
+    func stays(_ label: String, _ read: () -> String, _ expected: String) -> Bool {
+      let started = Date()
+      repeat {
+        let now = read()
+        guard now == expected else {
+          print("       \(label): read \"\(now)\", expected \"\(expected)\"")
+          return false
+        }
+        Thread.sleep(forTimeInterval: 0.05)
+      } while Date().timeIntervalSince(started) < 1
+      return true
     }
     // The same point: both windows sit in one place, one over the other.
     let toSecond = call("apple_desktop_click", ["x": b.x, "y": b.y, "pid": secondPid])
@@ -402,19 +433,21 @@ struct ChannelCheck {
     check(
       "a click by pid reaches that copy through its channel",
       toSecond["lane"] as? String == "channel" && toSecond["pid"] as? Int == secondPid
-        && soon { secondTaps() == "1" })
-    check("and not the other", firstTaps() == before)
+        && settles("the second copy's count", secondTaps, "1"))
+    check("and not the other", stays("the first copy's count", firstTaps, before))
     let toFirst = call(
       "apple_desktop_click", ["x": b.x, "y": b.y, "pid": firstPid, "bundleId": fixture])
     check(
       "a click by pid and bundle id reaches the first",
-      toFirst["pid"] as? Int == firstPid && soon { firstTaps() == "\((Int(before) ?? 0) + 1)" }
-        && secondTaps() == "1")
+      toFirst["pid"] as? Int == firstPid && settles("the first copy's count", firstTaps, after))
+    check("and not the second", stays("the second copy's count", secondTaps, "1"))
     let mismatched = call(
       "apple_desktop_click", ["x": b.x, "y": b.y, "pid": firstPid, "bundleId": "com.apple.finder"])
     check(
       "a pid and a bundle id that disagree reach nothing",
-      mismatched["isError"] as? Bool == true && firstTaps() == "\((Int(before) ?? 0) + 1)")
+      mismatched["isError"] as? Bool == true
+        && stays("the first copy's count", firstTaps, after)
+        && stays("the second copy's count", secondTaps, "1"))
     let found = call(
       "apple_desktop_find_elements", ["pid": secondPid, "id": "nsButton"])
     let foundHandle = (found["elements"] as? [[String: Any]])?.first?["handle"] as? String
@@ -476,6 +509,12 @@ struct ChannelCheck {
 
     app.terminate()
     second?.terminate()
+    // Whatever the code under test left: the plain copy is quit by launch
+    // itself, and a failure there must not leave it running.
+    Thread.sleep(forTimeInterval: 0.5)
+    for left in NSRunningApplication.runningApplications(withBundleIdentifier: fixture) {
+      left.forceTerminate()
+    }
     print("\n\(checks - failures)/\(checks) passed")
     exit(failures == 0 ? 0 : 1)
   }

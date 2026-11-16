@@ -34,9 +34,9 @@ summary.
 ### Fixed
 
 - **The driving channel no longer mixes up two connections or two Cupertinos.** A command is
-  appended in one write, only one from each Cupertino is in flight per app, its sequence numbers start from a random
-  base, and the app's answers are read from where the last read ended rather than whole every
-  10 ms.
+  appended in one write, only one from each Cupertino is in flight per app, its sequence numbers
+  start from a random base, and the app's answers are read from where the last read ended rather
+  than whole every 10 ms.
 
 ## [1.39.0] - 2026-11-12
 

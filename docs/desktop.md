@@ -1595,8 +1595,12 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
   A copy already running from that same path answers `launched: false`, so the verb stays safe
   to repeat. A copy started beside another that opens no channel within the wait is quit again
   and the launch refused: it would be the plain second copy the spec says has no use worth the
-  ambiguity. A `launched: false` answer names the running copy's pid only when one runs. Without `channel: true` the old refusal stands, and a launch by bundle id alone
-  never starts a second copy.
+  ambiguity. It is quit, and its channel believed, only once it is known to be the process this
+  launch started (`startedByLaunch`): not one of the copies running before, started no earlier
+  than the launch by the kernel's clock, from the bundle opened. Otherwise nothing is quit and
+  the refusal says a copy runs without a channel. A `launched: false` answer names the running
+  copy's pid only when one runs. Without `channel: true` the old refusal stands, and a launch by
+  bundle id alone never starts a second copy.
 - **The channel registry was already keyed by pid**; `AppChannel.find(bundleId:pid:)` takes
   one. Without it, the one running copy's channel, after the several-copies refusal.
 - **Input posted to the session is refused for one of several copies.** The front checks that
@@ -1631,7 +1635,8 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
   and an app built before then could trap making it a whole number. That check and the version
   gate run before the session is admitted, so a refused command puts no card on screen.
 
-**What `channel-check` measured, 51/51 on 2026-11-16, while Olivier worked.** Against the
+**What `channel-check` measured, 51/51 on 2026-11-16 and 55/55 after review, while Olivier
+worked.** Against the
 fixture, built from swift-support-kit 1.25.0, which now has a probe view logging the button,
 the modifiers and the summed deltas of a drag, and the units and deltas of a scroll:
 
@@ -1650,7 +1655,13 @@ the modifiers and the summed deltas of a drag, and the units and deltas of a scr
   second's button and not the first's, and one by the first's pid and bundle id the first's. A
   pid and a bundle id that disagree pressed nothing. `find_elements` by the second's pid found
   its button, and a hover by that handle went through the second's channel. A pixel scroll by
-  pid reached only that copy;
+  pid reached only that copy. That handle with the first copy's pid was refused, naming both
+  pids. A middle-button drag from the second copy onto the first was refused, blaming the drop.
+  The same fixture built without DEBUG, launched beside both with `channel: true`, opened no
+  channel and was quit again, leaving two copies;
+- the counts that say which copy a click reached read back on the first Accessibility read
+  after the ack, in 0 to 1 ms, on each of six runs; the count that must not change was watched
+  for a second after each click and did not;
 - neither copy became active, and the app in front stayed in front.
 
 The no-app assertions are in `desktop-check` (argument shapes and refusals, the pid check
@@ -1664,7 +1675,8 @@ button on a drag. A paced drag against an app that does not take a step in time,
 channel's patience decides. Two Cupertinos driving one channel, and two connections of one
 Cupertino contending for it: one command in flight per channel holds within a Cupertino only,
 and the wait it makes is not cancellable. `activate` by pid with two copies running. A copy
-started beside another that opens no channel, and is quit again. A launched copy that takes the
+whose pid `startedByLaunch` does not vouch for, which is refused and left running. A launched
+copy that takes the
 front from the person's own copy of the same app, which `launch` hands back by process. A
 session handing back to one of two copies of the person's app.
 

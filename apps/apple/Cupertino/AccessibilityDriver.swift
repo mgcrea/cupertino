@@ -2551,6 +2551,11 @@ nonisolated enum AccessibilityDriver {
     /// It was started as a new instance beside other copies of the same
     /// application, which only a driving channel makes worth having.
     var besideOthers = false
+    /// What `startedByLaunch` checks `pid` against: when the launch began,
+    /// the copies running before it, and the bundle it opened.
+    var launchStarted: Date?
+    var copiesBefore: Set<pid_t> = []
+    var openedPath: String?
   }
 
   /// The bundle identifier of the application at `path`, which a launch by path
@@ -2649,6 +2654,7 @@ nonisolated enum AccessibilityDriver {
     // Without it, opening an application that is running hands back the copy
     // already there.
     config.createsNewApplicationInstance = beside && !running.isEmpty
+    let launchStarted = Date()
     let done = DispatchSemaphore(value: 0)
     let box = ResultBox<pid_t?>()
     NSWorkspace.shared.openApplication(at: url, configuration: config) { app, error in
@@ -2674,6 +2680,9 @@ nonisolated enum AccessibilityDriver {
     var result = Launched(launched: true)
     if case .success(let pid) = box.result { result.pid = pid }
     result.besideOthers = config.createsNewApplicationInstance
+    result.launchStarted = launchStarted
+    result.copiesBefore = Set(running.map { pid(of: $0) })
+    result.openedPath = url.path
     var readyAt: Date?
     // By the pid it started when there is one: beside another copy, a lookup
     // by bundle id is ambiguous.
@@ -2713,9 +2722,52 @@ nonisolated enum AccessibilityDriver {
     return result
   }
 
+  /// Whether `pid` is the process this launch started, and not only the pid
+  /// Launch Services handed back: a real pid, none of the copies running
+  /// before the launch, started no earlier than it, from the bundle it
+  /// opened.
+  ///
+  /// What it guards is a force-quit, and a channel believed. Launch Services
+  /// handing back a copy already running despite `createsNewApplicationInstance`,
+  /// or the started copy dying and its pid going to another process before
+  /// the quit, would otherwise point both at a process the person owns. Neither
+  /// has been seen; a wrong quit is the worst this surface can do.
+  static func startedByLaunch(
+    pid: pid_t, processStart: Date?, bundlePath: String?, launchStarted: Date,
+    copiesBefore: Set<pid_t>, path: String
+  ) -> Bool {
+    guard pid > 0, !copiesBefore.contains(pid), let processStart, let bundlePath else {
+      return false
+    }
+    let resolved = { (path: String) in URL(fileURLWithPath: path).resolvingSymlinksInPath().path }
+    return processStart >= launchStarted && resolved(bundlePath) == resolved(path)
+  }
+
+  /// `startedByLaunch` for what `launch` answered, read off the running process.
+  static func startedByLaunch(_ launched: Launched) -> Bool {
+    guard let pid = launched.pid, let launchStarted = launched.launchStarted,
+      let path = launched.openedPath
+    else { return false }
+    return startedByLaunch(
+      pid: pid, processStart: processStart(pid),
+      bundlePath: NSRunningApplication(processIdentifier: pid)?.bundleURL?.path,
+      launchStarted: launchStarted, copiesBefore: launched.copiesBefore, path: path)
+  }
+
+  /// When the kernel started `pid`, to the microsecond. Not
+  /// `NSRunningApplication.launchDate`, which is nil for an application
+  /// Launch Services did not launch.
+  static func processStart(_ pid: pid_t) -> Date? {
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+    return Date(
+      timeIntervalSince1970: Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1e6)
+  }
+
   /// Quit a process `launch` just started, which holds nothing of the
   /// person's yet: asked first, then forced after two seconds. Whether it is
-  /// gone.
+  /// gone. Only for one `startedByLaunch` vouched for.
   static func quitLaunched(_ pid: pid_t) -> Bool {
     guard let app = NSRunningApplication(processIdentifier: pid) else { return true }
     app.terminate()

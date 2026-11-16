@@ -1753,6 +1753,28 @@ struct DesktopCheck {
         && several.contains("driving channel") && several.contains("'pid'")
         && several.contains("nothing was done"))
 
+    // A copy started beside others that opens no channel is quit again, and
+    // a channel is believed, only for the process this launch started: never
+    // one of the copies running before it, one started before it, one from
+    // another bundle, or no process at all.
+    let launchStarted = Date(timeIntervalSince1970: 1_000)
+    func startedHere(
+      _ pid: pid_t, started: Date? = Date(timeIntervalSince1970: 1_000.4),
+      bundle: String? = "/w/Example.app"
+    ) -> Bool {
+      AccessibilityDriver.startedByLaunch(
+        pid: pid, processStart: started, bundlePath: bundle, launchStarted: launchStarted,
+        copiesBefore: [3011], path: "/w/Example.app")
+    }
+    check("the process a launch started is its own", startedHere(4512))
+    check(
+      "not a copy that ran before it, nor one started before it",
+      !startedHere(3011) && !startedHere(4512, started: Date(timeIntervalSince1970: 999)))
+    check(
+      "nor one from another bundle, one whose start is unknown, or pid -1",
+      !startedHere(4512, bundle: "/main/Example.app") && !startedHere(4512, started: nil)
+        && !startedHere(-1))
+
     let listed = json(callText("apple_desktop_list_apps", [:], writes: false).0)
     let listedApps = listed?["apps"] as? [[String: Any]] ?? []
     check(

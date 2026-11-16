@@ -1728,8 +1728,11 @@ nonisolated enum DesktopServer {
         if let pid = launched.pid { body["pid"] = Int(pid) }
         if wantsChannel {
           // Only a process launched here with the argument is believed to have
-          // a channel: see `AppChannel.find(bundleId:pid:)`.
-          if let pid = launched.pid { AppChannel.register(pid: pid, bundleId: bundleId) }
+          // a channel: see `AppChannel.find(bundleId:pid:)`. And only once it
+          // is known to be the process this launch started, not merely the
+          // pid Launch Services answered with.
+          let ours = AccessibilityDriver.startedByLaunch(launched)
+          if ours, let pid = launched.pid { AppChannel.register(pid: pid, bundleId: bundleId) }
           // The app opens its channel from its own launch code, which can trail
           // the window that made `ready` true. Looked up by the pid it started,
           // since beside another copy the bundle id names neither.
@@ -1746,6 +1749,15 @@ nonisolated enum DesktopServer {
           // leave every bundleId verb refused and the session lane unable to
           // tell the two apart, so the copy started seconds ago is quit again.
           if !opened, launched.besideOthers, let pid = launched.pid {
+            // Quit only what this launch is known to have started: a wrong
+            // quit would be of something the person owns.
+            guard ours else {
+              return failure(
+                id,
+                "A copy of \(bundleId) is running beside another without a driving channel, and "
+                  + "Cupertino could not confirm pid \(pid) is the one this launch started, so "
+                  + "nothing was quit. Ask the person to quit the copy that has no channel.")
+            }
             let quit = AccessibilityDriver.quitLaunched(pid)
             return failure(
               id,
