@@ -1477,19 +1477,20 @@ After Cupertino or the app restarts, launch it again with `channel: true`.
 the installed copy, so `apple_desktop_launch` by bundle id can start the installed one, which has
 no channel. Starting the Debug build any other way (`make run`, Xcode, `open`) gives a channel
 Cupertino does not trust. `path` starts that exact `.app`, and its bundle id is still
-checked against the reach. While any copy with that bundle id is running, nothing is started and
-the answer says where that copy lives. Two copies under one bundle id would leave every
-`bundleId` verb unsure which one it reaches. Measured by `channel-check`, which launches its
-fixture that way.
+checked against the reach. Measured by `channel-check`, which launches its fixture that way.
+Without `channel: true`, nothing is started while any copy with that bundle id is running, and
+the answer says where that copy lives. With it, since 2026-11-16, the copy starts beside the
+other one and is named by its `pid` afterwards (below, "One copy by pid").
 
 The already-running check asks Launch Services
 (`NSRunningApplication.runningApplications(withBundleIdentifier:)`), not
 `NSWorkspace.runningApplications`. That list is kept current by the main run loop, and a
 process without one missed a copy started a moment earlier and launched it a second time.
 
-Click (left only), drag (within the app), hover, key (when every modifier has a menu meaning) and
-type with that `bundleId` then go through the channel. They answer `lane: "channel"` with what the
-app hit and what holds its focus. Nothing is brought forward or checked against the window
+Click (left only), drag (within the app), hover, scroll, key (when every modifier has a menu
+meaning) and type with that `bundleId`, or its `pid`, then go through the channel. They answer
+`lane: "channel"` with the `pid` they reached, what the app hit, what holds its focus, and the
+app's own `note` when it has one. Nothing is brought forward or checked against the window
 server's stacking: the app hit-tests its own windows, so a covered window still takes the click.
 Behind the person's app they are admitted as background, with no countdown; in front they get
 the countdown. An application without a channel is driven exactly as before.
@@ -1529,16 +1530,23 @@ per-user temporary directory and needs no grant. Armada's Debug build was driven
 2026-11-11, never frontmost.
 
 Not measured: hover (whether a `mouseMoved` delivered this way fires a tracking area or
-`onContinuousHover`), scroll, right-click menus (refused, above), and a drag that needs real time
-between steps (the steps are queued all at once).
+`onContinuousHover`), a scroll in SwiftUI or a real app, and right-click menus (refused,
+above). Since 2026-11-16 a drag can be paced, its steps sent over its duration, and a scroll
+reaching an `NSView` is measured (below).
 
-Known gaps, found in review on 2026-11-11 and left for later:
+Known gaps, found in review on 2026-11-11. The first three were closed on 2026-11-16:
 
-- `AppChannel.send` appends with seek-then-write, not `O_APPEND` under its lock. Two
-  connections driving one app can interleave a line, which shows up as a timeout.
-- The `seq` base is wall-clock milliseconds mod 10⁹. A Debug and an installed Cupertino can
-  collide, and a stale ack in `events.jsonl` could then answer a new command.
-- `send` re-reads the whole `events.jsonl` every 10 ms. The file grows for the life of the app.
+- ~~`AppChannel.send` appends with seek-then-write, not `O_APPEND` under its lock.~~ It
+  appends with `O_APPEND`, in one write, under the lock, so two connections never interleave a
+  line. And one command is in flight per channel: a second connection waits for the first
+  command's answer before it writes.
+- ~~The `seq` base is wall-clock milliseconds mod 10⁹.~~ It is random over 52 bits at process
+  start, so a Debug and an installed Cupertino do not count from one base, and it stays below
+  2^53, where a JSON reader still holds a whole number exactly.
+- ~~`send` re-reads the whole `events.jsonl` every 10 ms.~~ It reads from where its last read
+  ended, one offset per channel directory, and reads the file whole again when it shrank or was
+  replaced, which is a new process in a reused directory. Finding a channel reads only the
+  first line, `ready`.
 - A channel directory outlives a process that is killed rather than quit
   (`willTerminateNotification` never fires). Pid and launch-date matching keep a stale one
   from being believed, but the directories pile up.
@@ -1546,6 +1554,105 @@ Known gaps, found in review on 2026-11-11 and left for later:
   Whether a modifier the person is holding carries into a posted key is not measured.
 - Nothing fails a build if Cupertino's project ever links `SupportKitDriving`. Today only
   `fleet-apple-conventions`' `survey.sh` and `fleet.sh` flag it.
+
+## One copy by pid, and the channel's version 2, 2026-11-16
+
+A check by eye of one of our apps runs the worktree's Debug build while Olivier's own Debug
+build, from the main checkout, is open beside it, under the same bundle id. That failed four
+ways: `launch` refused the second copy, every verb named its app by bundle id and two lookups
+took the first copy (`AccessibilityDriver.app(forBundleId:)` and `AppChannel.find(bundleId:)`),
+nothing could send the channel's version 2, and the channel's known gaps (above). This was the
+third of three cycles approved on 2026-11-15; the first was swift-support-kit 1.25.0, the
+channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design.md`.
+
+**One copy by pid.**
+
+- **Every verb that takes `bundleId` takes `pid`**, `run`'s steps and a drag end's
+  `{x, y, bundleId}` included. A pid reaches that process and no other, and `bundleId` may then
+  be left out; given both, they must agree, or nothing is done. The reach is checked against
+  the bundle id the process runs. A pid that is not running, or one with no bundle id to check
+  the reach against, is refused. The schemas no longer require `bundleId`; the argument check
+  asks for one of the two.
+- **A bundle id alone, while several copies run, is refused, never guessed.** The refusal lists
+  each copy's pid, its bundle's path, and whether this Cupertino launched it with a driving
+  channel, and says to pass `pid`. With one copy running nothing changes. Copies are asked of
+  Launch Services (`runningApplications(withBundleIdentifier:)`), for the reason the launch
+  check gives above: a process without a main run loop missed a copy started a moment
+  earlier.
+- **A handle reaches the process its element belongs to** (`AXUIElementGetPid`), the channel
+  lookup included. A `ui_tree` or `find_elements` by pid hands back that copy's handles.
+- **`list_apps` gives each app's `path`** beside its pid.
+- **`launch` by `path` with `channel: true` starts a copy beside a running one**
+  (`createsNewApplicationInstance`), and every launch that started something answers its `pid`.
+  A copy already running from that same path answers `launched: false`, so the verb stays safe
+  to repeat. Without `channel: true` the old refusal stands, and a launch by bundle id alone
+  never starts a second copy.
+- **The channel registry was already keyed by pid**; `AppChannel.find(bundleId:pid:)` takes
+  one. Without it, the one running copy's channel, after the several-copies refusal.
+- **Input posted to the session is refused for one of several copies.** The front checks that
+  guard a posted click, key or hover read a bundle id, which both copies share, so the copy in
+  front would take input meant for the other and pass every check. A copy with a channel is
+  driven by its pid alone; otherwise the refusal says to launch one with a channel, or to quit
+  the other. `activate` by pid reads the front back by process, so it does bring that copy
+  forward. Whether a verb is background is now decided by process too, for the channel lane
+  and the background type: the worktree's copy behind Olivier's copy of the same app is
+  behind, with no countdown. A driving session remembers which copy was in front, so it hands
+  back to that one.
+
+**The channel's version 2.**
+
+- `AppChannel` reads `version` from `ready`, 1 when absent. A version-1 app ignores fields it
+  does not know, so a middle-button drag would arrive as a left drag with nothing to say so.
+  Sending a version-2 field to one is refused, naming the version and saying to rebuild against
+  swift-support-kit 1.25.0 or later. A field at its version-1 value (a left button, no
+  modifiers, unpaced, line units) is not sent at all, so a version-1 app is driven as before.
+- `drag` takes `button` (`left`, or `middle`, sent as the channel's `other`), `modifiers` (the
+  names `key` takes but `function`, which has no meaning to an app's own events) and `paced` (a
+  JSON boolean; a number is refused). All three are channel-only: to an app without a channel,
+  a value other than the default is refused with the reason rather than dropped. A paced drag's
+  ack is waited on for `ackTimeout + durationMs / 1000 + 1` seconds, the extra second being the
+  channel's patience.
+- `hover` takes `from: {x, y}`, channel-only, and the sweep runs from it.
+- `apple_desktop_scroll` is new, channel-only for now: `x`, `y`, `dx` and `dy` (0 by default,
+  one of them not 0), `units` `line` (default) or `pixel`, `bundleId` or `pid`. An app without
+  a channel is refused with the reason. It is a write and a `run` step.
+- An ack's `note` reaches the caller as the app wrote it.
+- A point past ±1,000,000 on either axis is refused before it is sent: 1.25.0 refuses it too,
+  and an app built before then could trap making it a whole number.
+
+**What `channel-check` measured, 51/51 on 2026-11-16, while Olivier worked.** Against the
+fixture, built from swift-support-kit 1.25.0, which now has a probe view logging the button,
+the modifiers and the summed deltas of a drag, and the units and deltas of a scroll:
+
+- a middle-button drag holding Option, from 160 points left of and 24 above its end: the probe
+  read `middle steps 16 option true delta 160,24`, queued, in 0 ms;
+- a paced left drag of 200 points over 400 ms: read back as taking 407 ms, `option false`,
+  `delta 200,0`, and the verb answered after 0.42 s;
+- a pixel scroll of -30: `precise true dy -30`; a line scroll of 3: `precise false`;
+- a hover with a `from`: acknowledged, with the app's note "hover is not yet measured" passed on;
+- a version-1 `ready` planted in a scratch directory: a middle-button drag refused, naming
+  version 1 and 1.25.0, and nothing written to `commands.jsonl`;
+- a second copy of the fixture, copied to a second path: refused without `channel: true`, then
+  started beside the first with it, answering its pid. `list_apps` told the two apart by path.
+  A click and a `list_windows` by bundle id alone were refused, listing both pids. The two
+  windows sit at one screen point, one over the other: a click by the second's pid pressed the
+  second's button and not the first's, and one by the first's pid and bundle id the first's. A
+  pid and a bundle id that disagree pressed nothing. `find_elements` by the second's pid found
+  its button, and a hover by that handle went through the second's channel. A pixel scroll by
+  pid reached only that copy;
+- neither copy became active, and the app in front stayed in front.
+
+The no-app assertions are in `desktop-check` (argument shapes and refusals, the pid check
+against a stand-in lookup, the several-copies refusal, the version gate, a planted version-1
+channel, the point bound, the `seq` base, the incremental read) and `unit` (background by
+process).
+
+**Not measured here.** Cupertino with Full Disk Access reading a sandboxed app's container
+channel, which is Maquette's cycle. A session-lane scroll, and session-lane modifiers or middle
+button on a drag. A paced drag against an app that does not take a step in time, where the
+channel's patience decides. Two Cupertinos driving one channel. A launched copy that takes the
+front from the person's own copy of the same app, which `launch` hands back by process. A
+session handing back to one of two copies of the person's app.
 
 ## Still open
 

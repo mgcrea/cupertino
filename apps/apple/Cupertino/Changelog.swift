@@ -670,6 +670,42 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Drive one copy of an app by its pid.",
+            body: [
+              "Every Desktop verb that takes `bundleId` also takes `pid`, so a worktree's Debug build can be driven beside the one from the main checkout, which shares its bundle id. With several copies running, a bundle id alone is refused rather than guessed, and the refusal lists each copy's pid, its path and whether it has a driving channel. `apple_desktop_list_apps` gives each app's path. `apple_desktop_launch` with `path` and `channel: true` starts a copy beside one already running and answers its `pid`. A handle always reaches the copy it was read from.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "Scroll, orbit and pan in our own Debug builds.",
+            body: [
+              "Through a driving channel, `apple_desktop_scroll` scrolls the view under a point by lines or by pixels, and `apple_desktop_drag` takes the middle button, modifiers held throughout and pacing, which is how a canvas or a 3D view moves. `apple_desktop_hover` takes `from`, so its moves carry their movement. All of them need swift-support-kit 1.25.0's channel, and to any other app they are refused with the reason rather than dropped.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 2,
+            headline: "The driving channel no longer mixes up two connections or two Cupertinos.",
+            body: [
+              "A command is appended in one write, only one is in flight per app, its sequence numbers start from a random base, and the app's answers are read from where the last read ended rather than whole every 10 ms.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

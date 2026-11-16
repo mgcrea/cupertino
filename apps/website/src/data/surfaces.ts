@@ -572,6 +572,7 @@ export const SURFACES: readonly Surface[] = [
       "apple_desktop_click",
       "apple_desktop_hover",
       "apple_desktop_drag",
+      "apple_desktop_scroll",
       "apple_desktop_type",
       "apple_desktop_key",
       "apple_desktop_focus",
@@ -584,7 +585,7 @@ export const SURFACES: readonly Surface[] = [
     ],
     // `allowAnyApp` is deliberately NOT listed here. This column is for tools
     // registered only under their own flag, and the scope gate registers none:
-    // it changes how far the same twenty-seven tools reach, never which of them
+    // it changes how far the same twenty-eight tools reach, never which of them
     // exist. Listing it would misdescribe both the gate and the column.
     pitch:
       "The lane for apps that have no other one. Reads a window as named, addressable controls rather than pixels, and behind the write gate, presses them. Scoped to the apps Cupertino brokers unless you widen it, which is the switch that lets it drive an app you are building.",
