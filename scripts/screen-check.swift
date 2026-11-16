@@ -337,6 +337,51 @@ struct ScreenCheck {
         (offResult?["isError"] as? Bool) == true && offText.contains("switched off"))
     }
 
+    // ─── one of two copies, by pid ──────────────────────────────────────────
+    //
+    // A worktree's Debug build beside the person's copy shares its bundle id,
+    // and the largest window of the two was captured, whichever copy had it.
+    // A pid names one; several copies and no pid is a refusal, never a guess.
+    // None of these reaches ScreenCaptureKit, and each names an application
+    // nothing runs as, so that a regression here finds no window rather than
+    // writing a picture of the machine to ~/Downloads: the first run of these
+    // against a stub, on 2026-11-16, captured Maps twice.
+    let pidProperty =
+      ((schema?["properties"] as? [String: Any])?["pid"] as? [String: Any])?["type"] as? String
+    check("the capture schema declares 'pid'", pidProperty == "integer")
+    let absent = "io.example.absent"
+    for bad in ["abc", 0, -3, 2.5, true] as [Any] {
+      let (text, errored) = callText(
+        "apple_screen_capture_surface", ["surface": absent, "pid": bad], gate: true, anyApp: true)
+      check(
+        "a pid of \(bad) is refused as no process id, before any capture",
+        errored && text.contains("'pid'") && text.contains("whole number"))
+    }
+    let (stranger, strangerErrored) = callText(
+      "apple_screen_capture_surface", ["surface": absent, "pid": 99_998], gate: true, anyApp: true)
+    check(
+      "a pid that is no copy of the application named is refused, naming both",
+      strangerErrored && stranger.contains("99998") && stranger.contains(absent)
+        && stranger.contains("nothing was captured"))
+    func chosen(_ pid: pid_t?, _ copies: [pid_t]) -> (pid_t?, String) {
+      do {
+        return (try ScreenCapture.chooseCopy(of: "Maquette", pid: pid, copies: copies), "")
+      } catch {
+        return (nil, error.localizedDescription)
+      }
+    }
+    let both = chosen(nil, [4512, 3011])
+    check(
+      "two copies and no pid are refused, listing both pids and asking for one",
+      both.0 == nil && both.1.contains("4512") && both.1.contains("3011")
+        && both.1.contains("'pid'") && both.1.contains("nothing was captured"))
+    check("a pid among them is that copy", chosen(4512, [4512, 3011]).0 == 4512)
+    check(
+      "a pid that is none of them is refused",
+      chosen(7, [4512, 3011]).0 == nil && chosen(7, [4512, 3011]).1.contains("7"))
+    check("one copy and no pid is that copy, as before", chosen(nil, [3011]).0 == 3011)
+    check("none running and no pid is left to the capture to say", chosen(nil, []) == (nil, ""))
+
     print("\n\(checks - failures)/\(checks) passed\n")
     if failures > 0 { exit(1) }
   }

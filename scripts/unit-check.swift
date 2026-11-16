@@ -984,6 +984,22 @@ struct UnitCheck {
       "the longest countdown ends inside the active window",
       TimeInterval(DrivingPolicy.countdownRange.upperBound) < DrivingPolicy.activeWindow)
 
+    // A field whose window another process draws, a sandboxed app's open or
+    // save panel, which the panel service owns (MEASURED 2026-11-16 on
+    // TextEdit's Open panel: the field answers TextEdit's pid, and its window
+    // is the service's). A driving channel and keys posted to the app's pid
+    // reach only the app's own windows.
+    check(
+      "a field in a window another process owns is in a foreign window",
+      DrivingPolicy.inForeignWindow(windowOwner: pid_t(49812), process: pid_t(49752)))
+    check(
+      "one in its own process's window is not",
+      !DrivingPolicy.inForeignWindow(windowOwner: pid_t(49752), process: pid_t(49752)))
+    check(
+      "and one whose window cannot be read is left as it was",
+      !DrivingPolicy.inForeignWindow(windowOwner: nil, process: pid_t(49752))
+        && !DrivingPolicy.inForeignWindow(windowOwner: pid_t(49812), process: nil))
+
     print("\nBackground typing: whether text posted to a field in the background landed")
 
     // The read-back decides between answering and typing again in front, so a
@@ -1022,6 +1038,32 @@ struct UnitCheck {
     check(
       "a text area with a string value is",
       BackgroundTyping.eligible(role: "AXTextArea", subrole: nil, value: "hi"))
+
+    // Typing by value, into a field no key can reach: the text goes where
+    // typing would put it, over the selection or at the caret. Ranges are
+    // UTF-16, as Accessibility's are.
+    check(
+      "typed at the caret, the text goes in there",
+      BackgroundTyping.inserting("X", into: "abcd", at: (location: 2, length: 0)) == "abXcd")
+    check(
+      "over a selection, it replaces it",
+      BackgroundTyping.inserting("X", into: "abcd", at: (location: 1, length: 2)) == "aXd")
+    check(
+      "over the whole field, as a focus that selects all leaves it, it replaces it all",
+      BackgroundTyping.inserting("new", into: "old", at: (location: 0, length: 3)) == "new")
+    check(
+      "with no selection to read, it is appended",
+      BackgroundTyping.inserting("X", into: "abc", at: nil) == "abcX")
+    check(
+      "a range past the end is appended, never a trap",
+      BackgroundTyping.inserting("X", into: "abc", at: (location: 9, length: 4)) == "abcX"
+        && BackgroundTyping.inserting("X", into: "abc", at: (location: 2, length: 9)) == "abX")
+    check(
+      "a range counted in UTF-16 lands after an emoji, not inside it",
+      BackgroundTyping.inserting("X", into: "a😀b", at: (location: 3, length: 0)) == "a😀Xb")
+    check(
+      "and one that would split it goes after it",
+      BackgroundTyping.inserting("X", into: "a😀b", at: (location: 2, length: 0)) == "a😀Xb")
     check(
       "an element with no string value is not",
       !BackgroundTyping.eligible(role: "AXWebArea", subrole: nil, value: nil))

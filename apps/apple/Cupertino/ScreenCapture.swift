@@ -41,6 +41,8 @@ enum ScreenCapture {
     case blank(String)
     case destinationRefused(String)
     case writeFailed(String)
+    case severalCopies(String, pids: [pid_t])
+    case notACopy(String, pid: pid_t)
 
     var errorDescription: String? {
       switch self {
@@ -75,6 +77,14 @@ enum ScreenCapture {
         return "Refusing to write outside the capture directory: \(path)"
       case .writeFailed(let path):
         return "Could not write \(path)."
+      case .severalCopies(let name, let pids):
+        return
+          "\(pids.count) copies of \(name) are running, pids "
+          + "\(pids.map(String.init).joined(separator: ", ")), so nothing was captured: either "
+          + "window would be a guess, and one of them may be the person's. Pass 'pid' to name "
+          + "the copy, the one apple_desktop_launch answered with."
+      case .notACopy(let name, let pid):
+        return "No copy of \(name) is running as pid \(pid), so nothing was captured."
       }
     }
   }
@@ -97,6 +107,14 @@ enum ScreenCapture {
     /// Windows that could actually be captured, after filtering.
     let windows: Int
     let appRunning: Bool
+    /// Each running copy's pid and capturable windows, which a capture names
+    /// by `pid` when there is more than one.
+    var copies: [(pid: pid_t, windows: Int)] = []
+  }
+
+  /// `copies` as the target list answers them.
+  nonisolated static func copiesJSON(_ target: Target) -> [[String: Any]] {
+    target.copies.map { ["pid": Int($0.pid), "windows": $0.windows] }
   }
 
   /// A raw enumeration is NOT a target list.
@@ -113,9 +131,14 @@ enum ScreenCapture {
   ///
   /// Note `isOnScreen` predicts nothing about whether a capture succeeds: a
   /// drawn window composites off screen too. Only the result is evidence.
-  private static func realWindows(_ content: SCShareableContent, bundleID: String) -> [SCWindow] {
+  ///
+  /// With `pid`, only that copy's windows: two copies share a bundle id.
+  private static func realWindows(
+    _ content: SCShareableContent, bundleID: String, pid: pid_t? = nil
+  ) -> [SCWindow] {
     content.windows.filter { w in
       w.owningApplication?.bundleIdentifier == bundleID
+        && (pid == nil || w.owningApplication?.processID == pid)
         && w.windowLayer == 0
         && w.frame.width >= 100 && w.frame.height >= 100
         && (w.isOnScreen || !(w.title ?? "").isEmpty)
@@ -142,13 +165,19 @@ enum ScreenCapture {
   static func targets(anyApp: Bool = false) async throws -> [Target] {
     let content = try await shareableContent()
     let running = Set(content.applications.map(\.bundleIdentifier))
+    func copies(_ bundleID: String) -> [(pid: pid_t, windows: Int)] {
+      Self.copies(of: bundleID).map {
+        ($0, realWindows(content, bundleID: bundleID, pid: $0).count)
+      }
+    }
     var out = Surface.all.compactMap { surface -> Target? in
       guard let bundleID = surface.bundleID else { return nil }
       return Target(
         surface: surface.id,
         displayName: surface.displayName,
         windows: realWindows(content, bundleID: bundleID).count,
-        appRunning: running.contains(bundleID))
+        appRunning: running.contains(bundleID),
+        copies: copies(bundleID))
     }
     guard anyApp else { return out }
 
@@ -162,14 +191,42 @@ enum ScreenCapture {
       guard let bundleID = app.bundleIdentifier, !brokered.contains(bundleID) else { continue }
       let windows = realWindows(content, bundleID: bundleID).count
       guard windows > 0 else { continue }
+      // One row per application, its copies inside it: a second copy is
+      // listed once, under the first.
+      guard !out.contains(where: { $0.surface == bundleID }) else { continue }
       out.append(
         Target(
           surface: bundleID,
           displayName: app.localizedName ?? bundleID,
           windows: windows,
-          appRunning: true))
+          appRunning: true,
+          copies: copies(bundleID)))
     }
     return out
+  }
+
+  /// Which copy of an application to capture: `pid` when it is one of
+  /// `copies`, the only copy when there is one, and nil when none runs, which
+  /// the capture reports as it always has.
+  ///
+  /// A worktree's Debug build beside the person's own copy shares its bundle
+  /// id, and the largest window of the two was captured, whichever copy owned
+  /// it (Maquette's check, 2026-11-16). So several copies and no pid is a
+  /// refusal, never a guess: the other copy is the person's.
+  static func chooseCopy(of displayName: String, pid: pid_t?, copies: [pid_t]) throws -> pid_t? {
+    if let pid {
+      guard copies.contains(pid) else { throw Failure.notACopy(displayName, pid: pid) }
+      return pid
+    }
+    guard copies.count <= 1 else { throw Failure.severalCopies(displayName, pids: copies) }
+    return copies.first
+  }
+
+  /// The running copies of `bundleID`, asked of Launch Services, which a
+  /// process without a main run loop reads current.
+  static func copies(of bundleID: String) -> [pid_t] {
+    NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+      .filter { !$0.isTerminated }.map(\.processIdentifier).sorted()
   }
 
   // ─── capture ───────────────────────────────────────────────────────────────
@@ -180,13 +237,16 @@ enum ScreenCapture {
     let width: Int
     let height: Int
     let surface: String
+    /// The copy captured.
+    let pid: pid_t?
   }
 
-  static func capture(surface: Surface, into directory: URL?, overwrite: Bool) async throws -> Shot
-  {
+  static func capture(
+    surface: Surface, pid: pid_t? = nil, into directory: URL?, overwrite: Bool
+  ) async throws -> Shot {
     guard let bundleID = surface.bundleID else { throw Failure.notCapturable(surface.id) }
     return try await capture(
-      bundleID: bundleID, displayName: surface.displayName, label: surface.id,
+      bundleID: bundleID, displayName: surface.displayName, label: surface.id, pid: pid,
       into: directory, overwrite: overwrite)
   }
 
@@ -197,11 +257,18 @@ enum ScreenCapture {
   /// knows or cares whether the caller named a surface or an application. A
   /// second capture implementation for arbitrary apps is exactly the duplication
   /// this avoids.
+  ///
+  /// The copy is chosen before the window list is read, so a refusal for
+  /// several copies, or for a pid that is none of them, takes no picture.
   static func capture(
-    bundleID: String, displayName: String, label: String, into directory: URL?, overwrite: Bool
+    bundleID: String, displayName: String, label: String, pid: pid_t? = nil,
+    into directory: URL?, overwrite: Bool
   ) async throws -> Shot {
+    let copy = try chooseCopy(of: displayName, pid: pid, copies: copies(of: bundleID))
     let content = try await shareableContent()
-    let candidates = realWindows(content, bundleID: bundleID)
+    // By the copy whenever one runs, so a copy started between the two reads
+    // is not captured in its place.
+    let candidates = realWindows(content, bundleID: bundleID, pid: copy)
     guard
       let window = candidates.max(by: {
         $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height
@@ -234,10 +301,14 @@ enum ScreenCapture {
     // tool reports success and hands back an empty image.
     guard distinctColours(image) > 2 else { throw Failure.blank(displayName) }
 
-    let url = try destination(for: label, in: directory, overwrite: overwrite)
+    // Named by the pid when one was asked for, so the two copies captured in
+    // one second do not take each other's file name.
+    let url = try destination(
+      for: pid.map { "\(label)-\($0)" } ?? label, in: directory, overwrite: overwrite)
     guard let bytes = writePNG(image, to: url) else { throw Failure.writeFailed(url.path) }
     return Shot(
-      path: url.path, bytes: bytes, width: image.width, height: image.height, surface: label)
+      path: url.path, bytes: bytes, width: image.width, height: image.height, surface: label,
+      pid: copy)
   }
 
   // ─── destination ───────────────────────────────────────────────────────────

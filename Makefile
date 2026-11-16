@@ -352,6 +352,13 @@ background-type-live: ## Type into a TextEdit started behind, through this check
 SUPPORT_KIT ?= $(HOME)/Projects/swift-support-kit
 CHANNEL_FIXTURE := apps/apple/.build/channel-fixture/CupertinoChannelFixture.app
 CHANNEL_FIXTURE_PLAIN := apps/apple/.build/channel-fixture/plain/CupertinoChannelFixture.app
+# Since swift-support-kit 1.25.1 the channel imports SupportKitDrivingCatch, an
+# Objective-C target that stops an NSException raised by a command. SwiftPM
+# builds it; here it is one object per fixture, DEBUG for the one with a
+# channel, and a module map for its header. Absent before 1.25.1.
+CHANNEL_CATCH := $(SUPPORT_KIT)/Sources/SupportKitDrivingCatch
+CHANNEL_CATCH_BUILD := apps/apple/.build/channel-fixture/catch
+CHANNEL_CATCH_FLAGS = $(if $(wildcard $(CHANNEL_CATCH)),-I $(CHANNEL_CATCH_BUILD) $(CHANNEL_CATCH_BUILD)/$(1).o)
 
 channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; it never comes forward (by hand)
 	@# Not a gate: CI has no swift-support-kit checkout. It posts nothing to the
@@ -362,7 +369,16 @@ channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; i
 		exit 1; \
 	fi
 	@mkdir -p $(CHANNEL_FIXTURE)/Contents/MacOS
-	@swiftc -O -DDEBUG -swift-version 6 -parse-as-library \
+	@if [ -d "$(CHANNEL_CATCH)" ]; then \
+		mkdir -p $(CHANNEL_CATCH_BUILD) && \
+		printf 'module SupportKitDrivingCatch {\n  header "%s/include/SupportKitDrivingCatch.h"\n  export *\n}\n' \
+			"$(CHANNEL_CATCH)" > $(CHANNEL_CATCH_BUILD)/module.modulemap && \
+		clang -c -O -fobjc-arc -DDEBUG=1 -I "$(CHANNEL_CATCH)/include" \
+			-o $(CHANNEL_CATCH_BUILD)/debug.o "$(CHANNEL_CATCH)/SupportKitDrivingCatch.m" && \
+		clang -c -O -fobjc-arc -I "$(CHANNEL_CATCH)/include" \
+			-o $(CHANNEL_CATCH_BUILD)/plain.o "$(CHANNEL_CATCH)/SupportKitDrivingCatch.m"; \
+	fi
+	@swiftc -O -DDEBUG -swift-version 6 -parse-as-library $(call CHANNEL_CATCH_FLAGS,debug) \
 		-o $(CHANNEL_FIXTURE)/Contents/MacOS/CupertinoChannelFixture \
 		$(SUPPORT_KIT)/Sources/SupportKitDriving/*.swift scripts/channel-fixture.swift
 	@printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' \
@@ -378,7 +394,7 @@ channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; i
 	@# The same app built without DEBUG, so it opens no channel: what a launch
 	@# beside a running copy with channel: true must not leave running.
 	@mkdir -p $(CHANNEL_FIXTURE_PLAIN)/Contents/MacOS
-	@swiftc -O -swift-version 6 -parse-as-library \
+	@swiftc -O -swift-version 6 -parse-as-library $(call CHANNEL_CATCH_FLAGS,plain) \
 		-o $(CHANNEL_FIXTURE_PLAIN)/Contents/MacOS/CupertinoChannelFixture \
 		$(SUPPORT_KIT)/Sources/SupportKitDriving/*.swift scripts/channel-fixture.swift
 	@cp $(CHANNEL_FIXTURE)/Contents/Info.plist $(CHANNEL_FIXTURE_PLAIN)/Contents/Info.plist
@@ -387,6 +403,8 @@ channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; i
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessCalls.swift \
 		apps/apple/Cupertino/DesktopServer.swift \
+		apps/apple/Cupertino/ScreenServer.swift \
+		apps/apple/Cupertino/ScreenCapture.swift \
 		apps/apple/Cupertino/AppChannel.swift \
 		apps/apple/Cupertino/MailComposerText.swift \
 		apps/apple/Cupertino/MailComposer.swift \

@@ -35,9 +35,11 @@ struct Panel: View {
 }
 
 /// What a drag or a scroll delivered to it, read back through Accessibility.
+/// And the click count of the last press, which a double click carries.
 final class Probe: NSView {
   let dragLog = NSTextField(labelWithString: "no drag")
   let scrollLog = NSTextField(labelWithString: "no scroll")
+  let clickLog = NSTextField(labelWithString: "no click")
   private var steps = 0
   private var dx: CGFloat = 0
   private var dy: CGFloat = 0
@@ -48,6 +50,7 @@ final class Probe: NSView {
   override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
   private func down(_ event: NSEvent) {
+    clickLog.stringValue = "clickCount \(event.clickCount)"
     steps = 0
     dx = 0
     dy = 0
@@ -93,7 +96,16 @@ final class Fixture: NSObject, NSApplicationDelegate {
 
   func applicationDidFinishLaunching(_ note: Notification) {
     // A bare NSApplication has no main menu, and a shortcut is matched against it.
+    // Quit, so a ⌘Q through the channel ends the process before it answers.
     let main = NSMenu()
+    let appItem = NSMenuItem()
+    let appMenu = NSMenu(title: "Channel Fixture")
+    appMenu.addItem(
+      NSMenuItem(
+        title: "Quit Channel Fixture", action: #selector(NSApplication.terminate(_:)),
+        keyEquivalent: "q"))
+    appItem.submenu = appMenu
+    main.addItem(appItem)
     let editItem = NSMenuItem()
     let edit = NSMenu(title: "Edit")
     edit.addItem(
@@ -102,9 +114,13 @@ final class Fixture: NSObject, NSApplicationDelegate {
     main.addItem(editItem)
     NSApp.mainMenu = main
 
+    // The copy at `second/` is 40 points taller, so a capture says which copy
+    // it is of. Its controls sit where the first copy's do: the content is
+    // laid out from the bottom, which is where both windows start.
     let screen = NSScreen.main!.visibleFrame
+    let height: CGFloat = Bundle.main.bundlePath.contains("/second/") ? 340 : 300
     window = NSWindow(
-      contentRect: NSRect(x: screen.maxX - 380, y: screen.minY + 20, width: 360, height: 300),
+      contentRect: NSRect(x: screen.maxX - 380, y: screen.minY + 20, width: 360, height: height),
       styleMask: [.titled], backing: .buffered, defer: false)
     window.title = "channel fixture"
     window.isReleasedWhenClosed = false
@@ -138,6 +154,9 @@ final class Fixture: NSObject, NSApplicationDelegate {
     probe.scrollLog.frame = NSRect(x: 10, y: 212, width: 340, height: 18)
     probe.scrollLog.identifier = NSUserInterfaceItemIdentifier("scrollLog")
     content.addSubview(probe.scrollLog)
+    probe.clickLog.frame = NSRect(x: 250, y: 126, width: 100, height: 20)
+    probe.clickLog.identifier = NSUserInterfaceItemIdentifier("clickLog")
+    content.addSubview(probe.clickLog)
 
     window.orderFrontRegardless()
     driving = Driving.startIfRequested()

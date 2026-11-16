@@ -2765,19 +2765,39 @@ nonisolated enum AccessibilityDriver {
       timeIntervalSince1970: Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1e6)
   }
 
+  enum QuitOutcome: Equatable {
+    /// It is gone.
+    case quit
+    /// It was asked to quit and is still running.
+    case askedToQuit
+    /// It could not be vouched for as the process the launch started, so
+    /// nothing was sent to it.
+    case notConfirmed
+  }
+
   /// Quit a process `launch` just started, which holds nothing of the
-  /// person's yet: asked first, then forced after two seconds. Whether it is
-  /// gone. Only for one `startedByLaunch` vouched for.
-  static func quitLaunched(_ pid: pid_t) -> Bool {
-    guard let app = NSRunningApplication(processIdentifier: pid) else { return true }
+  /// person's yet: asked first, then forced after two seconds.
+  ///
+  /// `vouches` (`startedByLaunch`) is asked again just before each of the
+  /// two, not only when the launch answered: the channel's wait runs between
+  /// the two, and a copy that died in it could have left its pid to a process
+  /// the person owns. A wrong quit is the worst this surface can do.
+  static func quitLaunched(
+    _ launched: Launched, vouches: (Launched) -> Bool = startedByLaunch
+  ) -> QuitOutcome {
+    guard let pid = launched.pid, vouches(launched) else { return .notConfirmed }
+    guard let app = NSRunningApplication(processIdentifier: pid) else {
+      return AppChannel.isRunning(pid) ? .notConfirmed : .quit
+    }
     app.terminate()
     let deadline = Date().addingTimeInterval(2)
-    while !app.isTerminated && kill(pid, 0) == 0 && Date() < deadline { usleep(50_000) }
-    if !app.isTerminated && kill(pid, 0) == 0 {
+    while !app.isTerminated && AppChannel.isRunning(pid) && Date() < deadline { usleep(50_000) }
+    if !app.isTerminated && AppChannel.isRunning(pid) {
+      guard vouches(launched) else { return .askedToQuit }
       app.forceTerminate()
       usleep(200_000)
     }
-    return kill(pid, 0) != 0
+    return AppChannel.isRunning(pid) ? .askedToQuit : .quit
   }
 
   /// How long a launched application that answers with no window is given to
@@ -3131,24 +3151,40 @@ nonisolated enum AccessibilityDriver {
         + "wait for them to answer it.")
   }
 
+  /// The presses and releases of `count` clicks in a row at `point`, each pair
+  /// carrying its place in the run as its click state: 1, then 2 for a double
+  /// click, 3 for a triple. That field, not the timing, is what an application
+  /// reads as `NSEvent.clickCount`.
+  ///
+  /// All built before any is posted, so a failure to synthesise one cannot
+  /// leave the button held down — the property `drag` states below.
+  static func clickEvents(
+    at point: CGPoint, button: MouseButton, count: Int, source: CGEventSource? = nil
+  ) throws -> [CGEvent] {
+    let kind = button.events
+    return try (1...max(1, count)).flatMap { n -> [CGEvent] in
+      let pair = [
+        try mouseEvent(kind.down, at: point, from: source, doing: "a click", button: kind.button),
+        try mouseEvent(kind.up, at: point, from: source, doing: "a click", button: kind.button),
+      ]
+      for event in pair { event.setIntegerValueField(.mouseEventClickState, value: Int64(n)) }
+      return pair
+    }
+  }
+
+  /// `count` is 1 to 3, which `apple_desktop_click` checks before this.
   static func click(
-    x: Double, y: Double, button: MouseButton = .left, scope: Scope,
+    x: Double, y: Double, button: MouseButton = .left, count: Int = 1, scope: Scope,
     announcing target: String? = nil
   ) throws {
     try refuseUnderShellPanel(CGPoint(x: x, y: y))
     guard isTrusted() else { throw Failure.notTrusted }
-    let point = CGPoint(x: x, y: y)
-    let source = CGEventSource(stateID: .hidSystemState)
-    let kind = button.events
-    // Both built before either is posted, so a failure to synthesise the second
-    // cannot leave the button held down — the property `drag` states below.
-    let down = try mouseEvent(
-      kind.down, at: point, from: source, doing: "a click", button: kind.button)
-    let up = try mouseEvent(kind.up, at: point, from: source, doing: "a click", button: kind.button)
+    let events = try clickEvents(
+      at: CGPoint(x: x, y: y), button: button, count: count,
+      source: CGEventSource(stateID: .hidSystemState))
     try announceSessionInput(target, scope: scope)
     DrivingOverlay.postingPointer {
-      down.post(tap: .cghidEventTap)
-      up.post(tap: .cghidEventTap)
+      for event in events { event.post(tap: .cghidEventTap) }
     }
     DriveActivity.postedInput()
   }
@@ -3408,6 +3444,138 @@ nonisolated enum AccessibilityDriver {
           ?? false)
     } while verdict != .landed(verified: true) && Date() < deadline
     return (verdict, before)
+  }
+
+  // ─── a field in a window another process draws ─────────────────────────────
+
+  /// The process the window server says owns the window `element` is drawn
+  /// in, or nil when either cannot be read.
+  ///
+  /// Asked of the whole list: the panel service's window behind a sandboxed
+  /// app's open panel is off screen to the window server, and a lookup of that
+  /// one window number (`.optionIncludingWindow`) answered nothing for it
+  /// (MEASURED 2026-11-16 on TextEdit's Open panel).
+  static func windowOwner(of element: AXUIElement) -> pid_t? {
+    guard let number = windowNumber(of: element),
+      let info = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]],
+      let window = info.first(where: {
+        ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == number
+      })
+    else { return nil }
+    return (window[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value
+  }
+
+  /// Whether a handle's element is in a window its process does not own: an
+  /// open or save panel of a sandboxed app, which the panel service draws.
+  /// See `DrivingPolicy.inForeignWindow`. A store read and one window list,
+  /// with no round trip to the application.
+  static func inForeignWindow(handle: String, scope: Scope) throws -> Bool {
+    let entry = try resolveEntry(handle, scope: scope)
+    return DrivingPolicy.inForeignWindow(
+      windowOwner: windowOwner(of: entry.element), process: process(of: entry.element))
+  }
+
+  /// Type into a field by writing its value, for a field no key reaches: one
+  /// in a window another process draws (`inForeignWindow`). The text goes
+  /// where typing would have put it, over the selection or at the caret
+  /// (`BackgroundTyping.inserting`), the caret is put after it, and the field
+  /// is read back.
+  ///
+  /// Nothing is posted, so nothing can land in another field: keys posted to
+  /// the app's pid go to its own first responder, which is not this field,
+  /// and the driving channel delivers to the app's own windows only. Measured
+  /// in Maquette's check (2026-11-16): `set_value` on its Open panel's Search
+  /// field, then a press on the field's search button, found the fixture.
+  ///
+  /// Admitted as background behind the person's app, as the background type
+  /// is; in front, with the countdown.
+  static func typeByValue(text: String, handle: String, scope: Scope) throws -> (
+    verified: Bool, value: String?
+  ) {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let entry = try resolveEntry(handle, scope: scope)
+    let field = entry.element
+    // An empty field answers no value at all, an open panel's Search field
+    // among them (MEASURED 2026-11-16, TextEdit), so a text role is enough,
+    // with no value read as empty. A secure one is not: it reads back nothing
+    // whatever it holds.
+    let role = copy(field, kAXRoleAttribute as String) as? String
+    let current = copy(field, kAXValueAttribute as String)
+    guard let role, textRoles.contains(role),
+      BackgroundTyping.eligible(
+        role: role, subrole: copy(field, kAXSubroleAttribute as String) as? String,
+        value: current ?? "")
+    else {
+      throw Failure.refused(
+        "That element is in a window its application does not draw, an open or save panel, "
+          + "which no driving channel or posted key reaches, and it is not a text field whose "
+          + "value can be read back, so nothing was typed. Set it with apple_desktop_set_value, "
+          + "or ask the person.")
+    }
+    guard isSettable(field, kAXValueAttribute) else {
+      throw Failure.refused(
+        "That field is in a window its application does not draw, an open or save panel, which "
+          + "no driving channel or posted key reaches, and its value is not settable, so nothing "
+          + "was typed.")
+    }
+    let pid = process(of: field)
+    try DrivingSession.admit(
+      entry.bundleId,
+      background: pid.map { DrivingPolicy.isBackground(target: $0, frontmost: frontmostPid()) }
+        ?? false)
+    DriveActivity.record(entry.bundleId)
+    if isSettable(field, kAXFocusedAttribute) {
+      _ = AXUIElementSetAttributeValue(field, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+    }
+    // Read after the focus, which can select the whole field.
+    let before = copy(field, kAXValueAttribute as String) as? String ?? ""
+    let selection = selectedRange(field)
+    let wanted = BackgroundTyping.inserting(
+      text, into: before, at: selection.map { (location: $0.location, length: $0.length) })
+    let err = AXUIElementSetAttributeValue(
+      field, kAXValueAttribute as CFString, wanted as CFTypeRef)
+    if let problem = failure(
+      for: err, doing: "Typing into '\(handle)'", handle: handle, wrote: true)
+    {
+      throw problem
+    }
+    if let selection {
+      var caret = CFRange(location: selection.location + text.utf16.count, length: 0)
+      if let range = AXValueCreate(.cfRange, &caret) {
+        _ = AXUIElementSetAttributeValue(
+          field, kAXSelectedTextRangeAttribute as CFString, range)
+      }
+    }
+    let after = copy(field, kAXValueAttribute as String)
+    return (valueConfirms(written: wanted, readBack: after), after as? String)
+  }
+
+  /// Perform `action` (`AXConfirm`, `AXCancel`) on a handle's element, the
+  /// key a field in a window another process draws cannot be sent. Refused
+  /// when the element does not offer it, naming what it does offer.
+  static func performKeyAction(_ action: String, key: String, handle: String, scope: Scope)
+    throws
+  {
+    guard isTrusted() else { throw Failure.notTrusted }
+    let entry = try resolveEntry(handle, scope: scope)
+    let offered = actions(entry.element)
+    guard offered.contains(action) else {
+      throw Failure.refused(
+        "That field is in a window its application does not draw, an open or save panel, which "
+          + "no driving channel or posted key reaches, and it offers no \(action) for \(key) "
+          + "(it offers \(offered.isEmpty ? "nothing" : offered.joined(separator: ", "))), so "
+          + "nothing was sent. Press the panel's own button by handle instead.")
+    }
+    let pid = process(of: entry.element)
+    try DrivingSession.admit(
+      entry.bundleId,
+      background: pid.map { DrivingPolicy.isBackground(target: $0, frontmost: frontmostPid()) }
+        ?? false)
+    DriveActivity.record(entry.bundleId)
+    let err = AXUIElementPerformAction(entry.element, action as CFString)
+    if let problem = failure(for: err, doing: "\(action) on '\(handle)'", handle: handle) {
+      throw problem
+    }
   }
 
   /// A field's selected range as (location, length), or nil when unreadable.

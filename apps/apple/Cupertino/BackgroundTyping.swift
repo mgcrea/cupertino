@@ -52,6 +52,32 @@ nonisolated enum BackgroundTyping {
     return subrole != "AXSecureTextField"
   }
 
+  /// What a field holds once `text` is typed into `value` with `range`
+  /// selected: the selection replaced, or the text at the caret when the
+  /// selection is empty. For a field no key reaches, which is written by value
+  /// instead (`AccessibilityDriver.typeByValue`).
+  ///
+  /// `range` is in UTF-16 units, as Accessibility's `AXSelectedTextRange` is.
+  /// Nil, unreadable, is the end of the field. A range past the end is clamped
+  /// to it, and an end that falls inside a character moves past it, so a
+  /// stale range never traps or splits an emoji.
+  static func inserting(
+    _ text: String, into value: String, at range: (location: Int, length: Int)?
+  ) -> String {
+    guard let range else { return value + text }
+    let units = value.utf16
+    func index(_ offset: Int) -> String.Index {
+      let clamped = min(max(0, offset), units.count)
+      // Rounded up to the next character boundary; the end is always one.
+      var at = units.index(units.startIndex, offsetBy: clamped)
+      while String.Index(at, within: value) == nil { at = units.index(after: at) }
+      return at
+    }
+    let start = index(range.location)
+    let end = max(start, index(range.location + max(0, range.length)))
+    return String(value[..<start]) + text + String(value[end...])
+  }
+
   /// Non-overlapping, so "abcabc" holds "abc" twice and "aaa" holds "aa" once.
   private static func occurrences(of needle: String, in haystack: String) -> Int {
     var count = 0

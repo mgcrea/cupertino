@@ -333,6 +333,47 @@ struct ChannelCheck {
       hovered["lane"] as? String == "channel"
         && (hovered["note"] as? String ?? "").contains("hover is not yet measured"))
 
+    print("\na double click, and typing by value")
+    // A double click was two click steps in one run (Maquette, 2026-11-16).
+    let clickLog = { text(find(window, "clickLog")) }
+    for count in [2, 3, 1] {
+      var args: [String: Any] = ["x": p.x, "y": p.y, "bundleId": fixture]
+      if count > 1 { args["count"] = count }
+      let clicked = call("apple_desktop_click", args)
+      print("       count \(count): \(clicked), read back: \(clickLog())")
+      check(
+        "a click of count \(count) goes through the channel and its last press counts \(count)",
+        clicked["lane"] as? String == "channel" && clicked["isError"] == nil
+          && (count == 1 ? clicked["count"] == nil : clicked["count"] as? Int == count)
+          && clickLog() == "clickCount \(count)")
+    }
+    // The fixture is unsandboxed, so it has no open panel drawn by another
+    // process, and the foreign side is pinned by `unit` and `desktop-check`.
+    // What is measured here: a field in the app's own window is told apart
+    // as its own, keeps the lanes it had, and the lane by value types where
+    // typing would.
+    let fieldFound = call("apple_desktop_find_elements", ["bundleId": fixture, "id": "nsField"])
+    let fieldHandle = (fieldFound["elements"] as? [[String: Any]])?.first?["handle"] as? String
+    check(
+      "the window server says the app draws its own field's window",
+      AccessibilityDriver.windowOwner(of: nsField) == app.processIdentifier)
+    check(
+      "so a field in its own window is not taken for one in a window it does not draw",
+      fieldHandle.flatMap { try? AccessibilityDriver.inForeignWindow(handle: $0, scope: .any) }
+        == false)
+    let ownField = call("apple_desktop_type", ["handle": fieldHandle ?? "", "text": "d"])
+    print("       type by its handle: \(ownField)")
+    check(
+      "and it is typed as before, keys posted to the app, not by value",
+      ownField["lane"] as? String == "background")
+    let byValue = fieldHandle.flatMap {
+      try? AccessibilityDriver.typeByValue(text: "xyz", handle: $0, scope: .any)
+    }
+    print("       by value: \(String(describing: byValue))")
+    check(
+      "typed by value, the text goes where typing puts it, and reads back",
+      byValue?.verified == true && (byValue?.value ?? "").contains("xyz"))
+
     print("\ntwo copies, each by its pid")
     // A second copy at a second path, as a worktree's Debug build sits beside
     // the main checkout's.
@@ -482,6 +523,85 @@ struct ChannelCheck {
       "a middle-button drag from one copy onto the other is refused, blaming the drop",
       acrossCopies["isError"] as? Bool == true
         && (acrossCopies["text"] as? String ?? "").contains("another copy"))
+
+    print("\ncapturing one of two copies")
+    // The screen surface listed both copies under one name and captured the
+    // larger window of the two, whichever copy drew it (Maquette, 2026-11-16).
+    // The second copy's window is 40 points taller, so a picture says whose it
+    // is. Written into a folder of its own in ~/Downloads, the only place a
+    // capture may go, and removed afterwards.
+    if !CGPreflightScreenCaptureAccess() {
+      print("  SKIP capturing by pid: this process has no Screen Recording grant")
+    } else {
+      let screen = Surface.named("screen")!
+      func screenCall(_ name: String, _ args: [String: Any]) -> [String: Any] {
+        let message: [String: Any] = [
+          "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+          "params": ["name": name, "arguments": args],
+        ]
+        let line = String(
+          data: try! JSONSerialization.data(withJSONObject: message), encoding: .utf8)!
+        guard
+          let reply = ScreenServer.handle(
+            line, surface: screen, captureAllowed: true, anyAppAllowed: true,
+            targetEnabled: { _ in true }),
+          let object = try? JSONSerialization.jsonObject(with: Data(reply.utf8)) as? [String: Any],
+          let result = object["result"] as? [String: Any],
+          let text = (result["content"] as? [[String: Any]])?.first?["text"] as? String
+        else { return ["error": "no reply"] }
+        var body =
+          (try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]) ?? [
+            "text": text
+          ]
+        if result["isError"] as? Bool == true { body["isError"] = true }
+        return body
+      }
+      let shots = ScreenCapture.root.appendingPathComponent("cupertino-channel-check-\(getpid())")
+      try? FileManager.default.createDirectory(at: shots, withIntermediateDirectories: true)
+      let targets = screenCall("apple_screen_list_targets", [:])["targets"] as? [[String: Any]]
+      let row = targets?.filter { $0["surface"] as? String == fixture } ?? []
+      let listedPids = Set(
+        (row.first?["copies"] as? [[String: Any]] ?? []).compactMap { $0["pid"] as? Int })
+      check(
+        "the target list names the app once, with each copy's pid",
+        row.count == 1 && listedPids == [firstPid, secondPid])
+      let unnamed = screenCall(
+        "apple_screen_capture_surface", ["surface": fixture, "directory": shots.path])
+      let unnamedText = unnamed["text"] as? String ?? ""
+      print("       by bundle id alone: \(unnamedText)")
+      check(
+        "a capture by bundle id alone is refused while both run, listing both",
+        unnamed["isError"] as? Bool == true && unnamedText.contains("\(firstPid)")
+          && unnamedText.contains("\(secondPid)") && unnamedText.contains("'pid'"))
+      func height(_ window: AXUIElement?) -> Double {
+        var size = CGSize.zero
+        if let window, let s = attr(window, kAXSizeAttribute) {
+          AXValueGetValue(s as! AXValue, .cgSize, &size)
+        }
+        return Double(size.height)
+      }
+      let scale = Double(NSScreen.main?.backingScaleFactor ?? 2)
+      let firstHeight = height(window) * scale
+      let secondHeight = height(secondWindow) * scale
+      for (pid, own, other, label) in [
+        (secondPid, secondHeight, firstHeight, "second"),
+        (firstPid, firstHeight, secondHeight, "first"),
+      ] {
+        let shot = screenCall(
+          "apple_screen_capture_surface",
+          ["surface": fixture, "pid": pid, "directory": shots.path])
+        let shotHeight = Double(shot["height"] as? Int ?? 0)
+        print(
+          "       the \(label) copy by pid: \(shot["path"] ?? shot), \(Int(shotHeight)) px high, "
+            + "its window \(Int(own)), the other's \(Int(other))")
+        check(
+          "a capture by the \(label) copy's pid is of that copy's window, never the other's",
+          shot["pid"] as? Int == pid && abs(shotHeight - own) <= 2 && abs(shotHeight - other) > 2
+            && FileManager.default.fileExists(atPath: shot["path"] as? String ?? ""))
+      }
+      try? FileManager.default.removeItem(at: shots)
+    }
+
     // The same app built without DEBUG: it opens no channel, so the copy
     // started beside the others is quit again.
     let plainPath =
@@ -498,6 +618,23 @@ struct ChannelCheck {
           .filter { !$0.isTerminated }.count == 2
     )
     check("neither copy became active", !app.isActive && second?.isActive != true)
+
+    print("\na key that quits the app")
+    // ⌘Q through the channel ends the process before it can answer, and that
+    // was reported as an app busy on its main thread (Maquette, 2026-11-16).
+    let quitStarted = Date()
+    let quitAnswer = call(
+      "apple_desktop_key", ["pid": secondPid, "key": "q", "modifiers": ["command"]])
+    let quitSeconds = Date().timeIntervalSince(quitStarted)
+    print("       ⌘Q to the second copy: \(quitAnswer), \(String(format: "%.2f", quitSeconds)) s")
+    check(
+      "⌘Q through the channel answers that the application quit, not that it was busy",
+      quitAnswer["isError"] == nil && quitAnswer["lane"] as? String == "channel"
+        && quitAnswer["quit"] as? Bool == true
+        && (quitAnswer["note"] as? String ?? "").contains("\(secondPid)"))
+    check(
+      "and the second copy is gone, the first still running",
+      !AppChannel.isRunning(pid_t(secondPid)) && !app.isTerminated)
 
     print("\nand the person's Mac")
     check("the fixture never became active", !app.isActive)

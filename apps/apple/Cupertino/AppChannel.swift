@@ -153,6 +153,43 @@ nonisolated struct AppChannel {
     return fields
   }
 
+  // ─── why a launch found no channel ─────────────────────────────────────────
+
+  /// Whether `bundleId`'s container temporary directory, where a sandboxed
+  /// app opens its channel, can be read by this process.
+  enum ContainerAccess: Equatable {
+    /// It has none: the app is not sandboxed, or never ran.
+    case none
+    case readable
+    /// macOS refused it: Cupertino has no Full Disk Access.
+    case refused
+  }
+
+  static let containers = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Containers")
+
+  /// Asked only once a launch found no channel, of the directory `find`
+  /// already tried to read, so it reaches nothing a channel lookup does not.
+  static func containerAccess(bundleId: String, containers: URL = containers) -> ContainerAccess {
+    let tmp = containers.appendingPathComponent("\(bundleId)/Data/tmp")
+    guard opendir(tmp.path).map({ closedir($0) }) == nil else { return .readable }
+    switch errno {
+    case EPERM, EACCES: return .refused
+    default: return .none
+    }
+  }
+
+  /// Whether `pid` is a live process: a zombie is not, nor one this process
+  /// may signal but nothing runs as. EPERM is a live process another user
+  /// owns.
+  static func isRunning(_ pid: pid_t) -> Bool {
+    guard pid > 0, kill(pid, 0) == 0 || errno == EPERM else { return false }
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return true }
+    return info.pbi_status != UInt32(SZOMB)
+  }
+
   /// How far from the main display's origin a point may be: swift-support-kit
   /// 1.25.0 refuses past it, and an app built before then could trap where it
   /// makes such a point a whole number, so none is sent to either.
@@ -308,9 +345,7 @@ nonisolated struct AppChannel {
 
     let verb = command["verb"] as? String ?? "command"
     let events = directory.appendingPathComponent("events.jsonl")
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
-      usleep(10_000)
+    func answer() throws -> [String: Any]? {
       for raw in line.tail.read(events) {
         guard let event = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
           (event["seq"] as? NSNumber)?.intValue == seq
@@ -321,6 +356,30 @@ nonisolated struct AppChannel {
         }
         return event
       }
+      return nil
+    }
+    // A command that quits the app, ⌘Q or a Quit button, ends the process
+    // before it can answer. That was reported as an app busy on its main
+    // thread (Maquette's check, 2026-11-16), so the process is watched too, and
+    // its end is the answer. An app that crashed on the command reads the same;
+    // `quit` says only that the process is gone.
+    let quit: [String: Any] = [
+      "kind": "quit",
+      "note":
+        "The application quit before it answered the \(verb): pid \(pid) is no longer running.",
+    ]
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      usleep(10_000)
+      if let event = try answer() { return event }
+      if !Self.isRunning(pid) { return try answer() ?? quit }
+    }
+    // Quitting can take a moment past the ack window, a document app closing
+    // its windows: a second more, watching only for the end.
+    let grace = Date().addingTimeInterval(1)
+    while Date() < grace {
+      if !Self.isRunning(pid) { return try answer() ?? quit }
+      usleep(20_000)
     }
     throw AccessibilityDriver.Failure.refused(
       "The application did not answer the \(verb) within \(Int(timeout)) s. It may be busy on its "

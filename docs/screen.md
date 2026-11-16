@@ -165,7 +165,7 @@ surface list is the ask; `allowCapture` is a second, narrower one.
 
 | Tool                           | Gated                              | Notes                                                     |
 | ------------------------------ | ---------------------------------- | --------------------------------------------------------- |
-| `apple_screen_list_targets`    | no                                 | Capturable surfaces and window counts. Never titles.      |
+| `apple_screen_list_targets`    | no                                 | Surfaces, window counts, each copy's pid. Never titles.   |
 | `apple_screen_diagnostics`     | no                                 | Answers with no grant at all, like every other surface's. |
 | `apple_screen_capture_surface` | **`allowCapture`, off by default** | Writes a PNG, returns a path.                             |
 
@@ -191,6 +191,20 @@ surface: "mail"      → Screen Recording is not granted to Cupertino. …
 
 No display capture and no region capture. Those are the general-vision feature, and shipping them
 means the allowlist never existed; widening later is deleting a check.
+
+**One of two copies, by pid (2026-11-16).** A check of one of our apps runs the worktree's Debug
+build beside the person's own copy, under one bundle id. `list_targets` listed the app once per
+running copy, both rows under the same name, and the capture took the larger window of the two,
+whichever copy drew it, so Maquette's check could take no capture at all. Now `list_targets`
+lists each application once, with `copies`: each running copy's `pid` and capturable windows.
+`capture_surface` takes `pid`. With several copies running and none named, nothing is captured
+and the refusal lists the pids: the other copy may be the person's, and a guess would photograph
+their work. A pid that is none of the copies is refused too. The copy is chosen from Launch
+Services before the window list is read, and the windows are filtered by their owning process.
+A capture by pid puts the pid in its file name, so two copies captured in one second do not take
+each other's, and answers with the `pid` it captured. `make channel-check` captures each of two
+fixture copies by pid, the second's window 40 points taller, and each picture is its own copy's
+height. See [desktop.md](desktop.md), "What Maquette's check found".
 
 ### Two things the implementation had to get right
 

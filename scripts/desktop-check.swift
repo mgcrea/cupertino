@@ -1987,6 +1987,183 @@ struct DesktopCheck {
       lines(tail.read(eventsFile)) == ["{\"d\":4}"])
     try? FileManager.default.removeItem(at: eventsFile)
 
+    print("\ndriving our own apps: what Maquette's check found, 2026-11-16")
+    // A double click was two click steps in one run, and a step's "count" was
+    // dropped without a word.
+    let clickProperties =
+      (anySchemas["apple_desktop_click"]?["properties"] as? [String: Any]) ?? [:]
+    let countProperty = clickProperties["count"] as? [String: Any]
+    check(
+      "click declares 'count', 1 to 3",
+      countProperty?["type"] as? String == "integer"
+        && countProperty?["minimum"] as? Int == 1 && countProperty?["maximum"] as? Int == 3)
+    for bad in [0, 4, 2.5, "2", true] as [Any] {
+      let (text, failed) = callText(
+        "apple_desktop_click", ["x": 1, "y": 1, "count": bad, "bundleId": "io.example.absent"],
+        writes: true, anyApp: true)
+      check(
+        "a click count of \(bad) is refused before anything is looked up",
+        failed && text.contains("'count'") && text.contains("1, 2 or 3"))
+    }
+    let (rightDouble, rightDoubleFailed) = callText(
+      "apple_desktop_click",
+      ["x": 1, "y": 1, "count": 2, "button": "right", "bundleId": "io.example.absent"],
+      writes: true, anyApp: true)
+    check(
+      "a right double click is refused: a count is the left button's",
+      rightDoubleFailed && rightDouble.contains("left"))
+    let (countStep, countStepFailed) = runText([
+      ["tool": "wait", "ms": 0],
+      ["tool": "click", "x": 1, "y": 1, "count": 5, "bundleId": "io.example.absent"],
+    ])
+    check(
+      "a click step with a count past 3 is refused before step 1 runs",
+      countStepFailed && countStep.contains("Step 2") && countStep.contains("Nothing was run"))
+    // On the session lane each press of a double click carries its place in
+    // the run, which is how the window server tells a double click from two
+    // clicks. Built, never posted.
+    let events =
+      (try? AccessibilityDriver.clickEvents(
+        at: CGPoint(x: 5, y: 5), button: .left, count: 3)) ?? []
+    check(
+      "a triple click is three presses and releases, counting 1, 2, 3",
+      events.map(\.type) == [
+        .leftMouseDown, .leftMouseUp, .leftMouseDown, .leftMouseUp, .leftMouseDown, .leftMouseUp,
+      ]
+        && events.map { $0.getIntegerValueField(.mouseEventClickState) } == [1, 1, 2, 2, 3, 3])
+    let single =
+      (try? AccessibilityDriver.clickEvents(
+        at: CGPoint(x: 5, y: 5), button: .right, count: 1)) ?? []
+    check(
+      "and a single click is one, as before",
+      single.map(\.type) == [.rightMouseDown, .rightMouseUp]
+        && single.map { $0.getIntegerValueField(.mouseEventClickState) } == [1, 1])
+
+    // A ⌘Q through a channel quits the app before it can answer, and that was
+    // reported as an app busy on its main thread. A process that ends while
+    // its command is waited on is said to have quit.
+    let quitting = Process()
+    quitting.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    quitting.arguments = ["0.6"]
+    try? quitting.run()
+    let quitDir = channels.appendingPathComponent("quit")
+    try? FileManager.default.createDirectory(at: quitDir, withIntermediateDirectories: true)
+    try? "{\"kind\":\"ready\",\"pid\":\(quitting.processIdentifier),\"version\":2}\n".write(
+      to: quitDir.appendingPathComponent("events.jsonl"), atomically: true, encoding: .utf8)
+    FileManager.default.createFile(
+      atPath: quitDir.appendingPathComponent("commands.jsonl").path, contents: nil)
+    let quitChannel = AppChannel.find(pid: quitting.processIdentifier, in: [quitDir])
+    var quitAnswer: [String: Any]?
+    var quitRefusal = ""
+    let quitStarted = Date()
+    do {
+      quitAnswer = try quitChannel?.send(["verb": "key", "key": "q", "modifiers": ["command"]])
+    } catch {
+      quitRefusal = error.localizedDescription
+    }
+    let quitSeconds = Date().timeIntervalSince(quitStarted)
+    print(
+      "       quit: \(quitAnswer ?? [:]) \(quitRefusal), \(String(format: "%.2f", quitSeconds)) s")
+    check(
+      "a command whose app quits before it answers says the application quit",
+      quitChannel != nil && quitAnswer?["kind"] as? String == "quit"
+        && (quitAnswer?["note"] as? String ?? "").contains("quit")
+        && (quitAnswer?["note"] as? String ?? "").contains("\(quitting.processIdentifier)")
+        && quitRefusal.isEmpty)
+    check("and says so once it has, not at the deadline", quitSeconds < AppChannel.ackTimeout)
+    // A live process that never answers is still the timeout it was.
+    let silentDir = channels.appendingPathComponent("silent")
+    try? FileManager.default.createDirectory(at: silentDir, withIntermediateDirectories: true)
+    try? "{\"kind\":\"ready\",\"pid\":\(getpid()),\"version\":2}\n".write(
+      to: silentDir.appendingPathComponent("events.jsonl"), atomically: true, encoding: .utf8)
+    FileManager.default.createFile(
+      atPath: silentDir.appendingPathComponent("commands.jsonl").path, contents: nil)
+    var silentRefusal = ""
+    do {
+      _ = try AppChannel.find(pid: getpid(), in: [silentDir])?.send(
+        ["verb": "key", "key": "q", "modifiers": ["command"]], timeout: 0.3)
+    } catch {
+      silentRefusal = error.localizedDescription
+    }
+    check(
+      "while a process that is still running and silent is a refusal naming the wait",
+      silentRefusal.contains("did not answer") && !silentRefusal.contains("quit"))
+    try? FileManager.default.removeItem(at: channels)
+
+    // A key into a field no channel and no posted key reaches, an open
+    // panel's: only what the field's own actions do is done.
+    check(
+      "return and escape into such a field are its confirm and cancel actions",
+      DesktopServer.foreignKeyAction(key: "return", modifiers: []) == "AXConfirm"
+        && DesktopServer.foreignKeyAction(key: "enter", modifiers: []) == "AXConfirm"
+        && DesktopServer.foreignKeyAction(key: "escape", modifiers: []) == "AXCancel"
+        && DesktopServer.foreignKeyAction(key: "Esc", modifiers: []) == "AXCancel")
+    check(
+      "and nothing else, nor a key held with a modifier",
+      DesktopServer.foreignKeyAction(key: "tab", modifiers: []) == nil
+        && DesktopServer.foreignKeyAction(key: "a", modifiers: []) == nil
+        && DesktopServer.foreignKeyAction(key: "return", modifiers: ["command"]) == nil)
+
+    // A launch that opened no channel says why: the copy is not the one the
+    // launch started, or its container cannot be read. Both used to be
+    // reported as an app without SupportKitDriving.
+    let unconfirmed = DesktopServer.noChannelReason(
+      bundleId: "io.example.app", pid: 4512, confirmed: false, container: .readable)
+    let unreadable = DesktopServer.noChannelReason(
+      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .refused)
+    let unlinked = DesktopServer.noChannelReason(
+      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .readable)
+    let unsandboxed = DesktopServer.noChannelReason(
+      bundleId: "io.example.app", pid: 4512, confirmed: true, container: .none)
+    check(
+      "a copy the launch cannot vouch for is named as that, not as a build without a channel",
+      unconfirmed.contains("could not confirm") && unconfirmed.contains("4512")
+        && !unconfirmed.contains("SupportKitDriving"))
+    check(
+      "a container Cupertino may not read names Full Disk Access",
+      unreadable.contains("Full Disk Access") && unreadable.contains("io.example.app")
+        && !unreadable.contains("SupportKitDriving"))
+    check(
+      "and only otherwise is it a build without SupportKitDriving",
+      unlinked.contains("SupportKitDriving") && unsandboxed.contains("SupportKitDriving"))
+    let containers = FileManager.default.temporaryDirectory
+      .appendingPathComponent("desktop-check-containers-\(UUID().uuidString)")
+    let containerTmp = containers.appendingPathComponent("io.example.app/Data/tmp")
+    check(
+      "an app with no container has none to read",
+      AppChannel.containerAccess(bundleId: "io.example.app", containers: containers) == .none)
+    try? FileManager.default.createDirectory(at: containerTmp, withIntermediateDirectories: true)
+    check(
+      "one whose container reads is readable",
+      AppChannel.containerAccess(bundleId: "io.example.app", containers: containers) == .readable)
+    chmod(containerTmp.path, 0)
+    check(
+      "and one whose container is refused is refused",
+      AppChannel.containerAccess(bundleId: "io.example.app", containers: containers) == .refused)
+    chmod(containerTmp.path, 0o755)
+    try? FileManager.default.removeItem(at: containers)
+
+    // The copy a launch would quit is checked again just before it is asked
+    // to: started an hour after this process, it is not the one this launch
+    // started, so nothing is quit.
+    let bystander = Process()
+    bystander.executableURL = URL(fileURLWithPath: "/bin/sleep")
+    bystander.arguments = ["20"]
+    try? bystander.run()
+    var notOurs = AccessibilityDriver.Launched(launched: true)
+    notOurs.pid = bystander.processIdentifier
+    notOurs.launchStarted = Date().addingTimeInterval(3600)
+    notOurs.openedPath = "/w/Example.app"
+    var vouched = 0
+    let outcome = AccessibilityDriver.quitLaunched(notOurs) { launched in
+      vouched += 1
+      return AccessibilityDriver.startedByLaunch(launched)
+    }
+    check(
+      "a launched copy is checked again before it is quit, and one that fails is left alone",
+      outcome == .notConfirmed && vouched == 1 && bystander.isRunning)
+    bystander.terminate()
+
     // ─── set_value reads back what it wrote ─────────────────────────────────
     // The read-back trimmed, dropped an empty string and read only strings, so
     // clearing a field, a trailing space, a slider and a checkbox all reported

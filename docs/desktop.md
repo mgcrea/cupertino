@@ -1487,8 +1487,10 @@ The already-running check asks Launch Services
 `NSWorkspace.runningApplications`. That list is kept current by the main run loop, and a
 process without one missed a copy started a moment earlier and launched it a second time.
 
-Click (left only), drag (within the app), hover, scroll, key (when every modifier has a menu
-meaning) and type with that `bundleId`, or its `pid`, then go through the channel. They answer
+Click (left only, a double or triple by `count`), drag (within the app), hover, scroll, key (when
+every modifier has a menu meaning) and type with that `bundleId`, or its `pid`, then go through
+the channel. A `type` or `key` whose handle is in a window the app does not draw, an open or save
+panel, does not: it goes by Accessibility (below, "What Maquette's check found"). They answer
 `lane: "channel"` with the `pid` they reached, what the app hit, what holds its focus, and the
 app's own `note` when it has one. Nothing is brought forward or checked against the window
 server's stacking: the app hit-tests its own windows, so a covered window still takes the click.
@@ -1517,22 +1519,31 @@ two defects, both fixed in swift-support-kit before this was written:
   then validated against the window's first responder.
 
 `channel-check` is not a gate, because CI has no swift-support-kit checkout. Set `SUPPORT_KIT` to
-one (it defaults to `~/Projects/swift-support-kit`).
+one (it defaults to `~/Projects/swift-support-kit`). Since swift-support-kit 1.25.1 the channel
+imports `SupportKitDrivingCatch`, an Objective-C target that stops an `NSException` a command
+raised. The recipe compiles it with `clang`, with `DEBUG` for the fixture with a channel, and
+gives its header a module map. Against 1.25.1, before 2026-11-16, the fixture did not build at
+all.
 
 **A sandboxed app's channel is in its container, which macOS guards.** The fleet's bootstrap
 template is sandboxed, and so are most App Store apps. Their `NSTemporaryDirectory()` is
 `~/Library/Containers/<bundle id>/Data/tmp/`. On 2026-11-11 a bootstrapped probe ran with its
 channel open, and the agent's shell, which has no Full Disk Access, was refused that directory
 ("Operation not permitted"). So Cupertino needs Full Disk Access to drive one: without it,
-`AppChannel.find` reads nothing and the launch answers `channel: false`. A Cupertino _with_ the
-grant reading a container is not measured yet. An unsandboxed app (armada, bastion) uses the
-per-user temporary directory and needs no grant. Armada's Debug build was driven that way on
-2026-11-11, never frontmost.
+`AppChannel.find` reads nothing and the launch answers `channel: false`, and since 2026-11-16
+says that Full Disk Access is the reason (below, "What Maquette's check found"). A Cupertino
+_with_ the grant reads the container: on 2026-11-16 Cupertino 1.40.0 launched Maquette's
+sandboxed Debug build by path with `channel: true` (pids 74198 and 73110 among others) and drove
+it through `~/Library/Containers/io.mgcrea.Maquette/Data/tmp/SupportKitDriving/<pid>/`, beside
+Olivier's own copy of the same bundle id (Maquette's `docs/driving.md`). An unsandboxed app
+(armada, bastion) uses the per-user temporary directory and needs no grant. Armada's Debug build
+was driven that way on 2026-11-11, never frontmost.
 
 Not measured: hover (whether a `mouseMoved` delivered this way fires a tracking area or
-`onContinuousHover`), a scroll in SwiftUI or a real app, and right-click menus (refused,
-above). Since 2026-11-16 a drag can be paced, its steps sent over its duration, and a scroll
-reaching an `NSView` is measured (below).
+`onContinuousHover`), a scroll in SwiftUI, and right-click menus (refused, above). A scroll in a
+real app is measured: Maquette's Metal viewport zoomed by exactly 1.1 a line on 2026-11-16. Since
+that day a drag can be paced, its steps sent over its duration, and a scroll reaching an `NSView`
+is measured (below).
 
 Known gaps, found in review on 2026-11-11. The first three were closed on 2026-11-16:
 
@@ -1610,8 +1621,8 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
   the other. `activate` by pid reads the front back by process, so it is meant to bring that
   copy forward; that is not measured with two copies. Whether a verb is background is now
   decided by process too, for the channel lane and the background type: the worktree's copy
-  behind Olivier's copy of the same app is behind, with no countdown. A driving session remembers which copy was in front, so it hands
-  back to that one.
+  behind Olivier's copy of the same app is behind, with no countdown. A driving session
+  remembers which copy was in front, so it hands back to that one.
 
 **The channel's version 2.**
 
@@ -1636,7 +1647,7 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
   gate run before the session is admitted, so a refused command puts no card on screen.
 
 **What `channel-check` measured, 51/51 on 2026-11-16 and 55/55 after review, while Olivier
-worked.** Against the
+worked** (68/68 since the section after this one added its legs). Against the
 fixture, built from swift-support-kit 1.25.0, which now has a probe view logging the button,
 the modifiers and the summed deltas of a drag, and the units and deltas of a scroll:
 
@@ -1670,25 +1681,107 @@ channel, the point bound, the `seq` base, the incremental read) and `unit` (back
 process).
 
 **Not measured here.** Cupertino with Full Disk Access reading a sandboxed app's container
-channel, which is Maquette's cycle. A session-lane scroll, and session-lane modifiers or middle
-button on a drag. A paced drag against an app that does not take a step in time, where the
-channel's patience decides. Two Cupertinos driving one channel, and two connections of one
+channel, which Maquette's cycle measured since (above). A session-lane scroll, and
+session-lane modifiers or middle button on a drag. A paced drag against an app that does not
+take a step in time, where the channel's patience decides. Two Cupertinos driving one channel, and two connections of one
 Cupertino contending for it: one command in flight per channel holds within a Cupertino only,
 and the wait it makes is not cancellable. `activate` by pid with two copies running. A copy
 whose pid `startedByLaunch` does not vouch for, which is refused and left running. A launched
-copy that takes the
-front from the person's own copy of the same app, which `launch` hands back by process. A
-session handing back to one of two copies of the person's app.
+copy that takes the front from the person's own copy of the same app, which `launch` hands back
+by process. A session handing back to one of two copies of the person's app.
+
+## What Maquette's check found, 2026-11-16
+
+Maquette's driving cycle checked its worktree's Debug build by eye, launched by
+`apple_desktop_launch` (path, `channel: true`) beside Olivier's own copy under the same bundle id,
+with Cupertino 1.40.0 (Maquette's `docs/driving.md`, and its cycle's `task-1-report.md` and
+`task-5-check.md`). Everything was driven through the channel, by pid, with nothing brought
+forward. Five gaps were left on Cupertino's side, all closed here, most useful first.
+
+1. **A capture can name one of two copies.** `apple_screen_list_targets` listed Maquette twice,
+   both `surface: "io.mgcrea.Maquette"`, and `apple_screen_capture_surface` captured the larger
+   window of the two, whichever copy drew it, so the check took no capture at all. Now
+   `capture_surface` takes `pid`, and `list_targets` lists each application once, with each
+   running copy's `pid` and window count in `copies`. With several copies running and no `pid`,
+   nothing is captured: the refusal lists the pids. A pid that is none of the copies is refused.
+   The copy is chosen from Launch Services before the window list is read, and the windows are
+   filtered by the owning process, so the other copy's window is never a candidate. A capture by
+   pid carries it in its file name and its answer. `channel-check` captures each of two fixture
+   copies by pid; the second copy's window is 40 points taller, and each picture is that copy's
+   own height (744 and 664 pixels).
+2. **`apple_desktop_click` takes `count`, 1 to 3.** The channel has taken `count` since its first
+   version, and the tool did not, so a double click was two click steps in one `run`, and a
+   step's `"count": 2` was dropped without a word. It is now in the schema and in the argument
+   check, a step's included. A count is the left button's: a right double click is refused. On
+   the session lane the click posts `count` presses and releases, each pair carrying its place
+   as `mouseEventClickState`, which is what an app reads as `NSEvent.clickCount`.
+   `channel-check` reads `clickCount 2` and `3` back from the fixture's probe.
+3. **A key that quits the app says so.** A ⌘Q through the channel ends the process before it
+   can answer, and that was reported as "did not answer the key within 2 s. It may be busy on
+   its main thread". `AppChannel.send` now watches the pid while it waits, and a second past the
+   deadline for its end alone, and a process that ended is the answer: `quit: true`, with the
+   note "The application quit before it answered the key: pid N is no longer running." It is
+   not an error. A crash on the command reads the same; `quit` says only that the process is
+   gone. `channel-check` quits the second fixture copy with ⌘Q, answered in 0.03 s.
+4. **A field in a window the app does not draw goes by Accessibility.** A sandboxed app's open or
+   save panel is drawn by `com.apple.appkit.xpc.openAndSavePanelService`. Measured on TextEdit's
+   Open panel: the panel's elements answer TextEdit's pid, but `_AXUIElementGetWindow` names a
+   window owned by "Open and Save Panel Service" (its own pid), and they have no `AXWindow`.
+   The channel delivers to the app's own windows, so `type` with the Search field's handle was
+   refused ("this app has no visible window to type into"). And keys posted to the app's pid,
+   the background type, go to the app's own first responder: with a document window open beside
+   the panel, they could land in another field. So a handle whose window another process owns
+   (`DrivingPolicy.inForeignWindow`, by the window server's owner) is never typed by keys or by
+   the channel. `type` focuses the field, writes the text where typing would put it (over the
+   selection, or at the caret: `BackgroundTyping.inserting`), puts the caret after it and reads
+   it back, answering `lane: "accessibility"` with `verified`. `key` does what the key stands
+   for there, return as `AXConfirm` and escape as `AXCancel` when the field offers it, and
+   refuses anything else, naming what the field offers. Should the window list miss one, the
+   channel's own "no visible window to type into" sends a handle's `type` or `key` the same way.
+   This holds with or without a channel. Measured on TextEdit's real Open panel, launched behind
+   with nothing posted to the session: `type` "zzqx" with the Search field's handle landed, the
+   field read `zzqx`, and TextEdit never came forward. Its Search field offers `AXShowMenu` and
+   `AXConfirm` only, so escape was refused, naming both. An empty field answers no value at all,
+   which the first version refused; a text role is enough, and no value reads as empty.
+5. **The review's minors from the channel-pid cycle.**
+   - _N2, N6._ A launch with `channel: true` that found no channel said "Only a Debug build that
+     links SupportKitDriving … has one" whatever the cause. It now names the cause
+     (`noChannelReason`): Cupertino could not confirm the pid is the process the launch started,
+     so its channel is not believed; or the app is sandboxed and its container may not be read
+     without Full Disk Access (`AppChannel.containerAccess`, asked only after the lookup failed,
+     of the directory it tried); or, only otherwise, a build without the channel.
+   - _N5._ `quitLaunched` takes what `launch` answered and asks `startedByLaunch` again just
+     before it asks the copy to quit, and again before it forces it, not only when the launch
+     answered: the channel's two-second wait comes between. One it cannot vouch for is left
+     alone (`.notConfirmed`), and the refusal says nothing was quit.
+   - This document: a container read and a real app's scroll were still "not measured", the
+     process of an element in an open panel was still open, and `apple_desktop_launch`'s
+     description left `scroll` and `pid` out of the channel's verbs.
+
+The no-app assertions are in `unit` (the foreign-window rule, the insertion at a selection),
+`desktop-check` (`count`'s schema, refusals and step check, the click state of the events
+built, the quit answer against a channel planted for a short-lived process and the timeout of
+one that stays silent, the key actions, the three launch causes, the container read against a
+scratch directory, the re-check before a quit) and `screen-check` (`pid`'s schema and refusals,
+naming an application nothing runs as so that none can take a picture, and the choice of copy).
+Each failed against the code before its fix; the first `screen-check` run of that kind, against a
+stub, named Maps and captured it twice, which is why it names nothing that runs.
+
+**Not measured here.** A double click on the session lane against a real app. The foreign-window
+lane in a channel-launched app's own open panel, which is Maquette's next check: the fixture is
+unsandboxed, so its panels are its own. A save panel. A capture of a copy whose window is on
+another Space.
 
 ## Still open
 
-- **The process of an element hosted by a service.** A handle's process is
-  `AXUIElementGetPid` of its element, and an element inside a sandboxed app's open or save panel
-  may answer the panel service's pid (`com.apple.appkit.xpc.openAndSavePanelService`), not the
-  app's. Not verified. If it does, a hover, type or key by such a handle into a channel-launched
-  app misses its channel, and the background type can take a panel field in the person's own
-  app for one behind it. The fix would be to store the walked application's pid with the
-  handle. Maquette's underlay import panel is the first place to measure it.
+- ~~**The process of an element hosted by a service.**~~ **Answered 2026-11-16**, on TextEdit's
+  Open panel: an element inside a sandboxed app's open or save panel answers the **app's** pid,
+  not the panel service's, so a handle reaches the right copy. What it does not have is a window
+  of the app's: `_AXUIElementGetWindow` names a window the panel service owns, and it has no
+  `AXWindow`. That is what refused `type` in Maquette's check, closed above ("What Maquette's
+  check found", item 4). A hover, click or drag by such a handle into a channel-launched app
+  still goes through the channel, to a point over the panel; what the app does with it is not
+  measured.
 
 - **An application that takes the front when launched behind.** `launch` hands the front back when
   one does, and none has been seen to yet. The measurement is a launch of a few third-party

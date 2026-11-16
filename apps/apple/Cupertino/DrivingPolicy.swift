@@ -135,6 +135,23 @@ nonisolated enum DrivingPolicy {
   /// read counts as the target, which errs toward warning.
   /// Generic so that two copies of one app, which share a bundle id, are told
   /// apart by their pids.
+  /// Whether an element sits in a window another process draws: `windowOwner`
+  /// is the window server's owner of the element's window, `process` the pid
+  /// the element answers.
+  ///
+  /// A sandboxed app's open or save panel is drawn by the panel service, and
+  /// its elements still answer the app's pid (MEASURED 2026-11-16 on TextEdit's
+  /// Open panel: the field answered TextEdit's pid, its window belonged to
+  /// "Open and Save Panel Service", and it had no `AXWindow`). A driving
+  /// channel delivers to the app's own windows, and keys posted to the app's
+  /// pid go to its own first responder, so neither reaches such a field, and
+  /// the second could reach another one. Unknown either way is not foreign:
+  /// that leaves the verb as it was.
+  static func inForeignWindow(windowOwner: pid_t?, process: pid_t?) -> Bool {
+    guard let windowOwner, let process else { return false }
+    return windowOwner != process
+  }
+
   static func isBackground<ID: Equatable>(target: ID, frontmost: ID?) -> Bool {
     guard let frontmost else { return false }
     return frontmost != target

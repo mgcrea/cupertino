@@ -429,7 +429,8 @@ nonisolated enum DesktopServer {
           + "clicked if it does not come. Without it the frontmost application stands in, and is "
           + "refused when it is out of reach. Either way nothing is clicked unless the point is on "
           + "one of that application's windows. 'button': \"right\" opens a context menu where "
-          + "no element offers one to apple_desktop_show_menu, such as a drawing canvas.",
+          + "no element offers one to apple_desktop_show_menu, such as a drawing canvas. "
+          + "'count': 2 is a double click, 3 a triple.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -438,6 +439,11 @@ nonisolated enum DesktopServer {
             "button": [
               "type": "string", "enum": AccessibilityDriver.MouseButton.allCases.map(\.rawValue),
               "description": "Default left.",
+            ],
+            "count": [
+              "type": "integer", "minimum": 1, "maximum": 3,
+              "description": "Clicks in a row, the left button's: 2 is a double click, 3 a "
+                + "triple. Default 1.",
             ],
           ],
           "required": ["x", "y"],
@@ -603,7 +609,9 @@ nonisolated enum DesktopServer {
           + "application forward: it is focused, typed into and read back (lane: background, "
           + "verified). Only a field that did not change, or one that cannot be read back such "
           + "as a password field, is typed again with its application brought to the front "
-          + "(lane: foreground). With 'bundleId' alone, that application is brought to the front "
+          + "(lane: foreground). A field in a window its application does not draw, an open or "
+          + "save panel, is written by value where typing would put it and read back (lane: "
+          + "accessibility). With 'bundleId' alone, that application is brought to the front "
           + "and the text goes to its focused field; nothing is typed if it does not come. "
           + "Without either, the text goes to the frontmost application, and is refused when "
           + "that application is out of reach.",
@@ -626,8 +634,11 @@ nonisolated enum DesktopServer {
           + "function key. Anything typeable should go through apple_desktop_type instead. Pass "
           + "'handle' or 'bundleId': that application is brought to the front first, and no key "
           + "is sent if it does not come. Unlike apple_desktop_type, a key always needs the front, "
-          + "except into an app launched with channel: true. After a background type, name the "
-          + "application again here, or the key goes to whatever is in front.",
+          + "except into an app launched with channel: true. With the 'handle' of a field in a "
+          + "window its application does not draw, an open or save panel, only return and escape "
+          + "are done, as the field's confirm and cancel actions (lane: accessibility). After a "
+          + "background type, name the application again here, or the key goes to whatever is in "
+          + "front.",
         "inputSchema": [
           "type": "object",
           "properties": [
@@ -680,9 +691,10 @@ nonisolated enum DesktopServer {
           + "and answers launched: false. Takes a bundle identifier and nothing else: no "
           + "documents or URLs. To bring it forward afterwards, apple_desktop_activate. With "
           + "channel: true, a Debug build of an app that links swift-support-kit's "
-          + "SupportKitDriving opens a driving channel: click, drag, hover, key and type with its "
-          + "bundleId then reach its own windows without bringing it forward (lane: channel), "
-          + "shortcuts included. Any other app ignores it and answers channel: false. Pass "
+          + "SupportKitDriving opens a driving channel: click, drag, hover, scroll, key and type "
+          + "with its bundleId or pid then reach its own windows without bringing it forward "
+          + "(lane: channel), shortcuts included. Any other app ignores it and answers channel: "
+          + "false. Pass "
           + "'path' (with or instead of bundleId) to start one exact .app, the Debug build of an "
           + "App Store app that shares its bundle id with the installed copy. 'path' with "
           + "channel: true starts that copy beside one already running; name it afterwards by "
@@ -1233,17 +1245,21 @@ nonisolated enum DesktopServer {
         guard let button = mouseButton(args) else {
           return failure(id, "The 'button' argument is \"left\" or \"right\".")
         }
+        // `argumentProblem` refused anything else already.
+        let count = clickCount(args) ?? 1
         // One of our Debug builds with a channel takes the click in its own
         // window, wherever that window is: nothing is brought forward.
         let named = args["bundleId"] as? String
         if let named, let channel = try channel(for: named, pid: pinnedPid(args), scope: scope) {
-          let ack = try throughChannel(
-            channel, owner: named,
-            ["verb": "click", "x": x, "y": y, "button": button.rawValue], scope: scope)
+          var command: [String: Any] = ["verb": "click", "x": x, "y": y, "button": button.rawValue]
+          // The channel has taken a count since its first version.
+          if count > 1 { command["count"] = count }
+          let ack = try throughChannel(channel, owner: named, command, scope: scope)
           var clicked = channelFields(ack, channel)
           clicked["clicked"] = [x, y]
           clicked["target"] = named
           if button != .left { clicked["button"] = button.rawValue }
+          if count > 1 { clicked["count"] = count }
           return ok(id, clicked)
         }
         if let named { try requireOneCopy(named, pid: pinnedPid(args), verb: "click") }
@@ -1253,9 +1269,10 @@ nonisolated enum DesktopServer {
         let owner = try pointOwner(
           args, at: CGPoint(x: x, y: y), verb: "click", scope: scope)
         try AccessibilityDriver.click(
-          x: x, y: y, button: button, scope: scope, announcing: owner)
+          x: x, y: y, button: button, count: count, scope: scope, announcing: owner)
         var clicked: [String: Any] = ["clicked": [x, y], "target": owner]
         if button != .left { clicked["button"] = button.rawValue }
+        if count > 1 { clicked["count"] = count }
         return ok(id, clicked)
 
       case "apple_desktop_show_menu":
@@ -1455,6 +1472,28 @@ nonisolated enum DesktopServer {
         }
         let target = try sessionTarget(args, scope: scope)
         let owner = target?.bundleId
+        // A field in a window its application does not draw, a sandboxed app's
+        // open or save panel, is written by value: keys posted to the app's
+        // pid would go to its own first responder, another field, and its
+        // driving channel reaches only its own windows.
+        func byValue(_ handle: String, found: String) throws -> String {
+          let written = try AccessibilityDriver.typeByValue(
+            text: text, handle: handle, scope: scope)
+          var typed: [String: Any] = [
+            "typed": text.count, "lane": "accessibility", "verified": written.verified,
+            "note": found + " so its value was written by Accessibility, where typing would put "
+              + "it."
+              + (written.verified ? "" : " It does not read back as written: read its value."),
+          ]
+          if let owner { typed["target"] = owner }
+          if let pid = target?.pid { typed["pid"] = Int(pid) }
+          return ok(id, typed)
+        }
+        if let handle = args["handle"] as? String,
+          try AccessibilityDriver.inForeignWindow(handle: handle, scope: scope)
+        {
+          return try byValue(handle, found: foreignWindowFound)
+        }
         // A handle names the field, so it can be typed into where it is, with
         // its application left behind the person's. Only a field that did not
         // change is typed again in front; one that took part of the text is
@@ -1504,8 +1543,17 @@ nonisolated enum DesktopServer {
           let channel = try channel(for: target.bundleId, pid: target.pid, scope: scope)
         {
           if landedLate() { return landedInBackground(false, late: true) }
-          let ack = try throughChannel(
-            channel, owner: target.bundleId, ["verb": "type", "text": text], scope: scope)
+          let ack: [String: Any]
+          do {
+            ack = try throughChannel(
+              channel, owner: target.bundleId, ["verb": "type", "text": text], scope: scope)
+          } catch let refusal where Self.hasNoWindowOfItsOwn(refusal) {
+            // The app has no window of its own on screen, so the field the
+            // handle names is in one it does not draw, which the window list
+            // did not say. Nothing was typed through the channel.
+            guard let handle = args["handle"] as? String else { throw refusal }
+            return try byValue(handle, found: noWindowFound)
+          }
           var typed = channelFields(ack, channel)
           typed["typed"] = text.count
           typed["target"] = target.bundleId
@@ -1537,6 +1585,31 @@ nonisolated enum DesktopServer {
         }
         let target = try sessionTarget(args, scope: scope)
         let owner = target?.bundleId
+        // A field in a window its application does not draw takes no key, by
+        // channel or posted: only the action a key stands for, by
+        // Accessibility.
+        func byAction(_ handle: String, found: String) throws -> String {
+          guard let action = foreignKeyAction(key: key, modifiers: modifiers) else {
+            throw AccessibilityDriver.Failure.refused(
+              found + " which no driving channel or posted key reaches, so nothing was sent. "
+                + "Only return (its confirm action) and escape (its cancel action) are done "
+                + "there, without modifiers. Press the panel's own button by handle, or type "
+                + "into the field with apple_desktop_type.")
+          }
+          try AccessibilityDriver.performKeyAction(action, key: key, handle: handle, scope: scope)
+          var sent: [String: Any] = [
+            "key": key, "modifiers": modifiers, "lane": "accessibility", "action": action,
+            "note": found + " so the key was done as its \(action) action by Accessibility.",
+          ]
+          if let owner { sent["target"] = owner }
+          if let pid = target?.pid { sent["pid"] = Int(pid) }
+          return ok(id, sent)
+        }
+        if let handle = args["handle"] as? String,
+          try AccessibilityDriver.inForeignWindow(handle: handle, scope: scope)
+        {
+          return try byAction(handle, found: foreignWindowFound)
+        }
         // Through a channel the app matches a shortcut against its own menu,
         // which is what an app in the background cannot do with a posted key.
         // The channel's names are command, shift, option and control; fn has no
@@ -1544,9 +1617,15 @@ nonisolated enum DesktopServer {
         if let target, let channelModifiers = channelModifiers(modifiers),
           let channel = try channel(for: target.bundleId, pid: target.pid, scope: scope)
         {
-          let ack = try throughChannel(
-            channel, owner: target.bundleId,
-            ["verb": "key", "key": key, "modifiers": channelModifiers], scope: scope)
+          let ack: [String: Any]
+          do {
+            ack = try throughChannel(
+              channel, owner: target.bundleId,
+              ["verb": "key", "key": key, "modifiers": channelModifiers], scope: scope)
+          } catch let refusal where Self.hasNoWindowOfItsOwn(refusal) {
+            guard let handle = args["handle"] as? String else { throw refusal }
+            return try byAction(handle, found: noWindowFound)
+          }
           var sent = channelFields(ack, channel)
           sent["key"] = key
           sent["modifiers"] = modifiers
@@ -1744,33 +1823,40 @@ nonisolated enum DesktopServer {
             opened = find()
           }
           body["channel"] = opened
+          // Why not, in the words of its real cause: the copy is not the one
+          // this launch is known to have started, its container is closed to
+          // Cupertino, or it is a build without a channel.
+          let why =
+            opened
+            ? ""
+            : noChannelReason(
+              bundleId: bundleId, pid: launched.pid ?? 0, confirmed: ours,
+              container: AppChannel.containerAccess(bundleId: bundleId))
           // Started beside another copy and opened no channel: the plain second
           // copy a launch by path without a channel refuses to start. It would
           // leave every bundleId verb refused and the session lane unable to
           // tell the two apart, so the copy started seconds ago is quit again.
           if !opened, launched.besideOthers, let pid = launched.pid {
             // Quit only what this launch is known to have started: a wrong
-            // quit would be of something the person owns.
-            guard ours else {
+            // quit would be of something the person owns. Vouched for again
+            // just before it is asked to, since the wait above came between.
+            let quit = ours ? AccessibilityDriver.quitLaunched(launched) : .notConfirmed
+            if quit == .notConfirmed {
               return failure(
                 id,
                 "A copy of \(bundleId) is running beside another without a driving channel, and "
                   + "Cupertino could not confirm pid \(pid) is the one this launch started, so "
                   + "nothing was quit. Ask the person to quit the copy that has no channel.")
             }
-            let quit = AccessibilityDriver.quitLaunched(pid)
             return failure(
               id,
               "\(path ?? bundleId) started beside another copy of it but opened no "
-                + "driving channel, so it was \(quit ? "quit again" : "asked to quit")"
-                + ": a second copy is only worth having driven through its channel. Only a Debug "
-                + "build that links SupportKitDriving and calls Driving.startIfRequested() at "
-                + "launch has one.")
+                + "driving channel, so it was "
+                + "\(quit == .quit ? "quit again" : "asked to quit and is still running")"
+                + ": a second copy is only worth having driven through its channel. " + why)
           }
           if !opened {
-            body["channelNote"] =
-              "No driving channel opened. Only a Debug build that links SupportKitDriving and "
-              + "calls Driving.startIfRequested() at launch has one; it is driven as before."
+            body["channelNote"] = why + " It is driven as an application without one."
           }
         }
         if let windows = launched.windows { body["windows"] = windows }
@@ -1997,7 +2083,16 @@ nonisolated enum DesktopServer {
       guard args["x"] is Double, args["y"] is Double else {
         return "Both 'x' and 'y' are required."
       }
-      return mouseButton(args) == nil ? "The 'button' argument is \"left\" or \"right\"." : nil
+      guard let button = mouseButton(args) else {
+        return "The 'button' argument is \"left\" or \"right\"."
+      }
+      guard let count = clickCount(args) else {
+        return "'count' is how many clicks in a row: 1, 2 or 3."
+      }
+      return count > 1 && button != .left
+        ? "'count' is the left button's: a right click opens a menu, and a second one would "
+          + "close it. Leave 'count' out, or click with the left button."
+        : nil
     case "hover":
       guard args["handle"] is String || (args["x"] is Double && args["y"] is Double) else {
         return
@@ -2123,6 +2218,17 @@ nonisolated enum DesktopServer {
   static func mouseButton(_ args: [String: Any]) -> AccessibilityDriver.MouseButton? {
     guard let named = args["button"] else { return .left }
     return (named as? String).flatMap(AccessibilityDriver.MouseButton.init(rawValue:))
+  }
+
+  /// How many clicks in a row: 1 when absent, nil when present and not a
+  /// whole number from 1 to 3. A boolean bridges to a number, and true is not
+  /// a count.
+  static func clickCount(_ args: [String: Any]) -> Int? {
+    guard let raw = args["count"] else { return 1 }
+    guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+      !CFNumberIsFloatType(number), (1...3).contains(number.int64Value)
+    else { return nil }
+    return Int(number.int64Value)
   }
 
   /// A key's modifier names: none when absent, nil when present and not a
@@ -2679,6 +2785,58 @@ nonisolated enum DesktopServer {
         + "out.")
   }
 
+  /// What `type` and `key` say of a field in a window its application does
+  /// not draw, found by the window list, or by the channel answering that the
+  /// app has no window of its own on screen.
+  static let foreignWindowFound =
+    "The field is in a window its application does not draw, an open or save panel,"
+  static let noWindowFound =
+    "The application's driving channel has no window of its own on screen: the field is in one "
+    + "it does not draw, an open or save panel,"
+
+  /// Whether a channel refused a key or text because the app has no window of
+  /// its own on screen: swift-support-kit's "this app has no visible window to
+  /// type into".
+  static func hasNoWindowOfItsOwn(_ error: Error) -> Bool {
+    error.localizedDescription.contains("no visible window to type into")
+  }
+
+  /// The action a key stands for in a field no key can be sent to, one in a
+  /// window another process draws: return confirms, escape cancels. Nil for
+  /// any other key and for one held with a modifier, which is refused.
+  static func foreignKeyAction(key: String, modifiers: [String]) -> String? {
+    guard modifiers.isEmpty else { return nil }
+    switch key.lowercased() {
+    case "return", "enter": return "AXConfirm"
+    case "escape", "esc": return "AXCancel"
+    default: return nil
+    }
+  }
+
+  /// Why a launch with `channel: true` found no channel for `pid`. The first
+  /// version said "no SupportKitDriving" for all three, and two of them are
+  /// something else (review N2, N6).
+  static func noChannelReason(
+    bundleId: String, pid: pid_t, confirmed: Bool, container: AppChannel.ContainerAccess
+  ) -> String {
+    if !confirmed {
+      return
+        "Cupertino could not confirm that pid \(pid) is the process this launch started, so its "
+        + "driving channel is not believed: only the very process a launch is known to have "
+        + "started is driven through one."
+    }
+    if container == .refused {
+      return
+        "\(bundleId) is sandboxed, so its driving channel is in its container "
+        + "(~/Library/Containers/\(bundleId)/Data/tmp), which macOS lets Cupertino read only with "
+        + "Full Disk Access. Grant Cupertino Full Disk Access in System Settings › Privacy & "
+        + "Security, then launch it again with channel: true."
+    }
+    return
+      "No driving channel opened. Only a Debug build that links SupportKitDriving and calls "
+      + "Driving.startIfRequested() at launch has one."
+  }
+
   /// One verb through the channel. Admitted as background, so no countdown:
   /// the app delivers it to its own windows, so it reaches neither the
   /// person's keyboard nor their cursor. The scope still applies, and the app
@@ -2737,6 +2895,8 @@ nonisolated enum DesktopServer {
     for key in ["hit", "identifier", "responder", "note"] {
       if let value = ack[key] as? String, !value.isEmpty { fields[key] = value }
     }
+    // The process ended before it answered: `AppChannel.send`.
+    if ack["kind"] as? String == "quit" { fields["quit"] = true }
     return fields
   }
 

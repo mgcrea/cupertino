@@ -119,11 +119,20 @@ nonisolated enum ScreenServer {
       "description":
         "Capture the largest window of one application to a PNG and return its path. The window "
         + "does not have to be visible: a window fully covered by another app captures its own "
-        + "content, and nothing is raised or focused. " + reach,
+        + "content, and nothing is raised or focused. " + reach + " While several copies of the "
+        + "application run, as a Debug build beside the installed one, pass 'pid' to name one; "
+        + "without it nothing is captured.",
       "inputSchema": [
         "type": "object",
         "properties": [
           "surface": surfaceProperty,
+          "pid": [
+            "type": "integer",
+            "description":
+              "The copy to capture, by process id: apple_screen_list_targets lists each running "
+              + "copy's, and apple_desktop_launch answers with the one it started. Needed only "
+              + "while several copies run.",
+          ],
           "directory": [
             "type": "string",
             "description":
@@ -156,11 +165,15 @@ nonisolated enum ScreenServer {
         return ok(
           id,
           [
-            "targets": targets.map {
-              [
-                "surface": $0.surface, "displayName": $0.displayName,
-                "windows": $0.windows, "appRunning": $0.appRunning,
+            "targets": targets.map { target -> [String: Any] in
+              var row: [String: Any] = [
+                "surface": target.surface, "displayName": target.displayName,
+                "windows": target.windows, "appRunning": target.appRunning,
               ]
+              // Each running copy, which a capture names by pid while there
+              // are several.
+              if !target.copies.isEmpty { row["copies"] = ScreenCapture.copiesJSON(target) }
+              return row
             },
             "note": anyAppAllowed
               ? "Window titles are withheld deliberately — see docs/screen.md. Reach is any "
@@ -212,26 +225,41 @@ nonisolated enum ScreenServer {
           "\(owner.displayName) is switched off in Cupertino, so its window is not captured. "
             + "Turn it back on in the app to capture it.")
       }
+      // A pid names one copy. Checked for its shape here, before anything is
+      // read, and against the running copies by the capture, before the
+      // window list.
+      var pid: pid_t?
+      if let raw = args["pid"] {
+        guard let number = raw as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID(),
+          !CFNumberIsFloatType(number), number.int64Value > 0,
+          number.int64Value <= Int64(Int32.max)
+        else {
+          return failure(
+            id,
+            "'pid' is a process id, a whole number above 0, from apple_screen_list_targets.")
+        }
+        pid = pid_t(number.int64Value)
+      }
       let directory = (args["directory"] as? String).map { URL(fileURLWithPath: $0) }
       let overwrite = args["overwrite"] as? Bool ?? false
       do {
         let shot = try blocking {
           if let target {
             return try await ScreenCapture.capture(
-              surface: target, into: directory, overwrite: overwrite)
+              surface: target, pid: pid, into: directory, overwrite: overwrite)
           }
           let app = NSWorkspace.shared.runningApplications
             .first { $0.bundleIdentifier == wanted }
           return try await ScreenCapture.capture(
-            bundleID: wanted, displayName: app?.localizedName ?? wanted, label: wanted,
+            bundleID: wanted, displayName: app?.localizedName ?? wanted, label: wanted, pid: pid,
             into: directory, overwrite: overwrite)
         }
-        return ok(
-          id,
-          [
-            "path": shot.path, "bytes": shot.bytes,
-            "width": shot.width, "height": shot.height, "surface": shot.surface,
-          ])
+        var answer: [String: Any] = [
+          "path": shot.path, "bytes": shot.bytes,
+          "width": shot.width, "height": shot.height, "surface": shot.surface,
+        ]
+        if let captured = shot.pid { answer["pid"] = Int(captured) }
+        return ok(id, answer)
       } catch { return failed(id, error) }
 
     default:
@@ -295,6 +323,9 @@ nonisolated enum ScreenServer {
     - Returns a **path**, never the image itself, so a capture costs no context
       until something reads it.
     - Never returns window titles. They leak subjects and participant names.
+    - While several copies of an application run, a Debug build beside the
+      installed one, it captures none of them unless `pid` names one:
+      `apple_screen_list_targets` lists each copy's pid under `copies`.
 
     ## Before it works
 
