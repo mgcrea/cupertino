@@ -21,8 +21,9 @@ summary.
   shares its bundle id. With several copies running, a bundle id alone is refused rather than
   guessed, and the refusal lists each copy's pid, its path and whether it has a driving channel.
   `apple_desktop_list_apps` gives each app's path. `apple_desktop_launch` with `path` and
-  `channel: true` starts a copy beside one already running and answers its `pid`. A handle
-  always reaches the copy it was read from.
+  `channel: true` starts a copy beside one already running and answers its `pid`, and quits it
+  again if it opens no channel. A handle always reaches the copy it was read from. A pid whose
+  application is out of reach is refused without saying what runs as it.
 - **Scroll, orbit and pan in our own Debug builds.** Through a driving channel,
   `apple_desktop_scroll` scrolls the view under a point by lines or by pixels, and
   `apple_desktop_drag` takes the middle button, modifiers held throughout and pacing, which is
@@ -33,7 +34,7 @@ summary.
 ### Fixed
 
 - **The driving channel no longer mixes up two connections or two Cupertinos.** A command is
-  appended in one write, only one is in flight per app, its sequence numbers start from a random
+  appended in one write, only one from each Cupertino is in flight per app, its sequence numbers start from a random
   base, and the app's answers are read from where the last read ended rather than whole every
   10 ms.
 

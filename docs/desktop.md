@@ -1573,6 +1573,14 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
   the bundle id the process runs. A pid that is not running, or one with no bundle id to check
   the reach against, is refused. The schemas no longer require `bundleId`; the argument check
   asks for one of the two.
+- **A pid out of reach names nothing.** The reach is checked when the pid is resolved, and a pid
+  whose application is out of reach, one with no bundle id and one nothing runs as all get one
+  refusal: "No application in reach is running as pid N". The first version named the
+  process's bundle id in its refusals before any scope check, so an agent scoped to the
+  brokered applications, or lent one, could walk the pids and list every running application
+  `list_apps` withholds (found in review, fixed before landing).
+- **A `pid` beside a `handle` must be the handle's process**, as a `bundleId` beside a `pid`
+  must agree with it; otherwise nothing is done.
 - **A bundle id alone, while several copies run, is refused, never guessed.** The refusal lists
   each copy's pid, its bundle's path, and whether this Cupertino launched it with a driving
   channel, and says to pass `pid`. With one copy running nothing changes. Copies are asked of
@@ -1585,7 +1593,9 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
 - **`launch` by `path` with `channel: true` starts a copy beside a running one**
   (`createsNewApplicationInstance`), and every launch that started something answers its `pid`.
   A copy already running from that same path answers `launched: false`, so the verb stays safe
-  to repeat. Without `channel: true` the old refusal stands, and a launch by bundle id alone
+  to repeat. A copy started beside another that opens no channel within the wait is quit again
+  and the launch refused: it would be the plain second copy the spec says has no use worth the
+  ambiguity. A `launched: false` answer names the running copy's pid only when one runs. Without `channel: true` the old refusal stands, and a launch by bundle id alone
   never starts a second copy.
 - **The channel registry was already keyed by pid**; `AppChannel.find(bundleId:pid:)` takes
   one. Without it, the one running copy's channel, after the several-copies refusal.
@@ -1593,10 +1603,10 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
   guard a posted click, key or hover read a bundle id, which both copies share, so the copy in
   front would take input meant for the other and pass every check. A copy with a channel is
   driven by its pid alone; otherwise the refusal says to launch one with a channel, or to quit
-  the other. `activate` by pid reads the front back by process, so it does bring that copy
-  forward. Whether a verb is background is now decided by process too, for the channel lane
-  and the background type: the worktree's copy behind Olivier's copy of the same app is
-  behind, with no countdown. A driving session remembers which copy was in front, so it hands
+  the other. `activate` by pid reads the front back by process, so it is meant to bring that
+  copy forward; that is not measured with two copies. Whether a verb is background is now
+  decided by process too, for the channel lane and the background type: the worktree's copy
+  behind Olivier's copy of the same app is behind, with no countdown. A driving session remembers which copy was in front, so it hands
   back to that one.
 
 **The channel's version 2.**
@@ -1618,7 +1628,8 @@ channel's version 2. Spec: `docs/superpowers/specs/2026-11-16-channel-pid-design
   a channel is refused with the reason. It is a write and a `run` step.
 - An ack's `note` reaches the caller as the app wrote it.
 - A point past ±1,000,000 on either axis is refused before it is sent: 1.25.0 refuses it too,
-  and an app built before then could trap making it a whole number.
+  and an app built before then could trap making it a whole number. That check and the version
+  gate run before the session is admitted, so a refused command puts no card on screen.
 
 **What `channel-check` measured, 51/51 on 2026-11-16, while Olivier worked.** Against the
 fixture, built from swift-support-kit 1.25.0, which now has a probe view logging the button,
@@ -1650,11 +1661,22 @@ process).
 **Not measured here.** Cupertino with Full Disk Access reading a sandboxed app's container
 channel, which is Maquette's cycle. A session-lane scroll, and session-lane modifiers or middle
 button on a drag. A paced drag against an app that does not take a step in time, where the
-channel's patience decides. Two Cupertinos driving one channel. A launched copy that takes the
+channel's patience decides. Two Cupertinos driving one channel, and two connections of one
+Cupertino contending for it: one command in flight per channel holds within a Cupertino only,
+and the wait it makes is not cancellable. `activate` by pid with two copies running. A copy
+started beside another that opens no channel, and is quit again. A launched copy that takes the
 front from the person's own copy of the same app, which `launch` hands back by process. A
 session handing back to one of two copies of the person's app.
 
 ## Still open
+
+- **The process of an element hosted by a service.** A handle's process is
+  `AXUIElementGetPid` of its element, and an element inside a sandboxed app's open or save panel
+  may answer the panel service's pid (`com.apple.appkit.xpc.openAndSavePanelService`), not the
+  app's. Not verified. If it does, a hover, type or key by such a handle into a channel-launched
+  app misses its channel, and the background type can take a panel field in the person's own
+  app for one behind it. The fix would be to store the walked application's pid with the
+  handle. Maquette's underlay import panel is the first place to measure it.
 
 - **An application that takes the front when launched behind.** `launch` hands the front back when
   one does, and none has been seen to yet. The measurement is a launch of a few third-party

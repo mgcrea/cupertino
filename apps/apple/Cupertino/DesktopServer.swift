@@ -755,7 +755,7 @@ nonisolated enum DesktopServer {
           + "can tell, whether a handle still exists or an application is running, is found when "
           + "that step runs. A step that takes a 'handle' can name its element instead with "
           + "'match' ({\"id\", \"role\", \"name\", \"value\", "
-          + "\"window\"}, as find_elements matches) and 'bundleId': it is found when the step "
+          + "\"window\"}, as find_elements matches) and 'bundleId' or 'pid': it is found when the step "
           + "runs, waiting up to 'waitMs' (default \(matchWaitDefaultMs), at most "
           + "\(matchWaitCeilingMs)) for it to appear, so a step can press an item in a menu the "
           + "step before it opened. More than one match fails the step unless 'index' picks one. "
@@ -1006,7 +1006,7 @@ nonisolated enum DesktopServer {
     var args = args
     if pinnedVerbs.contains(verb) {
       do {
-        args = try pinned(args)
+        args = try pinned(args, scope: scope)
       } catch {
         return failed(id, error)
       }
@@ -1300,13 +1300,19 @@ nonisolated enum DesktopServer {
         // A drag inside one of our Debug builds with a channel. A drop on
         // another application needs the window server's drag session, so that
         // goes the old way, and so does a drop on another copy.
+        if fromSpec["handle"] is String {
+          try requireHandleAgrees(handlePid: start.pid, pid: pinnedPid(args))
+        }
         let press: (owner: String, pid: pid_t?)? =
           start.owner.map { ($0, start.pid) }
           ?? (args["bundleId"] as? String).map { ($0, pinnedPid(args)) }
-        if let press, end.owner == nil || end.owner == press.owner,
-          let channel = try channel(for: press.owner, pid: press.pid, scope: scope),
-          end.pid == nil || end.pid == channel.pid
-        {
+        let pressChannel = try press.flatMap {
+          try channel(for: $0.owner, pid: $0.pid, scope: scope)
+        }
+        let oneCopy =
+          (end.owner == nil || end.owner == press?.owner)
+          && (end.pid == nil || end.pid == pressChannel?.pid)
+        if let press, let channel = pressChannel, oneCopy {
           var command: [String: Any] = [
             "verb": "drag", "from": [start.point.x, start.point.y],
             "to": [end.point.x, end.point.y], "durationMs": durationMs,
@@ -1340,6 +1346,15 @@ nonisolated enum DesktopServer {
           (options.middle ? ["'button': \"middle\""] : [])
           + (options.modifiers.isEmpty ? [] : ["'modifiers'"]) + (options.paced ? ["'paced'"] : [])
         if !channelOnly.isEmpty {
+          // The press's app has a channel, and the drop is the reason.
+          if pressChannel != nil {
+            throw AccessibilityDriver.Failure.refused(
+              "A drag's \(channelOnly.joined(separator: " and ")) "
+                + "\(channelOnly.count == 1 ? "goes" : "go") only through a driving channel, which "
+                + "reaches only the copy that opened it, and this drag ends on another application "
+                + "or another copy, so nothing was posted. Keep both ends on the windows of the "
+                + "copy the press is in, or leave \(channelOnly.count == 1 ? "it" : "them") out.")
+          }
           throw channelOnlyRefusal(channelOnly, verb: "drag", owner: press?.owner)
         }
         if let press { try requireOneCopy(press.owner, pid: press.pid, verb: "drag") }
@@ -1388,6 +1403,7 @@ nonisolated enum DesktopServer {
           // the owner from the handle rather than from the arguments: the store
           // knows which application it came from and the caller can be wrong.
           let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
+          try requireHandleAgrees(handlePid: live.pid, pid: pinnedPid(args))
           target = live.point
           owner = live.bundleId
           if let channel = try channel(for: owner, pid: live.pid, scope: scope) {
@@ -1683,10 +1699,17 @@ nonisolated enum DesktopServer {
                 : " A channel opens only at launch: ask the person to quit it, then launch it "
                   + "again with channel: true.")
           } else if path != nil {
+            let copies =
+              launched.runningCopies > 1
+              ? "\(launched.runningCopies) copies of \(bundleId) are" : "A copy of \(bundleId) is"
             note =
-              "A copy of \(bundleId) is already running\(at) so no second one was started: a "
+              "\(copies) already running\(at) so no second one was started: a "
               + "copy is started beside another only with channel: true, and is named by its pid "
               + "afterwards. Ask the person to quit it, or launch this one with channel: true."
+          } else if launched.runningCopies > 1 {
+            note =
+              "\(launched.runningCopies) copies are already running; apple_desktop_list_apps "
+              + "lists each with its pid."
           } else if wantsChannel {
             note +=
               opened
@@ -1695,6 +1718,7 @@ nonisolated enum DesktopServer {
                 + "true, or start a Debug build beside it by 'path' with channel: true."
           }
           var answer: [String: Any] = ["bundleId": bundleId, "launched": false, "note": note]
+          // Only when one copy runs: with several, naming one would be a guess.
           if let pid = launched.runningPid { answer["pid"] = Int(pid) }
           return ok(id, answer)
         }
@@ -1717,6 +1741,20 @@ nonisolated enum DesktopServer {
             opened = find()
           }
           body["channel"] = opened
+          // Started beside another copy and opened no channel: the plain second
+          // copy a launch by path without a channel refuses to start. It would
+          // leave every bundleId verb refused and the session lane unable to
+          // tell the two apart, so the copy started seconds ago is quit again.
+          if !opened, launched.besideOthers, let pid = launched.pid {
+            let quit = AccessibilityDriver.quitLaunched(pid)
+            return failure(
+              id,
+              "\(path ?? bundleId) started beside another copy of it but opened no "
+                + "driving channel, so it was \(quit ? "quit again" : "asked to quit")"
+                + ": a second copy is only worth having driven through its channel. Only a Debug "
+                + "build that links SupportKitDriving and calls Driving.startIfRequested() at "
+                + "launch has one.")
+          }
           if !opened {
             body["channelNote"] =
               "No driving channel opened. Only a Debug build that links SupportKitDriving and "
@@ -2106,7 +2144,7 @@ nonisolated enum DesktopServer {
     _ step: [String: Any], scope: AccessibilityDriver.Scope
   ) throws -> String {
     let spec = step["match"] as? [String: Any] ?? [:]
-    let step = try pinned(step)
+    let step = try pinned(step, scope: scope)
     let bundleId = step["bundleId"] as? String ?? ""
     let waitMs = step["waitMs"] as? Int ?? matchWaitDefaultMs
     let outcome = try AccessibilityDriver.waitFor(
@@ -2391,6 +2429,7 @@ nonisolated enum DesktopServer {
   ) throws -> (bundleId: String, pid: pid_t?)? {
     if let handle = args["handle"] as? String {
       let owner = try AccessibilityDriver.ownerProcess(of: handle, scope: scope)
+      try requireHandleAgrees(handlePid: owner.pid, pid: pinnedPid(args))
       return (owner.bundleId, owner.pid)
     }
     return (args["bundleId"] as? String).map { ($0, pinnedPid(args)) }
@@ -2452,10 +2491,12 @@ nonisolated enum DesktopServer {
   ) throws -> (point: CGPoint, owner: String?, pid: pid_t?)? {
     if let handle = spec["handle"] as? String {
       let live = try AccessibilityDriver.hoverPoint(handle: handle, scope: scope)
+      try requireHandleAgrees(
+        handlePid: live.pid, pid: try pinnedPid(pinned(spec, scope: scope)))
       return (live.point, live.bundleId, live.pid)
     }
     guard let x = spec["x"] as? Double, let y = spec["y"] as? Double else { return nil }
-    let end = try pinned(spec)
+    let end = try pinned(spec, scope: scope)
     return (CGPoint(x: x, y: y), end["bundleId"] as? String, pinnedPid(end))
   }
 
@@ -2516,25 +2557,27 @@ nonisolated enum DesktopServer {
   /// The pid decides which copy; the bundle id it runs is what the reach is
   /// checked against, as it always was. Given both, they must agree: a caller
   /// that named Maquette and the pid of Safari is mistaken about one of them,
-  /// and acting on either would act on what it did not mean. A process with no
-  /// bundle id has nothing to check the reach against, so it is refused.
+  /// and acting on either would act on what it did not mean.
+  ///
+  /// **Out of reach, a pid says nothing about what runs as it.** The reach is
+  /// checked here, before any refusal names the process: otherwise an agent
+  /// scoped to the brokered applications, or lent one, could walk the pids and
+  /// read every running application's bundle id off the refusals, which
+  /// `list_apps` withholds on purpose. So a pid out of reach, one with no
+  /// bundle id to check the reach against, and one nothing runs as are refused
+  /// in the same words.
   static func pinned(
-    _ args: [String: Any],
+    _ args: [String: Any], scope: AccessibilityDriver.Scope,
     lookup: (pid_t) -> Process? = { pid in
       AccessibilityDriver.runningProcess(pid).map { Process(bundleId: $0.bundleId, name: $0.name) }
     }
   ) throws -> [String: Any] {
     guard let raw = args["pid"] else { return args }
     guard let pid = processId(raw) else { throw AccessibilityDriver.Failure.refused(pidShape) }
-    guard let process = lookup(pid) else {
+    guard let bundleId = lookup(pid)?.bundleId, scope.admits(bundleId) else {
       throw AccessibilityDriver.Failure.refused(
-        "No application is running as pid \(pid), so nothing was done. apple_desktop_list_apps "
-          + "lists each with its pid.")
-    }
-    guard let bundleId = process.bundleId else {
-      throw AccessibilityDriver.Failure.refused(
-        "pid \(pid) is \(process.name), which has no bundle identifier to check against this "
-          + "surface's reach, so nothing was done.")
+        "No application in reach is running as pid \(pid), so nothing was done. "
+          + "apple_desktop_list_apps lists those that are, each with its pid.")
     }
     if let named = args["bundleId"] as? String, named != bundleId {
       throw AccessibilityDriver.Failure.refused(
@@ -2564,6 +2607,20 @@ nonisolated enum DesktopServer {
         + "whichever of them is in front, so nothing was posted. A copy launched here with a "
         + "driving channel is driven by its pid alone: start one with apple_desktop_launch, "
         + "'path' and channel: true. Or ask the person to quit the other copy.")
+  }
+
+  /// Refuses a `pid` given beside a `handle` that belongs to another process.
+  ///
+  /// The handle decides, since the store knows which copy it was read from;
+  /// a pid that says otherwise means the caller is wrong about one of them,
+  /// and acting on the handle would act on the copy it did not mean. As a
+  /// `bundleId` that disagrees with a `pid` is refused. A handle whose process
+  /// cannot be read is left to decide alone.
+  private static func requireHandleAgrees(handlePid: pid_t?, pid: pid_t?) throws {
+    guard let handlePid, let pid, handlePid != pid else { return }
+    throw AccessibilityDriver.Failure.refused(
+      "The handle belongs to pid \(handlePid), not pid \(pid), so nothing was done. A handle "
+        + "reaches the copy it was read from: leave 'pid' out, or read that copy's handle.")
   }
 
   // ─── a channel into one of our own Debug builds ────────────────────────────
@@ -2619,6 +2676,10 @@ nonisolated enum DesktopServer {
     scope: AccessibilityDriver.Scope, timeout: TimeInterval = AppChannel.ackTimeout
   ) throws -> [String: Any] {
     guard scope.admits(owner) else { throw AccessibilityDriver.Failure.outOfScope(owner) }
+    // What the channel would refuse, refused before the session is admitted:
+    // a refused verb puts no card on screen and no countdown in front of
+    // anybody.
+    try channel.check(command)
     // Background only while the app is behind the person's: in front, the
     // command lands where they are typing, so it gets the countdown.
     // By process: the copy behind the person's own copy of the same app is
@@ -2961,8 +3022,8 @@ nonisolated enum DesktopServer {
 
       ## Name a step's element instead of passing its handle
 
-      In a `run`, a step that takes a `handle` can take `match` and `bundleId` instead, and
-      the element is found when the step runs:
+      In a `run`, a step that takes a `handle` can take `match` and `bundleId` instead, or
+      `pid` for one of several copies, and the element is found when the step runs:
       `{"tool": "press", "match": {"name": "Rewind code"}, "bundleId": "…"}`. That is how
       to choose an item in a context menu the step before opened, which a handle read before
       the run cannot reach. A match that finds several elements fails the step unless `index`

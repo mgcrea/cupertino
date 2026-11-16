@@ -249,16 +249,11 @@ nonisolated struct AppChannel {
     return line
   }
 
-  /// Send one command and wait for its answer. An `error` from the app is a
-  /// refusal carrying its message; no answer within `timeout` is a refusal too,
-  /// never a hang.
-  ///
-  /// **One command in flight per channel.** The app does not wait for one
-  /// command to finish before it performs the next, so a click sent while a
-  /// paced drag holds the button down would land in the middle of the drag,
-  /// and two hovers would sweep at once. A second connection driving the same
-  /// app waits here for the first command's answer, or its timeout.
-  func send(_ command: [String: Any], timeout: TimeInterval = ackTimeout) throws -> [String: Any] {
+  /// What `send` refuses before it writes anything: a point past any display,
+  /// or a version 2 field to a version 1 app. Asked by the desktop server before
+  /// it admits a session too, since a refused verb must put nothing on screen;
+  /// `send` asks again, so no caller can skip it.
+  func check(_ command: [String: Any]) throws {
     if let problem = Self.pointProblem(command) {
       throw AccessibilityDriver.Failure.refused(problem)
     }
@@ -270,6 +265,19 @@ nonisolated struct AppChannel {
           + "was sent. Rebuild it against swift-support-kit 1.25.0 or later, then launch it again "
           + "with channel: true.")
     }
+  }
+
+  /// Send one command and wait for its answer. An `error` from the app is a
+  /// refusal carrying its message; no answer within `timeout` is a refusal too,
+  /// never a hang.
+  ///
+  /// **One command in flight per channel.** The app does not wait for one
+  /// command to finish before it performs the next, so a click sent while a
+  /// paced drag holds the button down would land in the middle of the drag,
+  /// and two hovers would sweep at once. A second connection driving the same
+  /// app waits here for the first command's answer, or its timeout.
+  func send(_ command: [String: Any], timeout: TimeInterval = ackTimeout) throws -> [String: Any] {
+    try check(command)
 
     let line = Self.line(for: directory)
     line.busy.lock()

@@ -351,6 +351,7 @@ background-type-live: ## Type into a TextEdit started behind, through this check
 # product; only the fixture below does.
 SUPPORT_KIT ?= $(HOME)/Projects/swift-support-kit
 CHANNEL_FIXTURE := apps/apple/.build/channel-fixture/CupertinoChannelFixture.app
+CHANNEL_FIXTURE_PLAIN := apps/apple/.build/channel-fixture/plain/CupertinoChannelFixture.app
 
 channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; it never comes forward (by hand)
 	@# Not a gate: CI has no swift-support-kit checkout. It posts nothing to the
@@ -374,6 +375,14 @@ channel-check: ## Drive a Debug fixture through its SupportKitDriving channel; i
 		'</dict></plist>' > $(CHANNEL_FIXTURE)/Contents/Info.plist
 	@codesign --force --sign - $(CHANNEL_FIXTURE) 2>/dev/null
 	@/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f $(CHANNEL_FIXTURE)
+	@# The same app built without DEBUG, so it opens no channel: what a launch
+	@# beside a running copy with channel: true must not leave running.
+	@mkdir -p $(CHANNEL_FIXTURE_PLAIN)/Contents/MacOS
+	@swiftc -O -swift-version 6 -parse-as-library \
+		-o $(CHANNEL_FIXTURE_PLAIN)/Contents/MacOS/CupertinoChannelFixture \
+		$(SUPPORT_KIT)/Sources/SupportKitDriving/*.swift scripts/channel-fixture.swift
+	@cp $(CHANNEL_FIXTURE)/Contents/Info.plist $(CHANNEL_FIXTURE_PLAIN)/Contents/Info.plist
+	@codesign --force --sign - $(CHANNEL_FIXTURE_PLAIN) 2>/dev/null
 	@swiftc -O -o apps/apple/.build/channel-check \
 		apps/apple/Cupertino/InProcessRPC.swift \
 		apps/apple/Cupertino/InProcessCalls.swift \

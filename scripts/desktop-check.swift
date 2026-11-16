@@ -1679,9 +1679,11 @@ struct DesktopCheck {
       default: return nil
       }
     }
-    func pinned(_ args: [String: Any]) -> ([String: Any]?, String) {
+    func pinned(_ args: [String: Any], scope: AccessibilityDriver.Scope = .any) -> (
+      [String: Any]?, String
+    ) {
       do {
-        return (try DesktopServer.pinned(args, lookup: lookup), "")
+        return (try DesktopServer.pinned(args, scope: scope, lookup: lookup), "")
       } catch {
         return (nil, error.localizedDescription)
       }
@@ -1697,10 +1699,42 @@ struct DesktopCheck {
       "a pid and a bundle id that disagree are refused, naming both",
       disagree.0 == nil && disagree.1.contains("io.example.app")
         && disagree.1.contains("io.example.other"))
+    // Out of reach, a pid must not say what runs as it: walking pids would
+    // list every application the scope hides from list_apps. So it is refused
+    // in the words a pid nothing runs as gets, and a pid with no bundle id too.
+    let notRunning = pinned(["pid": 13]).1
     let unbundled = pinned(["pid": 12])
     check(
-      "a pid with no bundle id is refused, since nothing can check its reach",
-      unbundled.0 == nil && unbundled.1.contains("no bundle identifier"))
+      "a pid with no bundle id is refused as a pid with no application in reach",
+      unbundled.0 == nil && !unbundled.1.contains("daemon")
+        && unbundled.1 == notRunning.replacingOccurrences(of: "13", with: "12"))
+    let hidden = pinned(["pid": 11], scope: .only(["io.example.other"]))
+    check(
+      "a pid out of reach is refused without naming its application",
+      hidden.0 == nil && !hidden.1.contains("io.example.app") && !hidden.1.contains("Example")
+        && hidden.1 == notRunning.replacingOccurrences(of: "13", with: "11"))
+    let hiddenDecoy = pinned(
+      ["pid": 11, "bundleId": "io.example.other"], scope: .only(["io.example.other"]))
+    check(
+      "and so is one given beside a bundle id in reach that it does not run",
+      hiddenDecoy.0 == nil && !hiddenDecoy.1.contains("io.example.app"))
+    // A running application the brokered reach leaves out. Refused before
+    // anything is looked up or activated, so it is safe with a grant too.
+    if let outside = NSWorkspace.shared.runningApplications.first(where: { app in
+      guard app.activationPolicy == .regular, let id = app.bundleIdentifier else { return false }
+      return !AccessibilityDriver.brokeredBundleIds.contains(id)
+        && !AccessibilityDriver.Scope.isCupertino(id)
+    }), let outsideId = outside.bundleIdentifier {
+      let (text, failed) = callText(
+        "apple_desktop_activate", ["pid": Int(outside.processIdentifier)], writes: true)
+      check(
+        "through the server, a pid out of the brokered reach names nothing",
+        failed && text.contains("\(outside.processIdentifier)") && !text.contains(outsideId))
+    } else {
+      skip(
+        "through the server, a pid out of the brokered reach names nothing",
+        "no running application is outside the brokered reach")
+    }
     check(
       "a bundle id alone passes through as it was",
       pinned(["bundleId": "io.example.app"]).0?["pid"] == nil)

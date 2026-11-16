@@ -387,19 +387,28 @@ struct ChannelCheck {
     let firstTaps = { text(find(window, "nsTaps")) }
     let secondTaps = { secondWindow.map { text(find($0, "nsTaps")) } ?? "?" }
     let before = firstTaps()
+    // A label's value can trail the ack by a run-loop turn: read it until it
+    // holds, for a second at most.
+    func soon(_ holds: () -> Bool) -> Bool {
+      for _ in 0..<20 {
+        if holds() { return true }
+        Thread.sleep(forTimeInterval: 0.05)
+      }
+      return holds()
+    }
     // The same point: both windows sit in one place, one over the other.
     let toSecond = call("apple_desktop_click", ["x": b.x, "y": b.y, "pid": secondPid])
     print("       to the second: \(toSecond)")
     check(
       "a click by pid reaches that copy through its channel",
       toSecond["lane"] as? String == "channel" && toSecond["pid"] as? Int == secondPid
-        && secondTaps() == "1")
+        && soon { secondTaps() == "1" })
     check("and not the other", firstTaps() == before)
     let toFirst = call(
       "apple_desktop_click", ["x": b.x, "y": b.y, "pid": firstPid, "bundleId": fixture])
     check(
       "a click by pid and bundle id reaches the first",
-      toFirst["pid"] as? Int == firstPid && firstTaps() == "\((Int(before) ?? 0) + 1)"
+      toFirst["pid"] as? Int == firstPid && soon { firstTaps() == "\((Int(before) ?? 0) + 1)" }
         && secondTaps() == "1")
     let mismatched = call(
       "apple_desktop_click", ["x": b.x, "y": b.y, "pid": firstPid, "bundleId": "com.apple.finder"])
@@ -423,6 +432,38 @@ struct ChannelCheck {
       "a scroll by pid reaches that copy only",
       scrolledSecond["pid"] as? Int == secondPid && secondScroll.hasSuffix("dy -12")
         && !scrollLog().hasSuffix("dy -12"))
+    let crossed = call(
+      "apple_desktop_hover", ["handle": foundHandle ?? "", "pid": firstPid, "durationMs": 50])
+    check(
+      "a pid beside a handle of the other copy reaches neither",
+      crossed["isError"] as? Bool == true
+        && (crossed["text"] as? String ?? "").contains("\(secondPid), not pid \(firstPid)"))
+    let acrossCopies = call(
+      "apple_desktop_drag",
+      [
+        "from": ["x": p.x - 50, "y": p.y, "pid": secondPid],
+        "to": ["x": p.x + 50, "y": p.y, "pid": firstPid], "button": "middle",
+      ])
+    print("       middle drag across copies: \(acrossCopies["text"] ?? acrossCopies)")
+    check(
+      "a middle-button drag from one copy onto the other is refused, blaming the drop",
+      acrossCopies["isError"] as? Bool == true
+        && (acrossCopies["text"] as? String ?? "").contains("another copy"))
+    // The same app built without DEBUG: it opens no channel, so the copy
+    // started beside the others is quit again.
+    let plainPath =
+      FileManager.default.currentDirectoryPath
+      + "/apps/apple/.build/channel-fixture/plain/CupertinoChannelFixture.app"
+    let plainLaunch = call("apple_desktop_launch", ["path": plainPath, "channel": true])
+    print("       beside, without a channel: \(plainLaunch["text"] ?? plainLaunch)")
+    Thread.sleep(forTimeInterval: 0.3)
+    check(
+      "a copy started beside the others that opens no channel is quit again, and refused",
+      plainLaunch["isError"] as? Bool == true
+        && (plainLaunch["text"] as? String ?? "").contains("opened no driving channel")
+        && NSRunningApplication.runningApplications(withBundleIdentifier: fixture)
+          .filter { !$0.isTerminated }.count == 2
+    )
     check("neither copy became active", !app.isActive && second?.isActive != true)
 
     print("\nand the person's Mac")

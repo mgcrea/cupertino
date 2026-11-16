@@ -1407,11 +1407,11 @@ nonisolated enum AccessibilityDriver {
         lastError = nil
       } catch Failure.busy(let what) {
         lastError = Failure.busy(what).errorDescription
-      } catch  where quitFailure(pid: target, bundleId: bundleId) != nil {
+      } catch {
         // Gone from Launch Services before the kernel check above saw it.
-        throw quitFailure(pid: target, bundleId: bundleId)!
-      } catch Failure.appNotRunning {
-        throw Failure.appNotRunning(bundleId)
+        if let gone = quitFailure(pid: target, bundleId: bundleId) { throw gone }
+        if case Failure.appNotRunning = error { throw Failure.appNotRunning(bundleId) }
+        throw error
       }
       walks += 1
 
@@ -2544,8 +2544,13 @@ nonisolated enum AccessibilityDriver {
     var pid: pid_t?
     /// Where the copy already running lives, when nothing was started.
     var runningAt: String?
-    /// And its process.
+    /// And its process. Both nil when several copies run, since naming one of
+    /// them would be a guess; `runningCopies` says how many.
     var runningPid: pid_t?
+    var runningCopies = 0
+    /// It was started as a new instance beside other copies of the same
+    /// application, which only a driving channel makes worth having.
+    var besideOthers = false
   }
 
   /// The bundle identifier of the application at `path`, which a launch by path
@@ -2604,8 +2609,11 @@ nonisolated enum AccessibilityDriver {
       : running.first
     if let blocking {
       var already = Launched(launched: false)
-      already.runningAt = blocking.bundleURL?.path
-      already.runningPid = pid(of: blocking)
+      already.runningCopies = beside ? 1 : running.count
+      if already.runningCopies == 1 {
+        already.runningAt = blocking.bundleURL?.path
+        already.runningPid = pid(of: blocking)
+      }
       return already
     }
     let url: URL
@@ -2665,6 +2673,7 @@ nonisolated enum AccessibilityDriver {
     // slow disk is much slower than a warm one.
     var result = Launched(launched: true)
     if case .success(let pid) = box.result { result.pid = pid }
+    result.besideOthers = config.createsNewApplicationInstance
     var readyAt: Date?
     // By the pid it started when there is one: beside another copy, a lookup
     // by bundle id is ambiguous.
@@ -2698,9 +2707,25 @@ nonisolated enum AccessibilityDriver {
     let inFront = result.pid.map { frontmostPid() == $0 } ?? (frontmostBundleId() == bundleId)
     if let before, inFront, before != bundleId || (beforePid != nil && beforePid != result.pid) {
       result.tookFront = true
-      result.handedBack = handBack(to: before, pid: before == bundleId ? beforePid : nil)
+      // `handBack(to:pid:)` falls back to the bundle id if that process quit.
+      result.handedBack = handBack(to: before, pid: beforePid)
     }
     return result
+  }
+
+  /// Quit a process `launch` just started, which holds nothing of the
+  /// person's yet: asked first, then forced after two seconds. Whether it is
+  /// gone.
+  static func quitLaunched(_ pid: pid_t) -> Bool {
+    guard let app = NSRunningApplication(processIdentifier: pid) else { return true }
+    app.terminate()
+    let deadline = Date().addingTimeInterval(2)
+    while !app.isTerminated && kill(pid, 0) == 0 && Date() < deadline { usleep(50_000) }
+    if !app.isTerminated && kill(pid, 0) == 0 {
+      app.forceTerminate()
+      usleep(200_000)
+    }
+    return kill(pid, 0) != 0
   }
 
   /// How long a launched application that answers with no window is given to
