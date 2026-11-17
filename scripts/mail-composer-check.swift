@@ -728,9 +728,27 @@ struct MailComposerCheck {
     front: FakeFront = FakeFront(), grace: TimeInterval = 0.3, handle: String? = nil
   ) -> (result: [String: Any], board: FakeBoard, front: FakeFront) {
     let result = MailComposer.edit(
-      fake, request: request, board: board, front: front, handle: handle, readbackTimeout: 0.2,
-      filesTimeout: 0.2, grace: grace, tabTimeout: 0.6)
+      fake, request: request, board: board, front: front, handle: handle,
+      readbackTimeout: deadline(lag: fake.lagReads, tight: 0.2),
+      filesTimeout: 0.2, grace: grace,
+      tabTimeout: deadline(lag: fake.group?.selectLag ?? 0, tight: 0.6))
     return (result, board, front)
+  }
+
+  /// The deadline a wait is given for a fake that lands `lag` READS late.
+  ///
+  /// The composer waits by the clock, polling every 25 or 50 ms, and the
+  /// fakes count reads. A loaded CI runner stalls between reads, so a paste
+  /// three reads late took longer than 0.2 s to show, and a tab three reads
+  /// late longer than 0.6 s: "a late paste is waited for" and "a background
+  /// tab is edited and saved" failed five macOS runs running at 1.41.0, and
+  /// both reproduce here with a 70 ms and a 200 ms stall per read. A lag
+  /// meant to land is given the time it needs whatever the runner does; the
+  /// wait returns as soon as it lands, so a passing run is no slower. A lag
+  /// meant never to land (`selectLag = 1000`) keeps the tight deadline, so
+  /// the refusal it tests still comes in a fraction of a second.
+  static func deadline(lag: Int, tight: TimeInterval) -> TimeInterval {
+    (1..<100).contains(lag) ? 5 : tight
   }
 
   static func capability(_ result: [String: Any]) -> String? {
@@ -1600,7 +1618,11 @@ struct MailComposerCheck {
       let screen = FakeScreen(code)
       let result = confirm(screen)
       check("another regular app in front refuses", !result.posted)
-      check("at once, with no wait", result.elapsed < 0.1 && screen.reads == 1)
+      // One read is the "no wait"; the clock only has to stay under the
+      // second's grace a wait would take, which a stalled runner cannot fake.
+      check(
+        "at once, with no wait",
+        screen.reads == 1 && result.elapsed < AccessibilityDriver.frontmostGrace)
       check("naming it", result.text.contains(code))
     }
     do {
@@ -1654,12 +1676,19 @@ struct MailComposerCheck {
     }
     do {
       // The previous edit's hand-back, landing while this one activates.
+      // The fake lands it two READS on, and steadiness is measured in
+      // seconds: with the default 0.15 s, a runner stalling 150 ms between
+      // reads saw Mail steady before the hand-back landed (failed on CI at
+      // 1.34.0, 1.35.0, 1.38.0 and 1.41.0). What is checked is the rule, a
+      // hand-back inside the window is not pasted over, so the window is one
+      // a stall cannot outrun.
       let screen = FakeScreen(mail)
       screen.lag = 2
       _ = screen.activate(code)
       check(
         "a hand-back landing during activation is not pasted over",
-        !AXComposerWindow.settled(timeout: 0.4, focused: { true }, frontmost: screen.read))
+        !AXComposerWindow.settled(
+          stable: 1, timeout: 1.2, focused: { true }, frontmost: screen.read))
     }
     do {
       let screen = FakeScreen(mail)
@@ -1814,7 +1843,14 @@ struct MailComposerCheck {
         "text pasted into the quote is refused as confirmation",
         capability(result) == "confirmation")
       check("and never saved", fake.saves == 0 && !fake.log.contains("save"))
-      check("as soon as the quote reads differently", Date().timeIntervalSince(started) < 0.15)
+      // Counted in reads, not seconds: the first read after the paste sees
+      // the quote changed and the poll stops there, rather than reading on
+      // to its deadline. It was `< 0.15 s`, which a runner stalling between
+      // reads fails with nothing wrong.
+      let readsAfterPaste = fake.log.drop(while: { $0 != "paste" }).filter { $0 == "read" }
+      check(
+        "as soon as the quote reads differently",
+        readsAfterPaste.count == 1 && Date().timeIntervalSince(started) < 5)
       check("board and front handed back", handedBack(fake, board, front))
       check(
         "saying Mail may have autosaved it, and to check Drafts",

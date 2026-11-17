@@ -46,6 +46,10 @@ field takes typing by Accessibility.
 
 - `make channel-check` builds swift-support-kit 1.25.1's `SupportKitDrivingCatch`, which it no
   longer compiled without, and measures two copies captured by pid, double clicks and a ⌘Q.
+- `make mail-composer-check` no longer fails on a slow CI runner. Its fakes land a paste, a tab
+  or a hand-back some reads late while the composer waits by the clock, so a runner stalling
+  between reads ran out the deadline first. A lag meant to land now gets the time it needs, and
+  "at once" is counted in reads, not seconds.
 
 ## [1.40.0] - 2026-11-16
 
