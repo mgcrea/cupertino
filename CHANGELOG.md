@@ -6,13 +6,16 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.41.0`,
-`notes-v1.41.0`, `reminders-v1.41.0`, `core-v1.41.0` for the npm packages, and `app-v1.41.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.42.0`,
+`notes-v1.42.0`, `reminders-v1.42.0`, `core-v1.42.0` for the npm packages, and `app-v1.42.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.42.0] - 2026-11-17
+
+**Keep working while an agent drives behind you.** Desktop's notice says so when nothing it does
+can reach your keyboard or mouse, and asks for hands off only once something can.
 
 ### Changed
 
@@ -26,6 +29,11 @@ summary.
   background calls are no longer held for a countdown or a question while you type, and the
   Simulator's `press` behind your apps works the same way. `apple_desktop_diagnostics` says which
   card is up, and the server's instructions tell agents how to keep a session blue.
+
+### Internal
+
+- `make mail-composer-check`'s front checks give a lag counted in reads the time it needs, so a
+  stalled CI runner no longer fails them by the clock.
 
 ## [1.41.0] - 2026-11-16
 
@@ -3687,7 +3695,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.41.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.42.0...HEAD
+[1.42.0]: https://github.com/mgcrea/cupertino/compare/app-v1.41.0...app-v1.42.0
 [1.41.0]: https://github.com/mgcrea/cupertino/compare/app-v1.40.0...app-v1.41.0
 [1.40.0]: https://github.com/mgcrea/cupertino/compare/app-v1.39.0...app-v1.40.0
 [1.39.0]: https://github.com/mgcrea/cupertino/compare/app-v1.38.0...app-v1.39.0
