@@ -1566,8 +1566,13 @@ struct MailComposerCheck {
       var logs: [String] = []
       var elapsed: TimeInterval = 0
     }
+    // `grace` is generous by default because a script lands in READS and the
+    // grace runs by the clock: a runner stalling between reads ran out 0.4 s
+    // before the read that answers, and the refusal then gave another reason
+    // ("saying so" failed notes-v1.41.0). A case meant to run the grace out
+    // passes a tight one.
     func confirm(
-      _ screen: FakeScreen, grace: TimeInterval = 0.4, still: @escaping () -> Bool = { true },
+      _ screen: FakeScreen, grace: TimeInterval = 5, still: @escaping () -> Bool = { true },
       stopped: Bool = false
     ) -> Confirmed {
       var out = Confirmed()
@@ -1660,7 +1665,9 @@ struct MailComposerCheck {
     do {
       let screen = FakeScreen(mail)
       screen.script = (0..<60).map { $0 % 2 == 0 ? nil : mail }
-      check("a front that keeps flickering is never taken as Mail's", !confirm(screen).posted)
+      check(
+        "a front that keeps flickering is never taken as Mail's",
+        !confirm(screen, grace: 0.4).posted)
     }
 
     // Activation, `AXComposerWindow.activate`.
@@ -1669,7 +1676,7 @@ struct MailComposerCheck {
       screen.lag = 3
       _ = screen.activate(mail)
       let settled = AXComposerWindow.settled(
-        timeout: 1, focused: { true }, frontmost: screen.read)
+        timeout: 10, focused: { true }, frontmost: screen.read)
       check(
         "activation waits until Mail holds the front, not only the window's focus",
         settled && screen.front == mail)
@@ -1698,19 +1705,21 @@ struct MailComposerCheck {
     }
 
     // The hand-back at the end of an edit, `LiveFront.give`.
+    // A hand-back meant to land is given a deadline its lag, counted in reads,
+    // cannot outrun on a stalled runner; one meant never to land keeps 0.3 s.
     do {
       let screen = FakeScreen(mail)
       screen.lag = 4
       let outcome = LiveFront.handBack(
         to: code, driven: mail, frontmost: screen.read, activate: screen.activate,
-        isRegularApp: screen.isRegular)
+        isRegularApp: screen.isRegular, timeout: 10)
       check(
         "the hand-back is waited for until it lands", outcome == .landed && screen.front == code)
       // The next edit brings Mail forward: nothing of this hand-back is left to land.
       screen.front = mail
       check(
         "so a late hand-back cannot land in the next edit",
-        AXComposerWindow.settled(timeout: 0.5, focused: { true }, frontmost: screen.read))
+        AXComposerWindow.settled(timeout: 5, focused: { true }, frontmost: screen.read))
       check("and the front was asked for once", screen.activations == [code])
     }
     do {
@@ -1720,7 +1729,7 @@ struct MailComposerCheck {
       screen.script = [nil, nil]
       let outcome = LiveFront.handBack(
         to: code, driven: mail, frontmost: screen.read, activate: screen.activate,
-        isRegularApp: screen.isRegular)
+        isRegularApp: screen.isRegular, timeout: 10, grace: 5)
       check(
         "a wrong read does not skip the hand-back", outcome == .landed && screen.front == code)
     }
