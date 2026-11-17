@@ -285,9 +285,12 @@ struct MenuBarLabel: View {
       return "Cupertino — about to drive \(name)"
     }
     if let name = driving.displayName, let kind = driving.kind {
-      return kind == .driving
-        ? "Cupertino — driving \(name), do not use the keyboard or mouse"
-        : "Cupertino — \(kind.infoTitle(name))"
+      if kind == .driving {
+        return driving.handsOff
+          ? "Cupertino — driving \(name), do not use the keyboard or mouse"
+          : "Cupertino — using \(name) behind your apps, you can keep working"
+      }
+      return "Cupertino — \(kind.infoTitle(name))"
     }
     return sessions.live.isEmpty ? "Cupertino" : "Cupertino — a client is connected"
   }
@@ -1211,13 +1214,25 @@ struct DrivingNotice: View {
     } else if let name = driving.displayName, let kind = driving.kind {
       VStack(alignment: .leading, spacing: 4) {
         if kind == .driving {
-          Label("Driving \(name)", systemImage: "cursorarrow.rays")
-            .foregroundStyle(.orange)
-            .font(.callout.weight(.medium))
-          Text("Please don't use the keyboard or mouse until this finishes.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+          if driving.handsOff {
+            Label("Driving \(name)", systemImage: "cursorarrow.rays")
+              .foregroundStyle(.orange)
+              .font(.callout.weight(.medium))
+            Text("Please don't use the keyboard or mouse until this finishes.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          } else {
+            // A session that has only reached an app behind theirs, through
+            // its channel or Accessibility: nothing of theirs is contended.
+            Label("Using \(name)", systemImage: "macwindow.on.rectangle")
+              .foregroundStyle(.blue)
+              .font(.callout.weight(.medium))
+            Text("Behind your apps. You can keep working.")
+              .font(.caption)
+              .foregroundStyle(.secondary)
+              .fixedSize(horizontal: false, vertical: true)
+          }
           // The same Stop as the card's cross, for somebody who went to the
           // menu bar instead. Both end the session and refuse the agent's next
           // verb for a while, so it cannot simply start another.

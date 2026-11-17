@@ -28,6 +28,12 @@ import Observation
 /// mid-sequence cannot swap the orange card for one that says keep working.
 /// `VisibleTools` decides which tier a Node call gets.
 ///
+/// A session's own card has two colours too, and they are not these tiers. It
+/// is blue, "You can keep working", while every call in it left the person's
+/// input alone (`DrivingPolicy.Tier`, held by `DrivingSession`), and orange
+/// from the first that did not. Either way it is a driving card: it carries the
+/// Stop cross, and an info notice does not replace it.
+///
 /// ## A deadline, held open by a session
 ///
 /// Each verb still pushes a deadline `linger` seconds forward, and that is all
@@ -74,7 +80,15 @@ final class DriveActivity {
     return state.target
   }
 
-  nonisolated static func record(_ bundleId: String) {
+  /// A driving call went out to `bundleId`.
+  ///
+  /// `leavesInputAlone` is the lane's answer (`DrivingPolicy.leavesInputAlone`),
+  /// and only a call that also told `DrivingSession.admit` so may pass it. Any
+  /// other call turns an open session's card orange until it ends, so input
+  /// recorded here without passing that admission, as Mail's compose path does,
+  /// is never shown as "You can keep working".
+  nonisolated static func record(_ bundleId: String, leavesInputAlone: Bool = false) {
+    if !leavesInputAlone { DrivingSession.contended() }
     stateLock.lock()
     state = (bundleId, Date().addingTimeInterval(linger))
     stateLock.unlock()
@@ -156,12 +170,23 @@ final class DriveActivity {
   /// What an open session is driving, which is what Stop acts on, on the card
   /// and in the menu bar.
   private(set) var sessionTarget: String?
-  private var handedBack: (target: String, restored: String?, until: Date)?
+  private var handedBack:
+    (target: String, restored: String?, tier: DrivingPolicy.Tier, until: Date)?
   private var expiry: Date?
   private var timer: Timer?
+  /// The open session's `DrivingSession.tier`, copied here on every render so
+  /// the popover and the menu bar label observe it. Hands off when there is
+  /// none: a driving notice without a session is a borrowed driver's, which
+  /// posts.
+  private(set) var sessionTier: DrivingPolicy.Tier = .handsOff
 
-  /// Whether synthetic input is being posted, which is what the orange card says.
+  /// Whether a driving notice or session is up, of either colour. What an info
+  /// notice yields to.
   var isDriving: Bool { kind == .driving }
+
+  /// Whether the card asks for hands off the keyboard and mouse: driving,
+  /// unless it is a session every call of which left the person's input alone.
+  var handsOff: Bool { kind == .driving && (sessionTarget == nil || sessionTier == .handsOff) }
 
   /// Whether any notice is up, of either tier, or the person is being asked.
   var isActive: Bool { target != nil || prompt != nil }
@@ -198,14 +223,16 @@ final class DriveActivity {
     began(bundleId, .driving)
   }
 
-  func sessionEnded(_ bundleId: String, restored: String?) {
+  func sessionEnded(_ bundleId: String, restored: String?, tier: DrivingPolicy.Tier = .handsOff) {
     sessionTarget = nil
     if kind == .driving {
       target = nil
       kind = nil
       expiry = nil
     }
-    handedBack = (bundleId, restored, Date().addingTimeInterval(DrivingSession.handBackLinger))
+    handedBack = (
+      bundleId, restored, tier, Date().addingTimeInterval(DrivingSession.handBackLinger)
+    )
     render()
     startTimer()
   }
@@ -246,18 +273,25 @@ final class DriveActivity {
   /// presses nor the half-second sweep rebuilds a window.
   private func render() {
     let overlay = DrivingOverlay.shared
+    // Read on every render, which the half-second sweep repeats, so a tier the
+    // session's own sweep turned orange reaches the card within that.
+    let tier = DrivingSession.tier() ?? .handsOff
+    if sessionTier != tier { sessionTier = tier }
     if let prompt {
       overlay.show(
         bundleId: prompt.target, name: DrivingSession.appName(prompt.target), phase: prompt.phase)
     } else if let target, let kind {
       // The cross only while a session is open: it is the session it stops.
       let phase: DrivingOverlay.Phase =
-        kind == .driving && sessionTarget != nil ? .holding : .notice(kind)
+        kind == .driving && sessionTarget != nil
+        ? (tier == .handsOff ? .holding : .holdingBehind) : .notice(kind)
       overlay.show(bundleId: target, name: displayName ?? target, phase: phase)
     } else if let handedBack {
       overlay.show(
         bundleId: handedBack.target, name: DrivingSession.appName(handedBack.target),
-        phase: .done(restoredName: handedBack.restored.map(DrivingSession.appName)))
+        phase: .done(
+          restoredName: handedBack.restored.map(DrivingSession.appName),
+          wasHandsOff: handedBack.tier == .handsOff))
     } else {
       overlay.hide()
     }

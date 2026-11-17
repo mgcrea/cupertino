@@ -801,9 +801,10 @@ nonisolated enum DesktopServer {
           "Hand the Mac back when you have finished driving. Ends the driving session, takes "
           + "Cupertino's notice off the screen, and brings back the application the person was "
           + "using before it began, unless they have already switched away themselves. Call it as "
-          + "soon as a sequence is done: until then the person sees the driven application in "
-          + "front and a notice asking them not to touch anything, and cannot tell a pause from "
-          + "the end. Safe to call when nothing is being driven.",
+          + "soon as a sequence is done: until then the notice stays up and they cannot tell a "
+          + "pause from the end. It asks them not to use the keyboard or mouse once any call has "
+          + "posted to the session or brought an application forward, and otherwise tells them "
+          + "they can keep working. Safe to call when nothing is being driven.",
         "inputSchema": empty,
         "annotations": ["readOnlyHint": false, "destructiveHint": false, "idempotentHint": true],
       ],
@@ -2863,11 +2864,15 @@ nonisolated enum DesktopServer {
     // command lands where they are typing, so it gets the countdown.
     // By process: the copy behind the person's own copy of the same app is
     // behind, though the two share a bundle id.
+    // Behind, it also leaves the person's input alone, so the card says they
+    // can keep working (`DrivingPolicy.Tier`). A verb whose app has no channel
+    // never comes here: it takes the session lane, and the card goes orange.
+    let behind = DrivingPolicy.isBackground(
+      target: channel.pid, frontmost: AccessibilityDriver.frontmostPid())
+    let alone = DrivingPolicy.leavesInputAlone(.channel, behind: behind)
     try DrivingSession.admit(
-      owner,
-      background: DrivingPolicy.isBackground(
-        target: channel.pid, frontmost: AccessibilityDriver.frontmostPid()))
-    DriveActivity.record(owner)
+      owner, pid: channel.pid, background: behind, leavesInputAlone: alone)
+    DriveActivity.record(owner, leavesInputAlone: alone)
     return try channel.send(command, timeout: timeout)
   }
 
@@ -2995,7 +3000,8 @@ nonisolated enum DesktopServer {
       `apple_desktop_launch` starts an application that is not running, behind the one in front.
 
       Driving is a session the person at the keyboard can see. The first driving call while they
-      are using the Mac may wait a few seconds while Cupertino warns or asks them. If it comes
+      are using the Mac may wait a few seconds while Cupertino warns or asks them, unless it goes
+      through a driving channel or Accessibility into an application behind theirs. If it comes
       back saying they cancelled or said no, nothing happened: ask them in the conversation, do
       not retry. They can also stop a session part way through; a call refused because they
       stopped it means the same. Send a burst as one `apple_desktop_run`. When you are done, call
@@ -3186,9 +3192,17 @@ nonisolated enum DesktopServer {
       After that, every call goes straight through until the session ends. Call
       `apple_desktop_release` when you are done. It takes the notice down and brings back the
       application they were in, unless they have switched away themselves. Leaving it out is not
-      free: they see the driven application in front and a notice asking them not to touch
-      anything, and cannot tell a pause from the end. A session with no call for a while ends
-      on its own.
+      free: the notice stays up and they cannot tell a pause from the end. A session with no call
+      for a while ends on its own.
+
+      What the notice says depends on the lane each call took, not on the verb. A call through a
+      driving channel (`lane: channel`), and a `press`, `press_menu`, `select`, `set_value` or
+      `focus`, into an application behind the one they are using reaches nothing of theirs: it
+      is not held for a countdown or a question, and the notice says Cupertino is using that
+      application and they can keep working. Any other call, or that application coming in
+      front, and it asks them not to use the keyboard or mouse until the session ends. So a
+      session made only of channel verbs and Accessibility presses into an application behind
+      theirs leaves them free to work; keep it that way when you can.
 
       `apple_desktop_run` takes a whole sequence in one call and stops at the first step that
       fails. Pass `releaseAfter` to hand the Mac back once every step completed.

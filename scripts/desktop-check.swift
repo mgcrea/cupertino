@@ -1111,6 +1111,78 @@ struct DesktopCheck {
       thenFront.wait(timeout: .now() + 2) == .success)
     DrivingSession.release(.agent)
 
+    // Which card the session shows, from the lane each call took. A pid
+    // nothing runs as, and a front read handed in, so nothing here depends on
+    // what is on this Mac's screen. Admitted on the main thread with the
+    // person typing (`asked`, input 0 s ago): a call that may take the front
+    // would be asked, and would never come back here.
+    let behindCopy: pid_t = 999_999
+    let theirCopy: pid_t = 999_998
+    func channelCall() {
+      try? DrivingSession.admit(
+        driven, pid: behindCopy, background: true, leavesInputAlone: true, settings: asked,
+        secondsSinceInput: 0)
+      DriveActivity.record(driven, leavesInputAlone: true)
+    }
+    channelCall()
+    check(
+      "a channel call behind the person's app opens a session that says keep working",
+      DrivingSession.target() == driven && DrivingSession.tier() == .keepWorking)
+    check(
+      "diagnostics says which card is up",
+      DrivingSession.diagnostics()?["notice"] as? String == "keepWorking")
+    channelCall()
+    DrivingSession.sweep(settings: quiet, frontmost: { theirCopy })
+    check(
+      "another one, and their own copy in front, leave it blue",
+      DrivingSession.tier() == .keepWorking)
+    // `announceSessionInput`'s pair: admitted on the session lane, then recorded.
+    // The session is quiet, so the call is put to the decision; `quiet` settings
+    // open it at once.
+    try? DrivingSession.admit(driven, settings: quiet, secondsSinceInput: 0)
+    DriveActivity.record(driven)
+    check("a session-lane call after it turns it hands off", DrivingSession.tier() == .handsOff)
+    channelCall()
+    check("and a channel call after that does not turn it back", DrivingSession.tier() == .handsOff)
+    check(
+      "the release says which card it ended on",
+      DrivingSession.release(.agent)?.tier == .handsOff)
+    // The incident's last step: a release in a blue session takes the card
+    // down like any other. What the main actor then draws is the app's to show.
+    channelCall()
+    let blueRelease = DrivingSession.release(.agent)
+    check(
+      "a blue session's release ends it and leaves nothing lit",
+      blueRelease?.tier == .keepWorking && DrivingSession.target() == nil
+        && DriveActivity.current() == nil && DriveActivity.notice() == nil)
+    // A lane that lights the orange card without passing admission (Mail's
+    // compose path) cannot be shown under a blue card.
+    channelCall()
+    DriveActivity.record("com.apple.mail")
+    check(
+      "a driving notice recorded from elsewhere turns an open blue session orange",
+      DrivingSession.tier() == .handsOff)
+    DrivingSession.release(.agent)
+    // Between calls: the driven copy coming in front.
+    channelCall()
+    DrivingSession.sweep(settings: quiet, frontmost: { behindCopy })
+    check("the driven copy coming in front turns it hands off", DrivingSession.tier() == .handsOff)
+    DrivingSession.sweep(settings: quiet, frontmost: { theirCopy })
+    check("and going behind again does not turn it back", DrivingSession.tier() == .handsOff)
+    DrivingSession.release(.agent)
+    // Into the app in front, the same lane contends, and is put to the decision.
+    try? DrivingSession.admit(
+      driven, pid: behindCopy, background: false, leavesInputAlone: true, settings: quiet,
+      secondsSinceInput: 0)
+    check(
+      "a call that may take the front is never shown as keep working",
+      DrivingSession.tier() == .handsOff)
+    DrivingSession.release(.agent)
+    // An app with no channel: the verb takes the session lane. Every such verb
+    // reaches `record` without passing `leavesInputAlone`, so no fallback can
+    // leave the card blue.
+    check("with nothing open there is no tier", DrivingSession.tier() == nil)
+
     // Run inside a quiet session: a no to the front verb is a no to the agent,
     // so the quiet session it was asked in closes, and background verbs stop.
     let (opensQuiet, _) = admitOffMain(asked, background: true)

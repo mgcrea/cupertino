@@ -1782,6 +1782,100 @@ lane in a channel-launched app's own open panel, which is Maquette's next check:
 unsandboxed, so its panels are its own. A save panel. A capture of a copy whose window is on
 another Space.
 
+## The card follows the lane, not the verb, 2026-11-17
+
+A Filiation session drove a Debug build for about 86 s: launched by path with `channel: true`,
+then `press` on toolbar buttons, `click`, `scroll`, `find_elements`, `get_attribute`,
+`press_menu` ["Filiation", "Quit Filiation"] and `release`. Every click and scroll answered
+`lane: "channel"`, the person's own copy stayed in front, and the driven copy never came
+forward. All that time the person saw the orange card asking for hands off the keyboard and
+mouse, and asked whether that was true. It was not: nothing in that session could reach their
+keyboard or cursor, and nothing they typed could reach the driven copy.
+
+The card was lit by `DriveActivity.record`, which every driving verb calls and which only knew
+orange. A quiet session (above, "Typing without the front") already skipped the countdown for a
+channel verb behind the person's app, then showed the same card as a session that clicked in
+front.
+
+**What decides it now** is `DrivingPolicy.Tier`, held on the session (`DrivingSession.Open.tier`)
+and apart from `quiet`, which stays about admission:
+
+| Lane (`DrivingPolicy.Lane`)                                                                                      | Behind the person's app | In front |
+| ---------------------------------------------------------------------------------------------------------------- | ----------------------- | -------- |
+| `channel`: click, drag, hover, scroll, key, type through a channel                                               | blue                    | orange   |
+| `accessibility`: `press`, `press_menu`, `select`, `set_value`, `focus`                                           | blue                    | orange   |
+| `processKeys`: `type` with a handle, posted to the pid (`lane: background`)                                      | orange                  | orange   |
+| `session`: anything else, a click without a channel, `activate`, `show_menu`, `raise_window`, `set_window_frame` | orange                  | orange   |
+
+- **Behind is by process** (`DrivingPolicy.isBackground` on pids), so the driven copy behind
+  the person's own copy of the same app is behind.
+- **Sticky.** One orange call and the card is orange until the session ends
+  (`DrivingPolicy.tier`). A card that went blue again would tell somebody they can carry on
+  while the agent may still post into the session.
+- **Coming in front.** While blue, the session's one-second sweep reads the frontmost pid. A
+  process the session reached being there, whether the app brought itself forward after a press
+  or the person switched to it, turns the card orange, and so does an unreadable front. A blue
+  card is stale by a second at most.
+- **No fallback stays blue.** A verb with no channel takes the session lane, and every such verb
+  reaches `record` without `leavesInputAlone`. `record` itself turns an open session orange, so a
+  lane that lights the orange card without passing admission, Mail's System Events compose path,
+  cannot be shown under a blue card either. A channel that goes away refuses the verb rather than
+  falling back.
+- **Background typing is orange though it skips the countdown.** Its keys never reach the
+  person's app, but they are `CGEvent`s from the HID state source, which can carry modifiers the
+  person is holding.
+- **An open or save panel's field stays orange.** 1.41.0's `type` into one by value write
+  (`lane: "accessibility"`), and its return and escape as `AXConfirm` and `AXCancel`, are
+  admitted as background behind the person's app but recorded on the session lane. The panel is
+  drawn by another process, and whether it then takes their keys has not been weighed.
+- **Reads light nothing**, as before: `ui_tree`, `find_elements`, `get_attribute`, `menu`,
+  `wait_for` and `list_windows` only renew an open session (`DrivingSession.touch`).
+
+**The countdown and the question.** A call that leaves the person's input alone is admitted as
+background, so it is neither counted down nor asked about, under any preference. The countdown
+exists so they can take their hands off, which such a call does not need. The question is a
+policy call, and the answer is the same: `DrivingPolicy.decide` only puts it to somebody who used
+the Mac in the last 20 s, never on an idle Mac, so it is about contending with them rather than a
+consent gate on driving at all, and it says "It will use the keyboard and mouse", which these
+calls do not. What still holds: a recent no or Stop refuses them, the blue card carries the same
+Stop cross, and the first call that may take the front in that session is still put to the
+decision. New since this change: an Accessibility press, select, value write or focus into an app
+behind the person's used to get the countdown, and no longer does.
+
+**What the card says.** Blue: "Cupertino is using Filiation" / "Behind your apps. You can keep
+working." Orange as before. Both are written out in `DrivingCard`, not taken from a table. The
+popover row and the menu bar's accessibility label say the same, `diagnostics` reports
+`driving.notice` as `keepWorking` or `handsOff`, and the "done" card after a blue session says "It
+stayed behind your apps." rather than "The keyboard and mouse are yours again."
+
+**Release does take it down.** Measured below: `apple_desktop_release` ends the session at once,
+the done card stays for `DrivingSession.handBackLinger` (3 s), and nothing is lit 4.3 s later.
+That done card is the most likely thing the person saw after the release on 2026-11-17.
+
+**Measured 2026-11-17**, with Cupertino's Debug build from this change and VS Code in front, a
+copy of Filiation's Debug build launched by path with `channel: true` (pid 64499) behind the
+person's Filiation, and the card's text read through Accessibility from Cupertino's own windows
+(it is hidden from capture):
+
+| Session                                                                              | Card                                                                |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| `press` Inspector, channel `click` and `scroll`, `press` again                       | blue, `notice: keepWorking` throughout, 1.5 s past a sweep included |
+| `press_menu` ["Filiation", "Quit Filiation"]                                         | blue                                                                |
+| then `release`                                                                       | "done … It stayed behind your apps." at 0.3 s, nothing at 4.3 s     |
+| channel `click` into Filiation, then `type` by handle into a TextEdit started behind | blue, then orange: "Cupertino is driving TextEdit"                  |
+| then another channel `click` into Filiation                                          | orange still: "Cupertino is driving Filiation"                      |
+| a TextEdit `type` alone                                                              | orange from the first call                                          |
+
+VS Code stayed in front throughout. `make unit` pins the tier rule on its own and `desktop-check`
+the session: a channel call opens a blue session, a session-lane call after it turns it orange
+and a channel call after that leaves it orange, a `record` from elsewhere and the driven pid in
+front each turn it orange, and a blue session's release leaves nothing lit.
+
+**Not measured.** A session-lane click on a plain app, which takes the front and so needs a
+hands-off window; it goes through the same `record` the background type does. An AX press that
+makes its app activate itself, which the sweep is there to catch. The Simulator's `press`
+behind the person's app, which takes the same path and is blue now.
+
 ## Still open
 
 - ~~**The process of an element hosted by a service.**~~ **Answered 2026-11-16**, on TextEdit's

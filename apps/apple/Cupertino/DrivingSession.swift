@@ -74,6 +74,15 @@ nonisolated enum DrivingSession {
     /// to none for want of knowing which, would leave the person somewhere
     /// they were not.
     var handsBackToPid: pid_t? = nil
+    /// Which card the session shows. Kept apart from `quiet`, which is about
+    /// admission: a background `type` skips the countdown and still posts
+    /// `CGEvent`s, so it is quiet and orange. Sticky, see `DrivingPolicy.tier`.
+    var tier: DrivingPolicy.Tier = .handsOff
+    /// The processes reached by calls that left the person's input alone,
+    /// watched by the sweep so that one of them coming in front turns the card
+    /// orange. Pids, not bundle ids: the person's own copy of the app in front
+    /// shares the driven copy's bundle id.
+    var reached: Set<pid_t> = []
 
     /// This session once `target` is admitted into it.
     ///
@@ -82,7 +91,7 @@ nonisolated enum DrivingSession {
     /// they may have moved in between.
     func admitting(
       _ target: String, connection: UUID?, front: String?, frontPid: pid_t? = nil, at now: Date,
-      background: Bool
+      background: Bool, leavesInputAlone: Bool = false, pid: pid_t? = nil
     ) -> Open {
       var next = self
       if quiet && !background, let front {
@@ -93,11 +102,18 @@ nonisolated enum DrivingSession {
       next.target = target
       next.driven.insert(target)
       next.lastCall = now
+      next.note(leavesInputAlone: leavesInputAlone, pid: pid)
       if let connection {
         next.connections.insert(connection)
         next.orphanedAt = nil
       }
       return next
+    }
+
+    /// One more call's lane, on the card.
+    mutating func note(leavesInputAlone: Bool, pid: pid_t?) {
+      tier = DrivingPolicy.tier(tier, admitting: leavesInputAlone)
+      if leavesInputAlone, let pid { reached.insert(pid) }
     }
   }
 
@@ -137,6 +153,9 @@ nonisolated enum DrivingSession {
     let restored: String?
     let drivenFor: TimeInterval
     let reason: Reason
+    /// The card it ended on, so "done" does not say the keyboard and mouse are
+    /// the person's again when they never stopped being.
+    var tier: DrivingPolicy.Tier = .handsOff
   }
 
   /// The key `ServerHost.serveInProcess` stores its connection id under, in the
@@ -190,10 +209,19 @@ nonisolated enum DrivingSession {
   /// neither, so both are read fresh on each call.
   /// `background` is for a verb that cannot take the focus; see
   /// `DrivingPolicy.decide`. It opens the session without a countdown.
+  ///
+  /// `leavesInputAlone` is for a call whose lane posts nothing the person's
+  /// input can mix with (`DrivingPolicy.leavesInputAlone`), and `pid` is the
+  /// process it reaches. Every one so far, and the card says "You can keep
+  /// working"; any other, and it says hands off until the session ends. It
+  /// needs the pid, so that process coming in front can be seen, and it needs
+  /// `background`: a call that may take the front contends by definition.
   static func admit(
-    _ target: String, background: Bool = false, settings: DrivingPolicy.Settings? = nil,
+    _ target: String, pid: pid_t? = nil, background: Bool = false,
+    leavesInputAlone: Bool = false, settings: DrivingPolicy.Settings? = nil,
     secondsSinceInput: Double? = nil
   ) throws {
+    let leavesInputAlone = leavesInputAlone && background && pid != nil
     let connection = Thread.current.threadDictionary[connectionKey] as? UUID
     while true {
       // Read outside the lock, because it is an Accessibility round trip and a
@@ -211,6 +239,7 @@ nonisolated enum DrivingSession {
         session.target = target
         session.driven.insert(target)
         session.lastCall = Date()
+        session.note(leavesInputAlone: leavesInputAlone, pid: pid)
         if let connection {
           session.connections.insert(connection)
           session.orphanedAt = nil
@@ -240,7 +269,7 @@ nonisolated enum DrivingSession {
       case .open:
         admitLocked(
           target, connection: connection, front: front.bundleId, frontPid: front.pid, at: now,
-          background: background)
+          background: background, leavesInputAlone: leavesInputAlone, pid: pid)
         lock.unlock()
         announce(target)
         return
@@ -267,7 +296,7 @@ nonisolated enum DrivingSession {
         if Thread.isMainThread {
           admitLocked(
             target, connection: connection, front: front.bundleId, frontPid: front.pid, at: now,
-            background: background)
+            background: background, leavesInputAlone: leavesInputAlone, pid: pid)
           lock.unlock()
           announce(target)
           return
@@ -301,6 +330,10 @@ nonisolated enum DrivingSession {
             admitLocked(
               target, connection: connection, front: frontNow.bundleId, frontPid: frontNow.pid,
               at: Date(), background: false)
+          } else {
+            // Opened by another verb meanwhile. This one was put to the
+            // decision, so it may take the front: the card says hands off.
+            open?.tier = .handsOff
           }
         case .stop:
           // Silence on a question is not a no. Nobody was there to say it.
@@ -350,6 +383,23 @@ nonisolated enum DrivingSession {
     open = session
   }
 
+  /// Input that can mix with the person's went out while a session is open:
+  /// the card says hands off until it ends. Called by `DriveActivity.record`,
+  /// so a lane that lights the orange notice without passing admission here,
+  /// Mail's System Events compose path, cannot leave a blue card up over it.
+  static func contended() {
+    lock.lock()
+    defer { lock.unlock() }
+    open?.tier = .handsOff
+  }
+
+  /// The card the open session shows, nil when none is open.
+  static func tier() -> DrivingPolicy.Tier? {
+    lock.lock()
+    defer { lock.unlock() }
+    return open?.tier
+  }
+
   /// From `ServerHost.serveInProcess`, when a connection ends.
   static func connectionClosed(_ id: UUID, now: Date = Date()) {
     lock.lock()
@@ -396,13 +446,31 @@ nonisolated enum DrivingSession {
   /// End a session nobody is using: every connection that drove in it has
   /// gone, or no call has arrived for the idle limit. Runs every second while a
   /// session is open, and directly from the checks with a chosen `now`.
+  ///
+  /// While the card says "You can keep working" it also looks at what is in
+  /// front, and turns the card orange for good once a process the session
+  /// reached is there (`DrivingPolicy.tier(_:frontmost:driven:)`). That covers
+  /// an app that brought itself forward after a press and a person who
+  /// switched to the driven copy, neither of which any call sees. A second is
+  /// the most a blue card can be stale by. `frontmost` is for the checks; the
+  /// app reads the window server's answer.
   @discardableResult
-  static func sweep(now: Date = Date(), settings: DrivingPolicy.Settings? = nil) -> Released? {
+  static func sweep(
+    now: Date = Date(), settings: DrivingPolicy.Settings? = nil,
+    frontmost: (() -> pid_t?)? = nil
+  ) -> Released? {
     let idleLimit = (settings ?? DrivingPolicy.current).idleRelease
+    // Read outside the lock, as admission reads it: an Accessibility round trip.
+    let front: pid_t?? =
+      tier() == .keepWorking ? .some((frontmost ?? AccessibilityDriver.frontmostPid)()) : nil
     lock.lock()
-    guard let session = open else {
+    guard var session = open else {
       lock.unlock()
       return nil
+    }
+    if let front, session.tier == .keepWorking {
+      session.tier = DrivingPolicy.tier(session.tier, frontmost: front, driven: session.reached)
+      open = session
     }
     // Decided and taken under one lock, so a verb arriving in between cannot
     // renew a session that is then ended anyway.
@@ -439,12 +507,13 @@ nonisolated enum DrivingSession {
       restored = back
     }
     let target = session.target
+    let tier = session.tier
     Task(priority: .userInitiated) { @MainActor in
-      DriveActivity.shared.sessionEnded(target, restored: restored)
+      DriveActivity.shared.sessionEnded(target, restored: restored, tier: tier)
     }
     return Released(
       target: target, restored: restored, drivenFor: now.timeIntervalSince(session.since),
-      reason: reason)
+      reason: reason, tier: tier)
   }
 
   // ─── reading ───────────────────────────────────────────────────────────────
@@ -491,6 +560,9 @@ nonisolated enum DrivingSession {
       "sinceSeconds": (now.timeIntervalSince(session.since) * 10).rounded() / 10,
       "idleSeconds": (now.timeIntervalSince(session.lastCall) * 10).rounded() / 10,
       "idleReleaseSeconds": DrivingPolicy.current.idleRelease,
+      // Which card the person is looking at: "handsOff" asks them not to use
+      // the keyboard or mouse, "keepWorking" says nothing here can reach them.
+      "notice": session.tier.rawValue,
     ]
     if let back = session.handsBackTo { out["handsBackTo"] = back }
     return out
@@ -504,15 +576,19 @@ nonisolated enum DrivingSession {
         "note": "Nothing was being driven, so there was nothing to hand back.",
       ]
     }
+    let nothingBack =
+      released.tier == .keepWorking
+      ? "Session ended. Nothing needed handing back: every call reached an application behind "
+        + "the one the person was using, which stayed in front."
+      : "Session ended. Nothing was brought forward, because the person had already moved on "
+        + "from what was driven, or nothing else was in front when the session began."
     return [
       "released": released.target,
       "restored": released.restored ?? NSNull(),
       "drivenForSeconds": (released.drivenFor * 10).rounded() / 10,
       "note": released.restored.map {
         "Handed back: \(appName($0)) is in front again, as it was before Cupertino started driving."
-      }
-        ?? "Session ended. Nothing was brought forward, because the person had already moved on "
-        + "from what was driven, or nothing else was in front when the session began.",
+      } ?? nothingBack,
     ]
   }
 
@@ -547,16 +623,18 @@ nonisolated enum DrivingSession {
   /// what it drove, and the connections that drove in it.
   private static func admitLocked(
     _ target: String, connection: UUID?, front: String?, frontPid: pid_t?, at now: Date,
-    background: Bool
+    background: Bool, leavesInputAlone: Bool = false, pid: pid_t? = nil
   ) {
     guard let session = open else {
       openLocked(target, connection: connection, front: front, frontPid: frontPid, at: now)
       open?.quiet = background
+      open?.tier = DrivingPolicy.tier(nil, admitting: leavesInputAlone)
+      if leavesInputAlone, let pid { open?.reached = [pid] }
       return
     }
     open = session.admitting(
       target, connection: connection, front: front, frontPid: frontPid, at: now,
-      background: background)
+      background: background, leavesInputAlone: leavesInputAlone, pid: pid)
   }
 
   private static func openLocked(

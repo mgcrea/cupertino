@@ -12,6 +12,21 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Changed
+
+- **Driving behind your apps says you can keep working.** A Desktop session that only reaches an
+  app behind the one you are using, through a Debug build's driving channel or an Accessibility
+  press, menu press, row select, value write or focus, now shows a blue card: "Cupertino is using
+  Filiation. Behind your apps. You can keep working." It used to ask you not to use the keyboard
+  or mouse, though nothing it did could reach either. The first call that posts input to the
+  session, brings an app forward, or types by posting keys, and the driven app coming in front,
+  turn it into the orange hands-off card until the session ends. It never turns back. Those
+  background calls are no longer held for a countdown or a question while you type, and the
+  Simulator's `press` behind your apps works the same way. `apple_desktop_diagnostics` says which
+  card is up, and the server's instructions tell agents how to keep a session blue.
+
 ## [1.41.0] - 2026-11-16
 
 **Capture one of two copies, and double-click.** Screen captures a worktree's Debug build by its

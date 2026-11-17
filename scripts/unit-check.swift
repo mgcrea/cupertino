@@ -956,6 +956,51 @@ struct UnitCheck {
       "but a recent no still outranks it",
       decide(counting, idle: 0, declinedUntil: noon.addingTimeInterval(10), background: true)
         == .declined(retryIn: 10))
+
+    // Which card a session shows comes from the lane each call took. On
+    // 2026-11-17 a session of channel clicks and AX presses into a copy behind
+    // the person's own showed "Please don't use the keyboard or mouse" for 86 s,
+    // while nothing it did could reach either.
+    let channelBehind = DrivingPolicy.leavesInputAlone(.channel, behind: true)
+    let sessionLane = DrivingPolicy.leavesInputAlone(.session, behind: true)
+    check("a channel call behind the person's app leaves their input alone", channelBehind)
+    check(
+      "and so does an Accessibility press behind it",
+      DrivingPolicy.leavesInputAlone(.accessibility, behind: true))
+    check(
+      "but not either one into the app in front, where they are typing",
+      !DrivingPolicy.leavesInputAlone(.channel, behind: false)
+        && !DrivingPolicy.leavesInputAlone(.accessibility, behind: false))
+    check(
+      "nor keys posted to a pid, or anything posted to the session, wherever it lands",
+      !DrivingPolicy.leavesInputAlone(.processKeys, behind: true) && !sessionLane)
+    let opened = DrivingPolicy.tier(nil, admitting: channelBehind)
+    check("a session opened by a channel call says they can keep working", opened == .keepWorking)
+    let channelAgain = DrivingPolicy.tier(opened, admitting: channelBehind)
+    check("and still does after another", channelAgain == .keepWorking)
+    let thenSession = DrivingPolicy.tier(channelAgain, admitting: sessionLane)
+    check("a session-lane call after them turns it hands off", thenSession == .handsOff)
+    check(
+      "and it stays hands off, whatever lane comes next",
+      DrivingPolicy.tier(thenSession, admitting: channelBehind) == .handsOff)
+    check(
+      "a session opened on the session lane is hands off from the start",
+      DrivingPolicy.tier(nil, admitting: sessionLane) == .handsOff)
+    // What is in front, between calls: a driven copy coming forward, by itself
+    // after a press or because the person switched to it, puts their keys into it.
+    let reached: Set<pid_t> = [4512]
+    check(
+      "another app in front, the person's own copy included, keeps it blue",
+      DrivingPolicy.tier(.keepWorking, frontmost: pid_t(3011), driven: reached) == .keepWorking)
+    check(
+      "the driven copy in front turns it hands off",
+      DrivingPolicy.tier(.keepWorking, frontmost: pid_t(4512), driven: reached) == .handsOff)
+    check(
+      "an unreadable front does too, erring toward warning",
+      DrivingPolicy.tier(.keepWorking, frontmost: pid_t?.none, driven: reached) == .handsOff)
+    check(
+      "and the driven copy going behind again does not turn it back",
+      DrivingPolicy.tier(.handsOff, frontmost: pid_t(3011), driven: reached) == .handsOff)
     check("somebody typing gets a countdown", decide(counting, idle: 0.5) == .countdown(3))
     check(
       "just inside the window still counts as somebody there",

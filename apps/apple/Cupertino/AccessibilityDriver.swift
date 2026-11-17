@@ -1506,7 +1506,7 @@ nonisolated enum AccessibilityDriver {
   static func press(handle: String, scope: Scope) throws {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
-    try announce(handle)
+    try announce(handle, lane: .accessibility)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if err == .actionUnsupported {
       // A row's label is what a search by name finds, and pressing it is the
@@ -1547,7 +1547,7 @@ nonisolated enum AccessibilityDriver {
       throw Failure.refused(
         "That element is not a list row or inside one. Use press, or click with its point.")
     }
-    try announce(handle)
+    try announce(handle, lane: .accessibility)
 
     let err: AXError
     if isSettable(row, kAXSelectedAttribute) {
@@ -1765,9 +1765,9 @@ nonisolated enum AccessibilityDriver {
     }
     let wasChecked = !(string(element, kAXMenuItemMarkCharAttribute as String) ?? "").isEmpty
     // Admitted after every check, as `announce` is for a handle: a refused
-    // press puts no card on screen.
-    try DrivingSession.admit(bundleId)
-    DriveActivity.record(bundleId)
+    // press puts no card on screen. The item's own process, which is the copy
+    // `pid` named or the only one running.
+    try announce(bundleId, pid: process(of: element), lane: .accessibility)
     let err = AXUIElementPerformAction(element, kAXPressAction as CFString)
     if let problem = failure(for: err, doing: "Pressing '\(shown)'", wrote: true) { throw problem }
     return (resolved, wasChecked)
@@ -1881,7 +1881,7 @@ nonisolated enum AccessibilityDriver {
   ) throws -> (confirmed: Bool, focused: Bool?, actual: Any?) {
     guard isTrusted() else { throw Failure.notTrusted }
     let element = try resolve(handle, scope: scope)
-    try announce(handle)
+    try announce(handle, lane: .accessibility)
 
     var settable: DarwinBoolean = false
     let check = AXUIElementIsAttributeSettable(
@@ -2107,7 +2107,7 @@ nonisolated enum AccessibilityDriver {
   static func focus(handle: String, scope: Scope) throws -> Bool {
     guard isTrusted() else { throw Failure.notTrusted }
     let entry = try resolveEntry(handle, scope: scope)
-    try announce(handle)
+    try announce(handle, lane: .accessibility)
     return try takeFocus(entry.element, in: entry.bundleId, handle: handle)
   }
 
@@ -2935,12 +2935,30 @@ nonisolated enum AccessibilityDriver {
   /// resolved it a moment ago, so this only bites when the store evicted it in
   /// between — and returning quietly there let the verb act with no admission
   /// at all, which is failing open on the one check that asks the person.
-  private static func announce(_ handle: String) throws {
+  ///
+  /// `lane` is how the verb reaches the app once admitted. `.accessibility`
+  /// is for a verb that only performs an action or writes an attribute, and
+  /// into an app behind the person's it is background, with no countdown, and
+  /// leaves the card blue (`DrivingPolicy.leavesInputAlone`). By process, so the
+  /// copy behind the person's own copy of the app is behind. Verbs that move or
+  /// raise a window, or open a menu that then takes the keyboard while it is
+  /// open, stay on the session lane.
+  private static func announce(_ handle: String, lane: DrivingPolicy.Lane = .session) throws {
     guard let bundleId = handles.get(handle)?.bundleId else {
       throw Failure.staleHandle(handle)
     }
-    try DrivingSession.admit(bundleId)
-    DriveActivity.record(bundleId)
+    try announce(bundleId, pid: process(ofHandle: handle), lane: lane)
+  }
+
+  /// The same, for a verb that names its application rather than a handle.
+  private static func announce(_ bundleId: String, pid: pid_t?, lane: DrivingPolicy.Lane) throws {
+    let behind =
+      lane != .session
+      && pid.map { DrivingPolicy.isBackground(target: $0, frontmost: frontmostPid()) }
+        ?? false
+    let alone = DrivingPolicy.leavesInputAlone(lane, behind: behind)
+    try DrivingSession.admit(bundleId, pid: pid, background: alone, leavesInputAlone: alone)
+    DriveActivity.record(bundleId, leavesInputAlone: alone)
   }
 
   /// The same notice, for the verbs that address the SESSION rather than an
@@ -3407,6 +3425,8 @@ nonisolated enum AccessibilityDriver {
     // By process: the other copy of the application in front is behind it.
     guard DrivingPolicy.isBackground(target: pid, frontmost: frontmostPid()) else { return nil }
 
+    // Background, so no countdown, but orange: these are `CGEvent`s
+    // (`DrivingPolicy.Lane.processKeys`).
     try DrivingSession.admit(entry.bundleId, background: true)
     DriveActivity.record(entry.bundleId)
     guard (try? takeFocus(field, in: entry.bundleId, handle: handle)) == true else { return nil }

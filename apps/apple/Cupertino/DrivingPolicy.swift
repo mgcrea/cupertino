@@ -124,9 +124,17 @@ nonisolated enum DrivingPolicy {
   /// application's pid, or a command through a Debug build's own driving
   /// channel. Measured 2026-11-11 (`scripts/spike-background-input.swift`):
   /// neither activated the target in 32 cases, and neither touches the person's
-  /// keyboard, so the countdown has nothing to protect them from. It still opens
-  /// a session, so the orange card says an agent is at work, and a recent no
-  /// still refuses it: they said no to Cupertino, not to one lane of it.
+  /// keyboard, so the countdown has nothing to protect them from. Since
+  /// 2026-11-17 an Accessibility press, select, value write or focus into an app
+  /// behind theirs is background too, for the same reason.
+  ///
+  /// Nor is the person asked under a preference of `.ask`. That question only
+  /// comes up when they were using the Mac a moment ago, never on an idle one,
+  /// so it is about contending with them, not a consent gate on driving at
+  /// all; and it says "It will use the keyboard and mouse", which a background
+  /// verb does not. It still opens a session, so the card says an agent is at
+  /// work and carries the Stop cross, and a recent no still refuses it: they
+  /// said no to Cupertino, not to one lane of it.
   /// Whether a verb that does not take the focus is BACKGROUND for this target.
   ///
   /// Only behind the person's app. Into the app they are in, a posted key or
@@ -155,6 +163,81 @@ nonisolated enum DrivingPolicy {
   static func isBackground<ID: Equatable>(target: ID, frontmost: ID?) -> Bool {
     guard let frontmost else { return false }
     return frontmost != target
+  }
+
+  // ─── which card a session shows ────────────────────────────────────────────
+
+  /// What the card says while a session is open.
+  ///
+  /// Decided by the lane each call actually took, not by its verb. On
+  /// 2026-11-17 a session that only pressed through Accessibility and clicked
+  /// and scrolled through a Debug build's channel, with the person's own copy
+  /// of the app in front, showed "Please don't use the keyboard or mouse" for
+  /// 86 s. Nothing it did could reach their keyboard or mouse, and they asked
+  /// whether the card was true. It was not.
+  enum Tier: String, Sendable {
+    /// The orange card: "Please don't use the keyboard or mouse."
+    case handsOff
+    /// The blue card: "You can keep working." Every call so far left the
+    /// person's input alone, and none of the processes it reached has come in
+    /// front.
+    case keepWorking
+  }
+
+  /// How a call reaches its application.
+  enum Lane: Sendable {
+    /// A Debug build's own driving channel: the app delivers the event to its
+    /// own windows. Nothing is posted to the session.
+    case channel
+    /// An Accessibility action or attribute write: `AXPress`, a row's
+    /// `AXSelected`, a field's `AXValue` or `AXFocused`. Nothing is posted.
+    case accessibility
+    /// Keys posted to one process (`postToPid`, the background `type`). They
+    /// never reach the person's app, but they are `CGEvent`s from the HID
+    /// state source, which can carry modifiers the person is holding, so they
+    /// do not count as leaving the person's input alone.
+    case processKeys
+    /// Events posted to the session, an activation, anything that takes the
+    /// front: the person's own keys and clicks mix with these.
+    case session
+  }
+
+  /// Whether a call on `lane` leaves the person's keyboard and mouse theirs.
+  ///
+  /// Only behind their app. Into the app they are in, a channel click or a
+  /// press still lands where they are typing, and their own keys land in what
+  /// is being driven.
+  static func leavesInputAlone(_ lane: Lane, behind: Bool) -> Bool {
+    switch lane {
+    case .channel, .accessibility: behind
+    case .processKeys, .session: false
+    }
+  }
+
+  /// The tier once one more call is admitted. `current` is nil for the call
+  /// that opens the session.
+  ///
+  /// Sticky: once orange, orange until the session ends. A card that went
+  /// blue again would tell somebody they can carry on while the agent may
+  /// still post into the session, and two flips in one session teach them not
+  /// to read it.
+  static func tier(_ current: Tier?, admitting leavesInputAlone: Bool) -> Tier {
+    current == .handsOff || !leavesInputAlone ? .handsOff : .keepWorking
+  }
+
+  /// The tier after looking at what is in front.
+  ///
+  /// A process the session reached coming in front, whether the app brought
+  /// itself forward after a press or the person switched to it, means their
+  /// keys now land in what is being driven: orange, and it stays orange. A
+  /// front that cannot be read counts the same, which errs toward warning.
+  /// Generic, like `isBackground`, so that two copies of one app are told
+  /// apart by their pids.
+  static func tier<ID: Hashable>(_ current: Tier, frontmost: ID?, driven: Set<ID>) -> Tier {
+    guard current == .keepWorking, let frontmost, !driven.contains(frontmost) else {
+      return .handsOff
+    }
+    return .keepWorking
   }
 
   static func decide(

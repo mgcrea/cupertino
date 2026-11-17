@@ -1236,7 +1236,8 @@ nonisolated enum SimulatorServer {
       device screen.
 
       The first driving call while the person is using the Mac may wait a few seconds while
-      Cupertino warns or asks them; if they cancel or say no, ask them rather than retrying. Call
+      Cupertino warns or asks them, unless it is a press into a Simulator behind their app; if
+      they cancel or say no, ask them rather than retrying. Call
       `apple_simulator_release` when you are done, which brings back the app they were in.
 
       Fuller notes, including what this lane reaches and what stays with `ios_simulator_*`:
@@ -1285,6 +1286,11 @@ nonisolated enum SimulatorServer {
     may be half done, so ask them rather than carrying on. Call
     `apple_simulator_release` when you are done: it takes the notice down and brings back the
     application they were in, unless they have switched away themselves.
+
+    A `press` while the Simulator is behind the application they are using reaches nothing of
+    theirs: it is not held for a countdown, and the notice tells them they can keep working.
+    The first `tap`, `swipe`, `type` or `key`, or the Simulator coming in front, turns it into
+    one asking them not to use the keyboard or mouse until the session ends.
 
     ## What this reaches, and what it does not
 

@@ -98,16 +98,22 @@ final class DrivingOverlay {
     /// Apart from `.notice(.driving)` because a Node tool can light that one
     /// with no session behind it, and a cross there would have nothing to stop.
     case holding
+    /// A session every call of which has left the person's input alone: the
+    /// blue card, "You can keep working". The cross ends it as it does the
+    /// orange one. See `DrivingPolicy.Tier`.
+    case holdingBehind
     /// A session is about to open. Cancel stops it.
     case countdown(endsAt: Date)
     /// A session will open only if the person allows it.
     case asking
-    /// A session just ended.
-    case done(restoredName: String?)
+    /// A session just ended. `wasHandsOff` is whether its card was the orange
+    /// one, which is the only time "the keyboard and mouse are yours again" is
+    /// true.
+    case done(restoredName: String?, wasHandsOff: Bool)
 
     var takesClicks: Bool {
       switch self {
-      case .countdown, .asking, .holding: true
+      case .countdown, .asking, .holding, .holdingBehind: true
       case .notice, .done: false
       }
     }
@@ -118,7 +124,7 @@ final class DrivingOverlay {
       switch self {
       case .countdown: NSSize(width: 390, height: 60)
       case .asking: NSSize(width: 420, height: 60)
-      case .holding: NSSize(width: 350, height: 60)
+      case .holding, .holdingBehind: NSSize(width: 350, height: 60)
       case .notice, .done: NSSize(width: 320, height: 60)
       }
     }
@@ -491,18 +497,16 @@ private struct DrivingCard: View {
       dot(.orange)
       lines("Cupertino is driving \(name)", "Please don't use the keyboard or mouse.")
       Spacer(minLength: 0)
-      Button {
-        // Off the main actor: handing back waits up to a second for the
-        // previous application to come forward.
-        Task.detached { DrivingSession.release(.person) }
-      } label: {
-        Image(systemName: "xmark.circle.fill")
-          .font(.system(size: size.titlePoints + size.scaled(4)))
-          .foregroundStyle(.secondary)
-      }
-      .buttonStyle(.borderless)
-      .help("Stop driving")
-      .accessibilityLabel("Stop driving \(name)")
+      stop
+
+    case .holdingBehind:
+      // Written out too, not taken from `infoDetail`: this card tells somebody
+      // they may type, and it must be as hard to change by accident as the one
+      // telling them not to.
+      glyph("macwindow.on.rectangle", .blue)
+      lines("Cupertino is using \(name)", "Behind your apps. You can keep working.")
+      Spacer(minLength: 0)
+      stop
 
     case .notice(let kind):
       // Same footprint as the driving card, so a tier change does not move
@@ -528,13 +532,31 @@ private struct DrivingCard: View {
       Button("Don't") { DrivingSession.respond(.stop) }
       Button("Allow") { DrivingSession.respond(.go) }
 
-    case .done(let restoredName):
+    case .done(let restoredName, let wasHandsOff):
       glyph("checkmark.circle.fill", .green)
       lines(
         "Cupertino is done with \(name)",
-        restoredName.map { "\($0) is back in front." } ?? "The keyboard and mouse are yours again.")
+        restoredName.map { "\($0) is back in front." }
+          ?? (wasHandsOff
+            ? "The keyboard and mouse are yours again." : "It stayed behind your apps."))
       Spacer(minLength: 0)
     }
+  }
+
+  /// The cross on a session's card, orange or blue. It stops the session.
+  private var stop: some View {
+    Button {
+      // Off the main actor: handing back waits up to a second for the
+      // previous application to come forward.
+      Task.detached { DrivingSession.release(.person) }
+    } label: {
+      Image(systemName: "xmark.circle.fill")
+        .font(.system(size: size.titlePoints + size.scaled(4)))
+        .foregroundStyle(.secondary)
+    }
+    .buttonStyle(.borderless)
+    .help("Stop driving")
+    .accessibilityLabel("Stop driving \(name)")
   }
 
   private func dot(_ color: Color) -> some View {
