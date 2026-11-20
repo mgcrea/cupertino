@@ -275,6 +275,44 @@ describe("cookies command", () => {
     expect(JSON.stringify(results)).not.toContain("fake-");
   });
 
+  /**
+   * The page never sees a cookie command, so the toolbar popover's list of
+   * what agents did there would leave out the most sensitive thing an agent
+   * does on a site. The worker leaves the page a note in its place: which
+   * command and whether it worked, and no name, value or URL.
+   */
+  it("leaves the page a note of each cookie command it answered, without names or values", async () => {
+    const getAll = vi.fn(async () => STORE);
+    const click = { id: "c2", action: "click" };
+    const { send } = withPoll([command({ valuesFor: ["A3"] }), click], getAll);
+    const reply = (await send({ kind: "poll", url: PAGE })) as {
+      commands: unknown[];
+      ran?: unknown[];
+    };
+    expect(reply.commands).toEqual([click]);
+    expect(reply.ran).toEqual([{ action: "cookies", ok: true }]);
+    expect(JSON.stringify(reply.ran)).not.toContain("A3");
+    expect(JSON.stringify(reply.ran)).not.toContain("finance.example.test");
+  });
+
+  it("notes a cookie command that failed as failed", async () => {
+    const getAll = vi.fn(async () => {
+      throw new Error("store gone");
+    });
+    const { send } = withPoll([command()], getAll);
+    const reply = (await send({ kind: "poll", url: PAGE })) as { ran?: unknown[] };
+    expect(reply.ran).toEqual([{ action: "cookies", ok: false }]);
+  });
+
+  it("adds no note when no cookie command came", async () => {
+    const { send } = withPoll(
+      [{ id: "c2", action: "click" }],
+      vi.fn(async () => STORE),
+    );
+    const reply = (await send({ kind: "poll", url: PAGE })) as Record<string, unknown>;
+    expect("ran" in reply).toBe(false);
+  });
+
   it("lets out a value only for a name in valuesFor", async () => {
     const { send, results } = withPoll([command({ valuesFor: ["A3"] })], async () => STORE);
     await send({ kind: "poll", url: PAGE });

@@ -60,6 +60,10 @@ async function answerHere(reply, poll, sender) {
   const commands = reply?.commands;
   if (!Array.isArray(commands)) return reply;
   const forPage = [];
+  // The page never sees these, so its list of what agents did there (the
+  // toolbar popover's) gets a note in their place: which command, and whether
+  // it worked. No name, value or URL.
+  const ran = [];
   for (const command of commands) {
     if (command?.action !== "cookies" && command?.action !== "cookieProbe") {
       forPage.push(command);
@@ -69,6 +73,7 @@ async function answerHere(reply, poll, sender) {
       command.action === "cookies"
         ? await cookies(command, poll, sender)
         : await cookieProbe(command, poll, sender);
+    ran.push({ action: command.action, ok: result?.ok === true });
     try {
       await sendNative({
         kind: "result",
@@ -81,7 +86,7 @@ async function answerHere(reply, poll, sender) {
       console.error("[cupertino] could not file a result:", String(error));
     }
   }
-  return { ...reply, commands: forPage };
+  return ran.length > 0 ? { ...reply, commands: forPage, ran } : { ...reply, commands: forPage };
 }
 
 /**
