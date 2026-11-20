@@ -995,7 +995,57 @@
    * "nothing was listening" are indistinguishable, and only one of them is
    * actionable.
    */
+  // ── What agents did here ───────────────────────────────────────────────────
+  //
+  // The last commands run on this page load, for the toolbar popover's "What
+  // agents did here". A verb and an element's label, never what was typed, a
+  // value, a URL, a query or a request id: a fill's text is the one thing on
+  // this list that could be a secret. In memory, so it dies with the page load,
+  // as the element ids it describes do.
+  const RECENT_MAX = 10;
+  const RECENT_LABEL_MAX = 60;
+  const recent = [];
+
+  function note(entry) {
+    const kept = { at: Date.now(), action: String(entry.action), ok: entry.ok === true };
+    if (typeof entry.op === "string") kept.op = entry.op;
+    if (typeof entry.label === "string") {
+      const line = entry.label.replace(/\s+/g, " ").trim().slice(0, RECENT_LABEL_MAX);
+      if (line) kept.label = line;
+    }
+    recent.unshift(kept);
+    if (recent.length > RECENT_MAX) recent.length = RECENT_MAX;
+  }
+
+  /** The label a result names, for the three verbs that act on an element. */
+  function labelOf(command, result) {
+    if (!result || result.ok !== true || !result.data) return undefined;
+    if (command.action === "click" || command.action === "fill") return result.data.label;
+    if (command.action === "submit") return result.data.button;
+    return undefined;
+  }
+
+  /** For `content.js`: a command the background answered without the page. */
+  window.cupertinoNoteCommand = function (entry) {
+    if (entry && typeof entry.action === "string") note(entry);
+  };
+
+  window.cupertinoRecentCommands = function () {
+    return recent.map((entry) => ({ ...entry }));
+  };
+
   window.cupertinoRunCommand = function (command) {
+    const result = runCommand(command);
+    note({
+      action: command?.action,
+      op: command?.action === "netRecord" ? command.op : undefined,
+      ok: result?.ok === true,
+      label: labelOf(command, result),
+    });
+    return result;
+  };
+
+  function runCommand(command) {
     try {
       // A command addressed to a page load is for that load alone. The handler
       // only hands one to the tab that polled with its token; this is the same
@@ -1086,5 +1136,5 @@
     } catch (error) {
       return { ok: false, error: String(error?.message || error) };
     }
-  };
+  }
 })();
