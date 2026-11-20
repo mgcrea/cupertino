@@ -79,6 +79,7 @@
   function lineOf(entry) {
     let line = clock(entry.at) + " " + verbOf(entry);
     if (typeof entry.label === "string" && entry.label) line += ' "' + entry.label + '"';
+    if (Number(entry.times) > 1) line += " ×" + Math.floor(Number(entry.times));
     if (entry.ok !== true) line += " (failed)";
     return line;
   }
@@ -138,7 +139,9 @@
       ...base,
       host: typeof answer.host === "string" ? answer.host : null,
       network: recordingOf(answer.network),
-      recent: Array.isArray(answer.recent) ? answer.recent.map(lineOf) : [],
+      recent: Array.isArray(answer.recent)
+        ? answer.recent.filter((e) => e !== null && typeof e === "object").map(lineOf)
+        : [],
     };
     const last = typeof answer.lastPollOkAt === "number" ? answer.lastPollOkAt : null;
     const started = typeof answer.startedAt === "number" ? answer.startedAt : null;
@@ -200,16 +203,23 @@
   /** Stop or clear the tab's recording, and redraw from what the page says now. */
   async function network(op) {
     if (tabId === null) return load();
-    let reply;
     try {
-      reply = await ask(tabId, { kind: "popupNetwork", op });
+      await ask(tabId, { kind: "popupNetwork", op });
     } catch {
       lastAnswer = null;
       return view({ answer: null, error: "not-here", now: Date.now() });
     }
-    if (reply?.ok !== true || !lastAnswer) return load();
-    lastAnswer = { ...lastAnswer, network: reply.network };
-    return view({ answer: lastAnswer, error: null, now: Date.now() });
+    // Asked again rather than redrawn from the answer the popover opened with,
+    // whose check-in time is as old as the popover and whose host and list may
+    // be another page's by now.
+    return load();
+  }
+
+  const notHere = () => view({ answer: null, error: "not-here", now: Date.now() });
+
+  /** `load`, but never a blank popover: anything unexpected reads as Not here. */
+  function show() {
+    return load().catch(notHere);
   }
 
   async function reload() {
@@ -267,8 +277,11 @@
       const section = node("section", "network");
       section.append(node("h2", null, "Network recording"), node("p", null, v.network.line));
       const actions = node("div", "actions");
-      if (v.network.stop) actions.append(button("Stop", () => network("stop").then(render)));
-      if (v.network.clear) actions.append(button("Clear", () => network("clear").then(render)));
+      for (const op of ["stop", "clear"]) {
+        if (!v.network[op]) continue;
+        const text = op === "stop" ? "Stop" : "Clear";
+        actions.append(button(text, () => network(op).catch(notHere).then(render)));
+      }
       section.append(actions);
       root.append(section);
     }
@@ -289,10 +302,11 @@
   window.cupertinoPopupLoad = load;
   window.cupertinoPopupNetwork = network;
   window.cupertinoPopupReload = reload;
+  window.cupertinoPopupShow = show;
 
   if (typeof document !== "undefined") {
     document.addEventListener("DOMContentLoaded", () => {
-      load().then(render);
+      show().then(render);
     });
   }
 })();

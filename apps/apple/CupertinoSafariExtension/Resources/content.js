@@ -394,6 +394,12 @@
   addEventListener("pageshow", (event) => {
     if (!event.persisted || !stopped) return;
     stopped = false;
+    // The same page, back: its first poll may wait on a cold worker, and until
+    // it comes back the popover should say connecting, not stalled since
+    // before the person left.
+    startedAt = Date.now();
+    lastPollOkAt = null;
+    failedPolls = 0;
     if (!alive) pump();
   });
 

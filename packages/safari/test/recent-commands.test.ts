@@ -23,7 +23,14 @@ const SOURCE = readFileSync(
   "utf8",
 );
 
-type Entry = { at: number; action: string; op?: string; ok: boolean; label?: string };
+type Entry = {
+  at: number;
+  action: string;
+  op?: string;
+  ok: boolean;
+  label?: string;
+  times?: number;
+};
 type Result = { ok: boolean; data: any; error?: string };
 
 /** An element `enumerate` lists and `click`, `fill` and `submit` can act on. */
@@ -141,13 +148,52 @@ describe("the last commands agents ran on the page", () => {
 
   it("keeps the last ten, newest first", () => {
     const page = load();
-    for (let i = 0; i < 12; i++) page.run({ action: "scroll", direction: "down" });
+    for (let i = 0; i < 12; i++) {
+      page.run({ action: i % 2 === 0 ? "scroll" : "find", direction: "down", text: "x" });
+    }
 
     const recent = page.recent();
     expect(recent).toHaveLength(10);
     for (let i = 1; i < recent.length; i++) {
       expect(recent[i]!.at).toBeLessThanOrEqual(recent[i - 1]!.at);
     }
+  });
+
+  it("folds a run of the same command into one entry with a count", () => {
+    // wait_for checks the page every 500 ms; ten of those would push the click
+    // that came before them off the list.
+    const button = el("button", { "aria-label": "Rechercher" });
+    const page = load([button]);
+    const id = page.idOf(0);
+    page.run({ action: "click", elementId: id, page: page.page });
+    for (let i = 0; i < 12; i++) page.run({ action: "scroll", direction: "down" });
+
+    const recent = page.recent();
+    expect(recent[0]).toMatchObject({ action: "scroll", times: 12 });
+    expect(recent.find((e) => e.action === "click")).toMatchObject({ label: "Rechercher" });
+  });
+
+  it("never lists what was typed into an editable region with no label of its own", () => {
+    // A contenteditable's label falls back to its text, which after a fill is
+    // what was typed.
+    const box: Record<string, unknown> = el(
+      "div",
+      { contenteditable: "true" },
+      { isContentEditable: true, textContent: "" },
+    );
+    Object.defineProperty(box, "innerText", { get: () => box.textContent, configurable: true });
+    const page = load([box]);
+    const id = page.idOf(0);
+    const out = page.run({
+      action: "fill",
+      elementId: id,
+      page: page.page,
+      text: "my one-time code is 482913",
+    });
+    expect(out.ok, out.error).toBe(true);
+
+    expect(JSON.stringify(page.recent())).not.toContain("482913");
+    expect(page.recent()[0]).toMatchObject({ action: "fill", ok: true });
   });
 
   it("cuts a label to one line of at most 60 characters", () => {

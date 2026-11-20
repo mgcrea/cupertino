@@ -54,6 +54,7 @@ const page = (
   const replies = [...(opts.replies ?? [])];
   const timers: Array<{ fn: () => void; delay: number; live: boolean }> = [];
   const listeners: Listener[] = [];
+  const pageListeners: Record<string, Array<(event: unknown) => void>> = {};
   const context: Record<string, any> = {
     crypto: webcrypto,
     browser: {
@@ -75,7 +76,9 @@ const page = (
       const timer = timers[id - 1];
       if (timer) timer.live = false;
     },
-    addEventListener: () => {},
+    addEventListener: (type: string, listener: (event: unknown) => void) => {
+      (pageListeners[type] ??= []).push(listener);
+    },
     MutationObserver: class {
       observe() {}
       disconnect() {}
@@ -114,7 +117,10 @@ const page = (
       timer.fn();
     }
   };
-  return { context, ask, elapse, pumpNow: () => context.cupertinoPumpNow() };
+  const fire = (type: string, event: unknown = {}) => {
+    for (const listener of pageListeners[type] ?? []) listener(event);
+  };
+  return { context, ask, elapse, fire, pumpNow: () => context.cupertinoPumpNow() };
 };
 
 type Status = {
@@ -176,6 +182,24 @@ describe("what the page tells the popover", () => {
     await flush();
 
     expect((await status(p)).failedPolls).toBe(0);
+  });
+
+  it("starts its check-ins over when the page comes back from the back/forward cache", async () => {
+    // The restored page's first poll may wait on a cold worker; until it comes
+    // back it is connecting, not stalled since before the person left.
+    const p = page({ replies: [{ commands: [] }, () => new Promise(() => {})] });
+    await flush();
+    const before = await status(p);
+    expect(before.lastPollOkAt).not.toBeNull();
+
+    p.fire("pagehide", { persisted: true });
+    p.fire("pageshow", { persisted: true });
+    await flush();
+
+    const after = await status(p);
+    expect(after.lastPollOkAt).toBeNull();
+    expect(after.failedPolls).toBe(0);
+    expect(after.startedAt).toBeGreaterThanOrEqual(before.lastPollOkAt!);
   });
 
   it("adds the background's cookie notes to the page's list", async () => {

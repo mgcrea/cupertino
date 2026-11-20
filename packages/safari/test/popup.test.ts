@@ -214,6 +214,13 @@ describe("what the popover says about the tab in front", () => {
     ]);
   });
 
+  it("says how many times a repeated command ran", () => {
+    const v = load().view({
+      answer: answer({ recent: [{ at: NOW, action: "find", ok: true, times: 12 }] }),
+    });
+    expect(v.recent).toEqual([`${hhmm(NOW)} searched the page ×12`]);
+  });
+
   it("never shows anything but verbs and labels", () => {
     const v = load().view({
       answer: answer({
@@ -269,17 +276,30 @@ describe("whom the popover asks", () => {
     expect(p.tabs.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("redraws from the page's answer after Stop", async () => {
-    const stopped = { recording: false, counts: { records: 33 }, expiresAt: null };
+  it("asks the page again after Stop, rather than redraw what it said when the popover opened", async () => {
+    // The first answer is the page as it was when the popover opened; a Stop
+    // twenty seconds later redrawn from it would call a healthy tab stalled.
+    const statuses = [
+      live({
+        host: "a.example",
+        network: { recording: true, counts: { records: 33 }, expiresAt: null },
+      }),
+      live({
+        host: "b.example",
+        network: { recording: false, counts: { records: 33 }, expiresAt: null },
+      }),
+    ];
     const p = load({
       sendMessage: async (_id, m) =>
         (m as { kind: string }).kind === "popupStatus"
-          ? live({ network: { recording: true, counts: { records: 33 }, expiresAt: null } })
-          : { ok: true, network: stopped },
+          ? statuses.shift()
+          : { ok: true, network: { recording: false, counts: { records: 33 }, expiresAt: null } },
     });
     await p.load();
     const v = await p.network("stop");
-    expect(p.tabs.sendMessage).toHaveBeenLastCalledWith(7, { kind: "popupNetwork", op: "stop" });
+    expect(p.tabs.sendMessage).toHaveBeenCalledWith(7, { kind: "popupNetwork", op: "stop" });
+    expect(p.tabs.sendMessage).toHaveBeenLastCalledWith(7, { kind: "popupStatus" });
+    expect(v.host).toBe("b.example");
     expect(v.network).toEqual({ line: "Stopped · 33 requests kept", stop: false, clear: true });
     expect(v.state).toBe("ready");
   });
@@ -297,6 +317,25 @@ describe("whom the popover asks", () => {
     const v = await p.network("stop");
     expect(v.state).toBe("not-here");
     expect(v.network).toBeNull();
+  });
+
+  it("shows Not here rather than a blank popover when the answer cannot be read", async () => {
+    const broken = live();
+    Object.defineProperty(broken, "recent", {
+      get: () => {
+        throw new Error("unreadable");
+      },
+    });
+    const p = load({ sendMessage: async () => broken });
+    const v = (await p.context.cupertinoPopupShow()) as View;
+    expect(v.state).toBe("not-here");
+  });
+
+  it("skips an entry in the list that is not one", () => {
+    const v = load().view({
+      answer: answer({ recent: [null, { at: NOW, action: "scroll", ok: true }] }),
+    });
+    expect(v.recent).toEqual([`${hhmm(NOW)} scrolled`]);
   });
 
   it("reloads the tab and closes", async () => {

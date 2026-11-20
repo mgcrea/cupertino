@@ -1006,12 +1006,31 @@
   const RECENT_LABEL_MAX = 60;
   const recent = [];
 
+  function oneLine(text) {
+    return String(text).replace(/\s+/g, " ").trim();
+  }
+
   function note(entry) {
     const kept = { at: Date.now(), action: String(entry.action), ok: entry.ok === true };
     if (typeof entry.op === "string") kept.op = entry.op;
     if (typeof entry.label === "string") {
-      const line = entry.label.replace(/\s+/g, " ").trim().slice(0, RECENT_LABEL_MAX);
+      const line = oneLine(entry.label).slice(0, RECENT_LABEL_MAX);
       if (line) kept.label = line;
+    }
+    // A run of the same command is one entry with a count: `wait_for` checks
+    // the page every 500 ms, and ten of those would push the click before them
+    // off the list.
+    const last = recent[0];
+    if (
+      last &&
+      last.action === kept.action &&
+      last.op === kept.op &&
+      last.label === kept.label &&
+      last.ok === kept.ok
+    ) {
+      last.at = kept.at;
+      last.times = (last.times || 1) + 1;
+      return;
     }
     recent.unshift(kept);
     if (recent.length > RECENT_MAX) recent.length = RECENT_MAX;
@@ -1020,7 +1039,15 @@
   /** The label a result names, for the three verbs that act on an element. */
   function labelOf(command, result) {
     if (!result || result.ok !== true || !result.data) return undefined;
-    if (command.action === "click" || command.action === "fill") return result.data.label;
+    if (command.action === "click") return result.data.label;
+    if (command.action === "fill") {
+      // A field with no label of its own is named by its text, and after a
+      // fill that is what was typed. A label the typed text starts with is
+      // dropped rather than risk listing it.
+      const named = typeof result.data.label === "string" ? oneLine(result.data.label) : "";
+      const typed = oneLine(command.text ?? "");
+      return named && typed && typed.startsWith(named) ? undefined : result.data.label;
+    }
     if (command.action === "submit") return result.data.button;
     return undefined;
   }
