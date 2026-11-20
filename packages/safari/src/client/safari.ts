@@ -54,6 +54,7 @@ import {
   answeringDiagnosis,
   defaultPagesDirectory,
   heartbeatStatus,
+  lostPolls,
   isQuiet,
   pagesStatus,
   readPage,
@@ -1209,7 +1210,12 @@ export class AppleSafariClient {
     // Heartbeats, where the extension writes them, answer the question the
     // captures below can only guess at: is anything running, and where.
     const now = Date.now();
-    const diagnosis = answeringDiagnosis(this.heartbeatStatus(now), url, { sentAt, now });
+    const diagnosis = answeringDiagnosis(
+      this.heartbeatStatus(now),
+      url,
+      { sentAt, now },
+      lostPolls(this.pagesDirectory),
+    );
     if (diagnosis !== null) return new PageCommandTimeoutError(`${error.message} ${diagnosis}`);
 
     const status = this.pagesStatus();

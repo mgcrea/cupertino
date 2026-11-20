@@ -243,21 +243,39 @@ export const ANSWERING_WINDOW_SECONDS = 30;
  */
 export const FULL_POLL_MS = 11_000;
 
+/**
+ * How long after a page's last poll a capture can land while it is still
+ * polling: a hidden tab polls every ten seconds and the handler stamps a
+ * heartbeat at most every five. A capture later than this after the newest
+ * heartbeat came from a page that should have polled since and did not.
+ */
+export const CAPTURE_AFTER_POLL_MS = 15_000;
+
+/**
+ * Why pages that are open go silent, as measured on 2026-11-07 and 2026-11-20:
+ * Safari stops the extension's background worker, and the pages' polls stop
+ * reaching the handler until a page loads. Nothing on disk tells it apart from
+ * the extension being switched off, so every silence names it.
+ */
+const STOPPED_WORKER =
+  `Safari stopped the extension's background worker, which leaves open pages unable to ` +
+  `reach it until one reloads`;
+
 export const heartbeatDirectory = (pagesDirectory: string): string =>
   join(dirname(pagesDirectory), "heartbeat");
 
-export const heartbeatStatus = (
+/** Every heartbeat on disk, whatever its age; null when there is no directory. */
+const readHeartbeats = (
   pagesDirectory: string,
-  now: number = Date.now(),
-): HeartbeatStatus => {
+): { origin: string; at: number; extensionVersion: string | null }[] | null => {
   const directory = heartbeatDirectory(pagesDirectory);
   let names: string[];
   try {
     names = readdirSync(directory).filter((n) => n.endsWith(".json"));
   } catch {
-    return { supported: false, answering: [] };
+    return null;
   }
-  const answering: Heartbeat[] = [];
+  const beats: { origin: string; at: number; extensionVersion: string | null }[] = [];
   for (const name of names) {
     try {
       const parsed = JSON.parse(readFileSync(join(directory, name), "utf8")) as {
@@ -268,12 +286,9 @@ export const heartbeatStatus = (
       if (typeof parsed.origin !== "string" || typeof parsed.at !== "string") continue;
       const at = Date.parse(parsed.at);
       if (Number.isNaN(at)) continue;
-      const age = Math.max(0, Math.round((now - at) / 1000));
-      if (age > ANSWERING_WINDOW_SECONDS) continue;
-      answering.push({
+      beats.push({
         origin: parsed.origin,
         at,
-        ageSeconds: age,
         extensionVersion:
           typeof parsed.extensionVersion === "string" ? parsed.extensionVersion : null,
       });
@@ -281,7 +296,57 @@ export const heartbeatStatus = (
       // Torn or not ours. Skip it, as readPages does.
     }
   }
+  return beats;
+};
+
+export const heartbeatStatus = (
+  pagesDirectory: string,
+  now: number = Date.now(),
+): HeartbeatStatus => {
+  const beats = readHeartbeats(pagesDirectory);
+  if (beats === null) return { supported: false, answering: [] };
+  const answering: Heartbeat[] = [];
+  for (const beat of beats) {
+    const age = Math.max(0, Math.round((now - beat.at) / 1000));
+    if (age > ANSWERING_WINDOW_SECONDS) continue;
+    answering.push({ ...beat, ageSeconds: age });
+  }
   return { supported: true, answering: answering.toSorted((a, b) => a.ageSeconds - b.ageSeconds) };
+};
+
+/** A page that got its capture through after its site's polls stopped arriving. */
+export type LostPolls = { origin: string; capturedAt: number };
+
+/**
+ * The newest capture taken more than `CAPTURE_AFTER_POLL_MS` after the last
+ * heartbeat of its own origin, or null when there is none.
+ *
+ * A capture travels the same worker to the same handler as a poll, and the
+ * page that sent it polls straight after, so such a capture says the extension
+ * is on and that page's polls are what went missing. Its own origin, not any:
+ * a page whose `location.origin` is "null" (a `file:` page, or one served with
+ * a CSP sandbox) captures but never stamps a heartbeat, and set against another
+ * site's last poll it would look like lost polls while it polls fine. An origin
+ * with no heartbeat on disk is skipped for the same reason, and so is a tab
+ * still running a content script from before heartbeats.
+ */
+export const lostPolls = (pagesDirectory: string): LostPolls | null => {
+  const beats = readHeartbeats(pagesDirectory);
+  if (beats === null || beats.length === 0) return null;
+  const lastPoll = new Map<string, number>();
+  for (const { origin, at } of beats) {
+    lastPoll.set(origin, Math.max(at, lastPoll.get(origin) ?? at));
+  }
+  for (const page of readPages(pagesDirectory)) {
+    const capturedAt = Date.parse(page.capturedAt);
+    if (Number.isNaN(capturedAt)) continue;
+    const origin = originOf(page.url);
+    if (origin === null || origin === "null") continue;
+    const polled = lastPoll.get(origin);
+    if (polled === undefined) continue;
+    if (capturedAt - polled > CAPTURE_AFTER_POLL_MS) return { origin, capturedAt };
+  }
+  return null;
 };
 
 /**
@@ -357,6 +422,8 @@ export const answeringDiagnosis = (
   beats: HeartbeatStatus,
   url: string | undefined,
   wait?: { sentAt: number; now: number },
+  /** A capture that landed after its site stopped polling; see `lostPolls`. */
+  lost?: LostPolls | null,
 ): string | null => {
   if (!beats.supported) return null;
   const origin = originOf(url);
@@ -370,22 +437,37 @@ export const answeringDiagnosis = (
   const stopped = decisive ? beats.answering.filter((b) => b.at < cutoff) : [];
 
   const [latest] = stopped;
+  // Only when nothing polled during a wait every running page polls inside:
+  // a page that captured late and polls fine would have shown up in it.
+  if (live.length === 0 && decisive && wait !== undefined && lost) {
+    const capturedAgo = Math.max(0, Math.round((wait.now - lost.capturedAt) / 1000));
+    return (
+      `The extension is on — a page on ${lost.origin} was captured ${capturedAgo} seconds ago, ` +
+      `after that site's last poll — but no page has polled it for commands since, in the ` +
+      `${Math.floor(waited / 1000)} seconds this command waited or before. That is what it looks ` +
+      `like when ${STOPPED_WORKER}, not a setting. Reload the tab, which starts the worker again, ` +
+      `and repeat the command; quit and reopen Safari if a reload does not bring it back.`
+    );
+  }
   if (live.length === 0 && latest !== undefined) {
     return (
       `Pages on ${listOrigins(stopped)} were polling the extension until ` +
       `${latest.ageSeconds} seconds ago, but none has in the ${Math.floor(waited / 1000)} seconds this command ` +
-      `waited, which is long enough for even a hidden tab to check in. The extension was most ` +
-      `likely just switched off in Safari, or those tabs closed. Ask again in half a minute for ` +
-      `a firmer answer.`
+      `waited, which is long enough for even a hidden tab to check in. Nothing here can tell ` +
+      `apart three causes: ${STOPPED_WORKER}, the extension was switched off, or those tabs ` +
+      `closed. Reload the tab and repeat the command; if it still does not answer, check that ` +
+      `Cupertino is ticked in Safari > Settings > Extensions.`
     );
   }
   if (live.length === 0) {
     return (
       `No open page has polled the extension in the last ${ANSWERING_WINDOW_SECONDS} seconds, ` +
-      `on any site, so it is not running in Safari: switched off, allowed on no open page, or ` +
-      `loaded but broken. If Safari > Settings > Extensions shows it ticked, look there for a ` +
-      `second Cupertino row — two copies of Cupertino.app on this Mac can leave Safari with an ` +
-      `extension it never runs — then quit and reopen Safari and reload the tab.`
+      `on any site. Either ${STOPPED_WORKER}, or the extension is not running in Safari: ` +
+      `switched off, allowed on no open page, or loaded but broken. Reload the tab and repeat ` +
+      `the command first. If it still does not answer and Safari > Settings > Extensions shows ` +
+      `it ticked, look there for a second Cupertino row — two copies of Cupertino.app on this ` +
+      `Mac can leave Safari with an extension it never runs — then quit and reopen Safari and ` +
+      `reload the tab.`
     );
   }
   const here = origin === null ? undefined : live.find((b) => b.origin === origin);

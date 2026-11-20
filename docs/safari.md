@@ -1097,8 +1097,9 @@ does, and no full URL is kept.
 Diagnostics now report `state`: `never-ran`, `never-captured`, `stale`, `capturing`, or `answering`
 (a heartbeat in the last 30 s, which covers a hidden tab's 10 s poll). `working` is true only for
 `answering`, or for `capturing` from an extension too old to write heartbeats. A timeout or a
-`read_page` miss says which of three cases it is: no page polling anywhere (not running, so check
-for a second Cupertino row and relaunch Safari), other sites polling but not this one (this site's
+`read_page` miss says which of three cases it is: no page polling anywhere (a stopped background
+worker or an extension not running, so reload the tab first, then check for a second Cupertino row
+and relaunch Safari), other sites polling but not this one (this site's
 permission, or a tab not reloaded since it was allowed or since Cupertino was updated), or this
 site polling but no page on this exact URL taking the command.
 
@@ -1108,9 +1109,27 @@ written before a site was set to Deny, or before the extension was switched off,
 to the next timeout. When the wait was long enough for every running page to poll (11 s: a hidden
 tab's 10 s poll, plus slack; the handler always rewrites a heartbeat older than 5 s), only pages
 that polled during it count. A site that stopped just before is named as having stopped ("its
-permission for this site was just withdrawn"), and no page polling at all during the wait says the
-extension was most likely just switched off. The live read's 2.5 s wait is too short for that, so
-`read_page` misses keep the plain reading.
+permission for this site was just withdrawn"), and no page polling at all during the wait names
+the three causes it cannot tell apart: a stopped background worker, the extension switched off, or
+the tabs closed. The live read's 2.5 s wait is too short for that, so `read_page` misses keep the
+plain reading.
+
+Open pages can also go silent with the extension on. Measured 2026-11-20 in Safari's log: the
+handler saw one poll every 10 s until 09:28, then requests only in bursts right after Safari
+started the extension's service worker, each ending within 30 to 90 s at `disableWorkers`. From
+09:39:50 nothing reached it, with the geneanet tab open and in front and swap nearly full. The
+2026-11-07 stops looked the same, and the time limits added then keep a tab's loop running but
+cannot wake a worker Safari has stopped. A reload brings it back for a while. Nothing on disk tells
+this apart from the extension being switched off, so every no-poll timeout names the stopped worker
+and says to reload the tab first. The one case it can name is a capture taken more than 15 s after
+the last heartbeat of its own origin (a hidden tab's 10 s poll plus the 5 s heartbeat interval). A
+capture travels the same worker to the same handler as a poll, and the page that sent it polls
+straight after, so the extension is on and that page's polls are what got lost. That timeout says
+"The extension is on" and sends no one to Settings. It is the capture's own origin, not the newest
+poll anywhere, because a page whose `location.origin` is `"null"` (a `file:` page, or one served
+with a CSP sandbox) captures but is never stamped, and against another site's old heartbeat it
+would look like lost polls while it polls fine. A capture and a last poll from the same page load, as at 09:39:50,
+are also what switching it off looks like, and get the general reading.
 
 Measured live 2026-10-28, on a notarized build of `8b75ea9` installed in `/Applications`, with a
 Bing tab in front and Hacker News behind it:

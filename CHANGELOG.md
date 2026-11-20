@@ -12,6 +12,18 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Changed
+
+- **A Safari timeout no longer blames a setting when Safari stopped the extension's worker.**
+  Safari can stop the extension's background worker while tabs are open, and pages then cannot
+  reach it until one reloads. `page_elements`, `click` and the other page tools used to say the
+  extension was "most likely just switched off" or "not running in Safari", which sent agents to
+  Settings for a switch nobody had touched. They now name the stopped worker and say to reload the
+  tab first. When a page was captured well after its site's last poll, which shows the extension
+  is on and only the polls are getting lost, they say so and leave Settings out.
+
 ## [1.42.0] - 2026-11-17
 
 **Keep working while an agent drives behind you.** Desktop's notice says so when nothing it does
