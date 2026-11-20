@@ -1161,6 +1161,53 @@ XML (`/SRU?…`) is an HTML page with a body: the content script runs there and 
 the viewer's "This XML file does not appear to have any style information" banner followed by the
 tree as text.
 
+### The toolbar popover
+
+Clicking Cupertino's icon in Safari's toolbar opens a popover about the tab in front (design:
+`docs/superpowers/specs/2026-11-20-safari-popover-design.md`). It exists for the stall above: on
+2026-11-20 the person looking at the geneanet tab had no way to see that it had stopped answering,
+or that an agent had left a recording armed on it.
+
+It asks the tab's own content script with `tabs.sendMessage`, which does not go through the
+background worker, so it still answers when the worker is what stopped. The content script keeps,
+per page load, when a poll last came back with the handler's reply, how many failed since, and when
+its pump started. From that the popover shows one of five states:
+
+- **Ready**: a successful poll within 15 s.
+- **Connecting**: no successful poll yet, and the pump started less than 15 s ago, so the tab just
+  reloaded and the worker may be starting cold.
+- **Stalled**: neither, with how long since the last check-in, and Reload tab.
+- **Not here**: the page did not answer within 1.5 s. Either the site is not allowed, or the tab
+  was open from before the extension was turned on or updated (a content script from before this
+  build has no listener), or Safari runs no extensions on the page. Reload tab.
+- **No tab**: the window shows none.
+
+Below that, it shows the tab's network recording, armed or stopped with records still held, with
+Stop and Clear. Stop keeps what was recorded, and agents can still read it until the page reloads,
+so a stopped recording with records stays shown, with Clear. Last comes "What agents did here", the
+page's last ten commands as a time, a verb and an element's label. Cookie reads are listed too:
+`background.js` answers them without the page, and leaves the page a note (`ran`: the command and
+whether it worked) on the poll reply.
+
+It never shows page text, HTML, a field's value, a cookie, or a request's URL, body or id, and the
+list never holds what a fill typed. It answers only the extension's own popover: `sender.id` must be
+the extension's and `sender.tab` absent, so nothing in a tab and no other extension can read the
+list or stop a recording. It adds no permission. `activeTab` was considered and refused: in Safari
+it makes the click that opens the popover a temporary grant of that tab, which would let the
+extension onto a site the person never allowed, just by looking.
+
+Unmeasured, to check on the first notarized build:
+
+1. `tabs.query({ active: true, currentWindow: true })` returns the tab's `id` with the current
+   permissions, and `tabs.sendMessage` reaches the content script while the background worker is
+   stopped. Nothing known causes the stop on demand, so the stalled case stays open until a stall
+   happens on its own.
+2. `tabs.reload(id)` works with no `tabs` permission.
+3. What clicking the icon does on a site the extension is not allowed on: Safari may show its own
+   permission prompt instead of the popover.
+4. What `sender` looks like for a message from the popover (`id` set, no `tab`).
+5. Whether opening the popover wakes the background worker. Nothing relies on it.
+
 ### Not verified end to end
 
 The server half is tested against a fake extension — 17 tests covering the command shape, the page's

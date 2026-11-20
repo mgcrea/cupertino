@@ -1,0 +1,164 @@
+:root {
+  --text: #1d1d1f;
+  --secondary: #6e6e73;
+  --rule: rgba(0, 0, 0, 0.1);
+  --background: #ffffff;
+  --button: rgba(0, 0, 0, 0.06);
+  --button-hover: rgba(0, 0, 0, 0.1);
+  --ready: #28a745;
+  --connecting: #8e8e93;
+  --stalled: #ff9500;
+  --not-here: #ff3b30;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #f5f5f7;
+    --secondary: #98989d;
+    --rule: rgba(255, 255, 255, 0.12);
+    --background: #1e1e1e;
+    --button: rgba(255, 255, 255, 0.1);
+    --button-hover: rgba(255, 255, 255, 0.16);
+    --ready: #32d74b;
+    --connecting: #98989d;
+    --stalled: #ff9f0a;
+    --not-here: #ff453a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 300px;
+  background: var(--background);
+  color: var(--text);
+  font:
+    13px/1.4 -apple-system,
+    BlinkMacSystemFont,
+    system-ui,
+    sans-serif;
+}
+
+main {
+  padding: 12px 14px;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+
+.name {
+  font-weight: 600;
+}
+
+.version,
+.host,
+.detail,
+li.failed {
+  color: var(--secondary);
+}
+
+.version,
+.host {
+  font-size: 12px;
+}
+
+section + section {
+  border-top: 1px solid var(--rule);
+  margin-top: 10px;
+  padding-top: 10px;
+}
+
+.status {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--connecting);
+}
+
+.ready .dot {
+  background: var(--ready);
+}
+
+.stalled .dot {
+  background: var(--stalled);
+}
+
+.not-here .dot {
+  background: var(--not-here);
+}
+
+.no-tab .dot {
+  background: transparent;
+  border: 1px solid var(--secondary);
+}
+
+.headline {
+  font-weight: 500;
+}
+
+p {
+  margin: 4px 0 0;
+}
+
+.detail {
+  font-size: 12px;
+}
+
+h2 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--secondary);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: var(--button);
+  border: 0;
+  border-radius: 6px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--button-hover);
+}
+
+ol {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+}
+
+li {
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

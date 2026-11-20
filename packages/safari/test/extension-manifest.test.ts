@@ -108,6 +108,26 @@ describe("extension manifest", () => {
     ]);
   });
 
+  /**
+   * The popover adds no permission. `activeTab` in particular would make a
+   * click on the icon a temporary grant of that tab, letting the extension
+   * onto a site the person never allowed, just by looking.
+   */
+  it("opens a popover from the toolbar icon", () => {
+    expect(manifest.action.default_popup).toBe("popup.html");
+  });
+
+  it("loads the popover's own files and no inline script, which an extension page refuses", () => {
+    const html = readFileSync(`${RESOURCES}popup.html`, "utf8");
+    const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)];
+    expect(scripts.map((m) => /src="([^"]+)"/.exec(m[1]!)?.[1])).toEqual(["popup.js"]);
+    expect(scripts.every((m) => m[2]!.trim() === "")).toBe(true);
+    const sheets = [...html.matchAll(/<link\b[^>]*href="([^"]+)"/g)].map((m) => m[1]);
+    expect(sheets).toEqual(["popup.css"]);
+    for (const file of ["popup.js", "popup.css"])
+      expect(existsSync(`${RESOURCES}${file}`)).toBe(true);
+  });
+
   it("names only files the bundle carries", () => {
     const named = new Set<string>();
     const { service_worker, scripts = [] } = manifest.background;

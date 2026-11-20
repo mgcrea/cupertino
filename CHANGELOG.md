@@ -14,6 +14,16 @@ summary.
 
 ## [Unreleased]
 
+### Added
+
+- **Click Cupertino's icon in Safari to see the tab in front.** A popover says whether the page
+  can reach Cupertino right now: ready, still connecting, stalled since a given time, or not
+  running there and why. Reload tab is one click away, which is what brings a stalled tab back.
+  It shows a network recording an agent left on the tab, with Stop and Clear, and the last ten
+  things agents did on the page (clicked "Rechercher", filled "Nom", read cookies), by verb and
+  label, never what was typed. It asks the page directly, so it still works when Safari has
+  stopped the extension's background worker. It adds no permission.
+
 ### Changed
 
 - **A Safari timeout no longer blames a setting when Safari stopped the extension's worker.**
