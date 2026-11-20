@@ -226,6 +226,14 @@
   // still fire after the page comes back from the back/forward cache, so a
   // restart checks this rather than start a second loop beside it.
   let alive = false;
+  // For the toolbar popover: is this page getting through? A poll counts only
+  // when the handler's reply came back. The background answers `undefined`
+  // when its native call failed, and a lost message rejects after `WAIT_MS`;
+  // neither is a check-in. `startedAt` lets a page whose first reply is still
+  // on its way read as connecting rather than stalled.
+  let startedAt = null;
+  let lastPollOkAt = null;
+  let failedPolls = 0;
 
   /**
    * `browser.runtime.sendMessage`, given up on after `WAIT_MS`.
@@ -251,6 +259,7 @@
       return;
     }
     alive = true;
+    if (startedAt === null) startedAt = Date.now();
     // Whether this poll handed us work. A command is usually one step of a
     // sequence (click, then read), so the next one is probably already queued.
     let gotWork = false;
@@ -271,6 +280,17 @@
         page: window.cupertinoPageToken ?? null,
         extensionVersion: manifestVersion(),
       });
+      if (response !== null && typeof response === "object") {
+        lastPollOkAt = Date.now();
+        failedPolls = 0;
+      } else {
+        failedPolls += 1;
+      }
+      // Cookie commands the background answered without us, for the list of
+      // what agents did here. A note: which command and whether it worked.
+      if (Array.isArray(response?.ran)) {
+        for (const entry of response.ran) window.cupertinoNoteCommand?.(entry);
+      }
       const commands = response?.commands ?? [];
       gotWork = commands.length > 0;
       for (const command of commands) {
@@ -294,6 +314,7 @@
     } catch {
       // The background worker may be asleep, restarting, or gone. A failed poll
       // is a poll that did not happen, never a broken page.
+      failedPolls += 1;
     }
     // After a poll that carried work, poll again at once instead of waiting out
     // the interval: a multi-step flow would otherwise pay a full second (ten
@@ -306,6 +327,61 @@
   // The seam a push would use: a wake can call this to collapse the latency to
   // the next poll without changing anything else here.
   window.cupertinoPumpNow = pump;
+
+  // ── The toolbar popover ────────────────────────────────────────────────────
+  //
+  // The popover asks this page directly, with `tabs.sendMessage`, which does
+  // not go through the background worker: it has to work on the tab whose
+  // polls stopped getting through because that worker stopped (2026-11-20).
+  // It answers the extension's own popover and nothing else — an extension
+  // page has no `sender.tab` — so nothing in a tab, and no other extension,
+  // can stop a recording or read the list. Any other message gets no answer,
+  // so this never claims a reply meant for someone else.
+
+  /** The recorder's own state, or null when `network.js` did not load. */
+  function recorderState(op) {
+    const run = window.cupertinoNetwork?.run;
+    if (typeof run !== "function") return null;
+    const out = run({ action: "netRecord", op });
+    return out?.ok ? out.data : null;
+  }
+
+  function answerPopover(message) {
+    if (message.kind === "popupStatus") {
+      return {
+        ok: true,
+        host: location.host,
+        page: window.cupertinoPageToken ?? null,
+        extensionVersion: manifestVersion(),
+        startedAt,
+        lastPollOkAt,
+        failedPolls,
+        network: recorderState("status"),
+        recent: window.cupertinoRecentCommands?.() ?? [],
+      };
+    }
+    // Stop and clear only: arming is an agent's, and goes through the server.
+    if (message.op !== "stop" && message.op !== "clear") {
+      return { ok: false, error: "The popover can only stop or clear a recording." };
+    }
+    if (typeof window.cupertinoNetwork?.run !== "function") {
+      return { ok: false, error: "The network recorder did not load on this page." };
+    }
+    const network = recorderState(message.op);
+    return network === null
+      ? { ok: false, error: "The recorder did not answer." }
+      : { ok: true, network };
+  }
+
+  browser.runtime.onMessage?.addListener((message, sender) => {
+    if (message?.kind !== "popupStatus" && message?.kind !== "popupNetwork") return undefined;
+    if (sender?.id !== browser.runtime.id || sender?.tab) return undefined;
+    try {
+      return Promise.resolve(answerPopover(message));
+    } catch (error) {
+      return Promise.resolve({ ok: false, error: String(error?.message || error) });
+    }
+  });
 
   addEventListener("pagehide", () => {
     stopped = true;
