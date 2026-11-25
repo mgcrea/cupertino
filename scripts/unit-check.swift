@@ -15,6 +15,17 @@ import Foundation
 /// payload growing without bound in a store that keeps a thousand of them.
 ///
 /// Run with `make unit`.
+/// A `TokenVault` in memory, so the token checks never touch the login Keychain.
+final class MemoryTokenVault: TokenVault, @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [String: String] = [:]
+
+  func read(_ client: String) -> String? { lock.withLock { items[client] } }
+  func write(_ client: String, _ token: String) throws { lock.withLock { items[client] = token } }
+  func delete(_ client: String) throws { _ = lock.withLock { items.removeValue(forKey: client) } }
+  func all() -> [String: String] { lock.withLock { items } }
+}
+
 @main
 struct UnitCheck {
   static var failures = 0
@@ -2206,6 +2217,43 @@ struct UnitCheck {
             && !reason(v).contains("t1")
         })
       check("the discover refusal is 404 until a client is measured", DiscoverRefusal.status == 404)
+    }
+
+    // ─── HTTPTokens ───
+    print("\nHTTPTokens: one bearer token per wired client")
+    do {
+      let tokens = HTTPTokens(vault: MemoryTokenVault())
+      let first = try tokens.token(for: "cursor")
+      let again = try tokens.token(for: "cursor")
+      let hex = Set("0123456789abcdef")
+      check(
+        "mints 64 hex once",
+        first == again && first.count == 64 && first.allSatisfy { hex.contains($0) })
+      let codex = try tokens.token(for: "codex")
+      check("distinct per client", codex != first)
+      check(
+        "maps back",
+        tokens.client(for: first) == "cursor" && tokens.client(for: codex) == "codex"
+          && tokens.client(for: String(repeating: "0", count: 64)) == nil
+          && tokens.client(for: "nope") == nil && tokens.client(for: "") == nil)
+      try tokens.revoke("cursor")
+      check(
+        "revoke signs out one",
+        tokens.client(for: first) == nil && tokens.client(for: codex) == "codex")
+      let reminted = try tokens.token(for: "cursor")
+      check(
+        "re-mint after revoke differs",
+        reminted != first && tokens.client(for: reminted) == "cursor")
+
+      let vault = MemoryTokenVault()
+      try vault.write("vscode", String(repeating: "a", count: 64))
+      let loaded = HTTPTokens(vault: vault)
+      check(
+        "a token already in the vault is found without minting",
+        loaded.client(for: String(repeating: "a", count: 64)) == "vscode"
+          && (try? loaded.token(for: "vscode")) == String(repeating: "a", count: 64))
+    } catch {
+      check("HTTPTokens threw: \(error)", false)
     }
 
     print("\n\(checks - failures)/\(checks) passed")

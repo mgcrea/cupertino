@@ -669,6 +669,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/DeferredSpawn.swift \
 		apps/apple/Cupertino/HandshakeCache.swift \
 		apps/apple/Cupertino/HTTPGate.swift \
+		apps/apple/Cupertino/HTTPTokens.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
@@ -738,6 +739,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/DeferredSpawn.swift \
 		apps/apple/Cupertino/HandshakeCache.swift \
 		apps/apple/Cupertino/HTTPGate.swift \
+		apps/apple/Cupertino/HTTPTokens.swift \
 		apps/apple/Cupertino/CallCapture.swift \
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/InProcessRPC.swift \
