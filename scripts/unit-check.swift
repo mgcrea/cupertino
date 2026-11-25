@@ -2300,6 +2300,231 @@ struct UnitCheck {
       check("HTTPTokens threw: \(error)", false)
     }
 
+    // ─── HTTPSessionRouter ───
+    print("\nHTTPSessionRouter: POSTs to the child's lines, and the child's lines back")
+    do {
+      func data(_ text: String) -> Data { Data(text.utf8) }
+      func object(_ line: Data) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: line) as? [String: Any]
+      }
+      let initialize = data(
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#
+      )
+      let initialized = data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+      func request(_ id: Int, _ method: String = "tools/list", token: String? = nil) -> Data {
+        let meta = token.map { #","params":{"_meta":{"progressToken":\#($0)}}"# } ?? ""
+        return data(#"{"jsonrpc":"2.0","id":\#(id),"method":"\#(method)"\#(meta)}"#)
+      }
+      func response(_ id: Int) -> Data { data(#"{"jsonrpc":"2.0","id":\#(id),"result":{}}"#) }
+      func progress(_ token: String) -> Data {
+        data(
+          #"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":\#(token),"progress":1}}"#
+        )
+      }
+      func status(_ outcome: PostOutcome) -> Int? {
+        if case .invalid(let status, _) = outcome { return status }
+        return nil
+      }
+
+      check("initialize opens a session", HTTPSessionGate.preSession(initialize) == .initialize)
+
+      let discover = HTTPSessionGate.preSession(
+        data(#"{"jsonrpc":"2.0","id":4,"method":"server/discover"}"#))
+      var discoverOK = false
+      if case .discoverRefused(let code, let body) = discover, code == DiscoverRefusal.status,
+        let answer = object(body), let error = answer["error"] as? [String: Any]
+      {
+        discoverOK =
+          (error["code"] as? Int) == -32601 && (answer["id"] as? Int) == 4
+          && (answer["jsonrpc"] as? String) == "2.0" && answer["result"] == nil
+      }
+      check("discover is refused", discoverOK)
+
+      check(
+        "junk before a session is 400",
+        HTTPSessionGate.preSession(data("not json")) == .invalid(status: 400)
+          && HTTPSessionGate.preSession(request(2)) == .invalid(status: 400)
+          && HTTPSessionGate.preSession(initialized) == .invalid(status: 400)
+          && HTTPSessionGate.preSession(data("[]")) == .invalid(status: 400))
+      check(
+        "a batch holding initialize does not open a session",
+        HTTPSessionGate.preSession(data("[" + String(decoding: initialize, as: UTF8.self) + "]"))
+          == .invalid(status: 400))
+
+      var router = HTTPSessionRouter(id: SessionID.mint())
+      let list = request(2)
+      let streamed = router.post(list, stream: 7)
+      let answered = router.fromChild(response(2))
+      check(
+        "a request streams",
+        streamed == .stream(lines: [list])
+          && answered == [.toStream(7, response(2)), .closeStream(7)]
+          && router.openPosts.isEmpty)
+
+      check(
+        "notifications are accepted",
+        router.post(initialized, stream: 8) == .accepted(lines: [initialized])
+          && router.openPosts.isEmpty)
+
+      let batch = data(
+        "[" + String(decoding: request(3), as: UTF8.self) + ","
+          + String(decoding: request(4), as: UTF8.self) + "]")
+      let batched = router.post(batch, stream: 10)
+      var batchLines: [Data] = []
+      if case .stream(let lines) = batched { batchLines = lines }
+      let third = router.fromChild(response(3))
+      let fourth = router.fromChild(response(4))
+      check(
+        "batch keeps order and waits for all",
+        batchLines.count == 2 && (object(batchLines[0])?["id"] as? Int) == 3
+          && (object(batchLines[1])?["id"] as? Int) == 4
+          && third == [.toStream(10, response(3))]
+          && fourth == [.toStream(10, response(4)), .closeStream(10)])
+
+      let slashed = data(
+        #"[{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"file:///a/b"}},{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":0}}]"#
+      )
+      let mixed = router.post(slashed, stream: 11)
+      var mixedLines: [Data] = []
+      if case .stream(let lines) = mixed { mixedLines = lines }
+      check(
+        "a mixed batch streams, and its notification goes to the child too",
+        mixedLines.count == 2 && (object(mixedLines[0])?["id"] as? Int) == 5
+          && (object(mixedLines[1])?["method"] as? String) == "notifications/cancelled"
+          && String(decoding: mixedLines[0], as: UTF8.self).contains("file:///a/b")
+          && !mixedLines.contains { $0.contains(UInt8(ascii: "\n")) }
+          && router.openPosts == [11])
+      _ = router.fromChild(response(5))
+
+      check(
+        "an empty batch is 400",
+        status(router.post(data("[]"), stream: 12)) == 400 && router.openPosts.isEmpty)
+
+      let pretty = data(
+        "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"tools/list\"\n}\r\n")
+      var prettyLines: [Data] = []
+      if case .stream(let lines) = router.post(pretty, stream: 13) { prettyLines = lines }
+      check(
+        "a body written over several lines reaches the child as one",
+        prettyLines.count == 1 && !prettyLines[0].contains(UInt8(ascii: "\n"))
+          && (object(prettyLines[0])?["id"] as? Int) == 6)
+      check(
+        "a single body keeps its bytes, without its trailing newline",
+        router.post(data(String(decoding: initialized, as: UTF8.self) + "\r\n"), stream: 14)
+          == .accepted(lines: [initialized]))
+      router.closeStream(13)
+
+      let call = request(20, "tools/call", token: #""p1""#)
+      _ = router.post(call, stream: 9)
+      let followed = router.fromChild(progress(#""p1""#))
+      check("progress follows its request", followed == [.toStream(9, progress(#""p1""#))])
+
+      _ = router.post(request(21, "tools/call", token: "7"), stream: 15)
+      let bare = router.fromChild(progress(#""7""#))
+      let numeric = router.fromChild(progress("7"))
+      check(
+        "a string token and an integer token stay apart",
+        bare == [.dropped] && numeric == [.toStream(15, progress("7"))])
+
+      _ = router.fromChild(response(20))
+      check(
+        "a progress token is released with its response",
+        router.fromChild(progress(#""p1""#)) == [.dropped])
+      router.closeStream(15)
+
+      check(
+        "a closed stream releases its progress token",
+        router.fromChild(progress("7")) == [.dropped])
+
+      router.openGet(stream: 1)
+      _ = router.post(request(22, "tools/call", token: "true"), stream: 16)
+      _ = router.post(request(23, "tools/call", token: "1.5"), stream: 17)
+      check(
+        "a token that is neither a string nor an integer is not routed",
+        router.fromChild(progress("true")) == [.toStream(1, progress("true"))]
+          && router.fromChild(progress("1.5")) == [.toStream(1, progress("1.5"))])
+      router.closeStream(16)
+      router.closeStream(17)
+
+      let updated = data(
+        #"{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"x"}}"#)
+      check(
+        "unrouted notification goes to GET",
+        router.hasGet && router.fromChild(updated) == [.toStream(1, updated)])
+
+      let sampling = data(#"{"jsonrpc":"2.0","id":30,"method":"sampling/createMessage"}"#)
+      _ = router.post(request(30), stream: 18)
+      check(
+        "server request goes to GET",
+        router.fromChild(sampling) == [.toStream(1, sampling)] && router.openPosts == [18])
+      _ = router.fromChild(response(30))
+
+      router.closeStream(1)
+      let afterGet = router.post(request(31), stream: 19)
+      check(
+        "unrouted notification is dropped",
+        !router.hasGet && router.fromChild(updated) == [.dropped]
+          && afterGet == .stream(lines: [request(31)])
+          && router.fromChild(response(31)) == [.toStream(19, response(31)), .closeStream(19)])
+
+      _ = router.post(request(40), stream: 20)
+      let duplicate = router.post(request(40), stream: 21)
+      let inBatch = router.post(
+        data(
+          "[" + String(decoding: request(41), as: UTF8.self) + ","
+            + String(decoding: request(41), as: UTF8.self) + "]"), stream: 22)
+      check(
+        "duplicate pending id is 400",
+        status(duplicate) == 400 && status(inBatch) == 400 && router.openPosts == [20])
+      check(
+        "a refused batch leaves nothing pending",
+        router.fromChild(response(41)) == [.dropped])
+
+      check(
+        "a non-JSON or non-JSON-RPC body is 400",
+        status(router.post(data("{nope"), stream: 23)) == 400
+          && status(router.post(data(#"{"jsonrpc":"2.0"}"#), stream: 23)) == 400
+          && status(router.post(data("[1]"), stream: 23)) == 400
+          && status(router.post(data("7"), stream: 23)) == 400
+          && router.openPosts == [20])
+
+      var first = HTTPSessionRouter(id: SessionID.mint())
+      var second = HTTPSessionRouter(id: SessionID.mint())
+      _ = first.post(request(2), stream: 7)
+      _ = second.post(request(2), stream: 8)
+      check(
+        "same ids in two sessions stay apart",
+        first.fromChild(response(2)) == [.toStream(7, response(2)), .closeStream(7)]
+          && second.openPosts == [8]
+          && second.fromChild(response(2)) == [.toStream(8, response(2)), .closeStream(8)])
+
+      var closing = HTTPSessionRouter(id: SessionID.mint())
+      _ = closing.post(request(2), stream: 7)
+      closing.closeStream(7)
+      let lateDropped = closing.fromChild(response(2))
+      closing.openGet(stream: 1)
+      _ = closing.post(request(2), stream: 7)
+      closing.closeStream(7)
+      let lateToGet = closing.fromChild(response(2))
+      check(
+        "closing a stream forgets its ids",
+        closing.openPosts.isEmpty && lateDropped == [.dropped]
+          && lateToGet == [.toStream(1, response(2))])
+
+      let minted = SessionID.mint()
+      let hex = Set("0123456789abcdef")
+      check(
+        "session ids",
+        minted.count == 32 && minted.allSatisfy { hex.contains($0) }
+          && SessionID.mint() != minted && SessionID.isWellFormed(minted)
+          && !SessionID.isWellFormed(minted.uppercased())
+          && !SessionID.isWellFormed(String(minted.dropLast()))
+          && !SessionID.isWellFormed(minted + "0")
+          && !SessionID.isWellFormed(String(repeating: "g", count: 32))
+          && !SessionID.isWellFormed(""))
+      check("a router keeps its session id", HTTPSessionRouter(id: minted).id == minted)
+    }
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")
