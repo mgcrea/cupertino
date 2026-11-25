@@ -772,7 +772,12 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/ClientFacade.swift \
 		apps/apple/Cupertino/StoreLane/*.swift \
 		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
-	@apps/apple/.build/host-check
+	@# The deferred-spawn cases start a stub MCP server under node, so node is a
+	@# requirement here rather than a skip: a check that quietly passed without
+	@# it would pass on exactly the machines that never ran it.
+	@command -v node >/dev/null 2>&1 || { echo "  FAIL host-check needs node on PATH, for scripts/fixtures/stub-mcp-server.mjs" >&2; exit 1; }
+	@HOST_CHECK_NODE="$$(command -v node)" HOST_CHECK_STUB="$(CURDIR)/scripts/fixtures/stub-mcp-server.mjs" \
+		apps/apple/.build/host-check
 
 audit-log-check: ## Assert a write the audit log cannot make leaves the chain intact, not broken
 	@# `BridgeProtocol` is STUBBED by the check rather than compiled in, and that

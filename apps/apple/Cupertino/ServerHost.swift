@@ -17,6 +17,11 @@ import os
 nonisolated final class ServerHost: @unchecked Sendable {
   static let shared = ServerHost()
 
+  /// Where `serve` finds a node surface's server, in place of
+  /// `ServerLocator.locate`. `host-check` only, which points it at a stub
+  /// before serving anything; nil in the app.
+  nonisolated(unsafe) static var locateOverride: ((Surface) throws -> ServerBinaries)?
+
   /// Held for the lifetime of the process. `flock` releases on close, and on
   /// death — which is the whole reason it can replace the unlink dance below.
   /// Main thread only: `start` and `stop` are its only readers and writers.
@@ -858,7 +863,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
 
     let binaries: ServerBinaries
     do {
-      binaries = try ServerLocator.locate(surface)
+      binaries = try (Self.locateOverride ?? ServerLocator.locate)(surface)
     } catch {
       let detail = error.localizedDescription
       hostLog(surface.id, .error, detail)
@@ -1297,19 +1302,146 @@ nonisolated final class ServerHost: @unchecked Sendable {
     return "store \(method): \(reason)"
   }
 
+  /// One node session, from `ok` to hang-up.
+  ///
+  /// The settings are read once, here, at connect: the environment the cache
+  /// keys on is the one the server is started with, however long the session
+  /// waits for it, so the server that starts is the one whose answers the
+  /// client already holds. A running server keeps its connect-time settings
+  /// the same way; `settingsChanged` is what narrows either.
+  ///
+  /// With the cache on, nothing is started yet. The deferred phase reads the
+  /// client's frames and answers the handshake and the lists from what an
+  /// earlier server said under the same key, until the client sends something
+  /// only a server can answer. That frame starts the server, which is written
+  /// the whole session first, and the relay takes the socket from there. A
+  /// client that hangs up before then never costs a process. See
+  /// docs/superpowers/specs/2026-11-25-deferred-server-spawn-design.md.
   private func run(
     surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool, isSelf: Bool,
     wiredClient: String?
   ) {
-    let process = Process()
-    process.executableURL = binaries.node
-    process.arguments = [binaries.script.path]
-    // One read of the settings, and everything below follows it: the
-    // environment the server reads, the log lines, and the record
-    // `settingsChanged` compares against later. Read once because three reads
-    // could straddle a toggle and record a server as narrower than it is.
-    let spawnConfig = SpawnConfig.current(surface)
-    let gates = surface.gates.filter { spawnConfig.gates.contains($0.id) }.map(\.envSuffix)
+    let spawn = spawnEnvironment(surface: surface, isSelf: isSelf, wiredClient: wiredClient)
+    hostLog(surface.id, .info, "allowWrites=\(spawn.config.allowWrites)")
+    if !surface.gates.isEmpty {
+      let gates = surface.gates.filter { spawn.config.gates.contains($0.id) }.map(\.envSuffix)
+      hostLog(surface.id, .info, "gates=[\(gates.joined(separator: ","))]")
+    }
+    if spawn.lazyTools { hostLog(surface.id, .info, "lazyTools=true") }
+    if !spawn.lazyTools, !isSelf, SurfaceSettings.lazyTools(surface), let id = wiredClient {
+      hostLog(surface.id, .info, "lazyTools skipped — \(id) defers tool schemas itself")
+    }
+
+    let session = UUID()
+    let observer = RequestObserver(
+      surface: surface, session: session, wiredClient: wiredClient, tracesConnect: true)
+    func start(_ handoff: Handoff?) {
+      startServer(
+        surface: surface, binaries: binaries, env: spawn.env, config: spawn.config,
+        client: client, onTrial: onTrial, session: session, observer: observer,
+        handoff: handoff)
+    }
+
+    guard HandshakeCache.isOn(binaries) else {
+      start(nil)
+      return
+    }
+
+    hostLog(surface.id, .info, "session open, server deferred")
+    let base = HandshakeBase(
+      surface: surface.id,
+      build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
+      node: binaries.node.path, script: binaries.script.path, env: spawn.env)
+    var deferred = DeferredSession(base: base, cache: .shared)
+    var lines = LineBuffer()
+    let newline = Data("\n".utf8)
+    var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+
+    // Only this thread reads or writes the socket until `start`, which hands
+    // both directions to the pumps. Nothing read here is lost on the way: what
+    // `deferred` has seen is the replay, the lines read with the trigger and
+    // the start of an unfinished one follow it, and from the next read on the
+    // client→server pump owns the socket.
+    reading: while true {
+      let n = buffer.withUnsafeMutableBufferPointer { read(client, $0.baseAddress, $0.count) }
+      if n < 0 { if errno == EINTR { continue } else { break } }
+      if n == 0 { break }
+      let complete = lines.append(Data(buffer[0..<n]))
+      for (index, line) in complete.enumerated() {
+        switch deferred.client(line) {
+        case .hold:
+          observer.saw(line + newline)
+        case .answer(let reply):
+          observer.saw(line + newline)
+          guard writeAll(client, reply) else { break reading }
+        case .spawn:
+          // The frames after the trigger in this read are the relay's, so they
+          // go through the filter as the pump would put them, before the
+          // server can answer any of them.
+          var filter = deferred.filter()
+          var behind = Data()
+          for later in complete[(index + 1)...] {
+            filter.client(McpFrame.parse(later))
+            behind += later + newline
+          }
+          let partial = lines.takePending()
+          start(
+            Handoff(
+              preamble: deferred.replay() + behind + partial, partial: partial, filter: filter,
+              unobserved: line + newline + behind + partial,
+              reason: "first \(deferred.trigger?.method ?? "frame that is not a request")"))
+          return
+        }
+      }
+      // No request the host could answer is this long, so whatever it is, it
+      // is the server's, and the bytes go to it as they come rather than being
+      // held for a newline.
+      if lines.pendingCount > DeferredSpawn.oversized {
+        let partial = lines.takePending()
+        start(
+          Handoff(
+            preamble: deferred.replay() + partial, partial: partial, filter: deferred.filter(),
+            unobserved: partial,
+            reason: "a frame over \(DeferredSpawn.oversized >> 10) KB before any call"))
+        return
+      }
+    }
+
+    // Hung up, or unwritable, before anything needed a server. `serve` closes
+    // the socket; there is no process to stop. `closed` also drops the client
+    // name `RequestObserver` noted when it saw `initialize`.
+    observer.closed()
+    Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
+    hostLog(surface.id, .info, "session closed, no server was started")
+  }
+
+  /// What a deferred session hands the server it starts.
+  nonisolated private struct Handoff {
+    /// Written to the server's stdin before any other client byte: the
+    /// transcript with the trigger, the frames read with it, and the start of
+    /// one not finished yet.
+    let preamble: Data
+    /// That unfinished frame, so the relay frames what follows from it.
+    let partial: Data
+    /// What the server's output goes through until it owes the client nothing.
+    let filter: ReplyFilter
+    /// The bytes the observer has not seen, fed once the session is open.
+    let unobserved: Data
+    /// Why the server started, for the log.
+    let reason: String
+  }
+
+  /// The environment a session's server runs with, and the settings it was
+  /// read from, as `settingsChanged` later compares them.
+  ///
+  /// One read of the settings, and everything follows it: the environment, the
+  /// log lines and the record. Read once because three reads could straddle a
+  /// toggle and record a server as narrower than it is.
+  private func spawnEnvironment(surface: Surface, isSelf: Bool, wiredClient: String?) -> (
+    env: [String: String], config: SpawnConfig, lazyTools: Bool
+  ) {
+    let config = SpawnConfig.current(surface)
+    let gates = surface.gates.filter { config.gates.contains($0.id) }.map(\.envSuffix)
     // Never lazy for the Chat pane, and `SurfaceCatalog.probe` gives the reason
     // in full: a lazy server answers `tools/list` with a search tool and a
     // dispatcher, so honouring the setting here would hand the model four tools
@@ -1326,21 +1458,28 @@ nonisolated final class ServerHost: @unchecked Sendable {
       isSelf
       ? false
       : SurfaceSettings.lazyTools(surface) && !ClientFacade.defersSchemas(wiredClient)
-    process.environment = ServerLocator.environment(
-      for: surface, allowWrites: spawnConfig.allowWrites, gates: gates,
+    let env = ServerLocator.environment(
+      for: surface, allowWrites: config.allowWrites, gates: gates,
       values: ServerLocator.gateValues(
-        for: surface, isOn: { spawnConfig.gates.contains($0.id) },
+        for: surface, isOn: { config.gates.contains($0.id) },
         text: { UserDefaults.standard.string(forKey: SurfaceSettings.gateValueKey(surface, $0)) }),
       lazyTools: lazyTools)
+    return (env, config, lazyTools)
+  }
 
-    hostLog(surface.id, .info, "allowWrites=\(spawnConfig.allowWrites)")
-    if !surface.gates.isEmpty {
-      hostLog(surface.id, .info, "gates=[\(gates.joined(separator: ","))]")
-    }
-    if lazyTools { hostLog(surface.id, .info, "lazyTools=true") }
-    if !lazyTools, !isSelf, SurfaceSettings.lazyTools(surface), let id = wiredClient {
-      hostLog(surface.id, .info, "lazyTools skipped — \(id) defers tool schemas itself")
-    }
+  /// Start the session's server and relay until either side hangs up.
+  ///
+  /// `handoff` is nil for a session that was never deferred, and the relay is
+  /// then byte for byte what it always was. Otherwise the server is written the
+  /// preamble first, and both pumps run the reply filter until it retires.
+  private func startServer(
+    surface: Surface, binaries: ServerBinaries, env: [String: String], config: SpawnConfig,
+    client: Int32, onTrial: Bool, session: UUID, observer: RequestObserver, handoff: Handoff?
+  ) {
+    let process = Process()
+    process.executableURL = binaries.node
+    process.arguments = [binaries.script.path]
+    process.environment = env
 
     let toChild = Pipe()
     let fromChild = Pipe()
@@ -1364,27 +1503,34 @@ nonisolated final class ServerHost: @unchecked Sendable {
       try process.run()
     } catch {
       hostLog(surface.id, .error, "could not start server: \(error.localizedDescription)")
+      observer.closed()
+      Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
       return
     }
-    let session = UUID()
     let pid = process.processIdentifier
     if onTrial { trialPIDs.withLock { $0.insert(pid) } }
     serverProcesses.withLock { $0[pid] = process }
-    serverPIDs.withLock { $0[pid] = spawnConfig }
-    // A switch turned off between the read above and this line found no pid
-    // to stop. Asking once more now that there is one closes that window.
+    serverPIDs.withLock { $0[pid] = config }
+    // A switch turned off between the read at connect and this line found no
+    // pid to stop. Asking once more now that there is one closes that window.
     settingsChanged()
+    // The name too: a deferred session saw its `initialize` before it was
+    // open, and `named` ignores a session it does not have yet.
     Task(priority: Sessions.priority) { @MainActor in
       Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
+      if let name = Sessions.clientName(session) { Sessions.shared.named(id: session, name) }
     }
+    let started = handoff.map { "\($0.reason), starting server" } ?? "server started"
     hostLog(
       surface.id, .info,
-      "server started (pid \(pid))"
-        + (binaries.isDevelopment ? " — development build" : ""))
+      "\(started) (pid \(pid))" + (binaries.isDevelopment ? " — development build" : ""))
+    // After `opened`, so the trigger's call is counted against a session the
+    // Activity window has, and before the server can read it, so a visible
+    // call's notice is up first, as it is for every other call.
+    if let handoff { observer.saw(handoff.unobserved) }
 
     let group = DispatchGroup()
-    let observer = RequestObserver(
-      surface: surface, session: session, wiredClient: wiredClient, tracesConnect: true)
+    let filter = handoff.map { SharedFilter($0.filter) }
 
     // Client -> server. Also the only place that sees requests, so it is where
     // tool calls are picked out for the log. On EOF, close the child's stdin so
@@ -1396,8 +1542,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // `waitUntilExit()`, leaking a thread, three pipes and a process per session
     // for the life of the app.
     let childStdin = toChild.fileHandleForWriting
+    let requests = filter.map { ClientRelay(filter: $0, partial: handoff?.partial ?? Data()) }
     pump(
       from: client, to: childStdin.fileDescriptor, group: group,
+      prefix: handoff?.preamble ?? Data(),
+      transform: requests.map { relay in { @Sendable chunk in relay.relay(chunk) } },
       observe: { observer.saw($0) },
       onFinish: {
         try? childStdin.close()
@@ -1410,9 +1559,11 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // Observed too now, for a surface that records results. `observe` was
     // already an optional parameter and simply unused on this call; what is new
     // is that two threads now feed one observer, which is what the lock inside
-    // it is for.
+    // it is for. It sees what reaches the client, not what the filter dropped.
+    let responses = filter.map { ServerRelay(filter: $0, surface: surface.id) }
     pump(
       from: fromChild.fileHandleForReading.fileDescriptor, to: client, group: group,
+      transform: responses.map { relay in { @Sendable chunk in relay.relay(chunk) } },
       observe: { observer.answered($0) },
       onFinish: { shutdown(client, SHUT_WR) })
 
@@ -1507,8 +1658,15 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// can hand the same fd number to a new connection, so the stray close tears
   /// down an unrelated client. Two MCP clients at once is the normal case, so
   /// ownership is now explicit: whoever created a descriptor closes it, once.
+  ///
+  /// `prefix` is written to `sink` first, from this thread rather than before
+  /// the pumps start: the other pump is then already draining the server's
+  /// output, so a long preamble can never wait on a server blocked writing to
+  /// a full stdout pipe. `transform` turns each chunk read into what is
+  /// written, and `observe` sees what is written.
   private func pump(
-    from source: Int32, to sink: Int32, group: DispatchGroup,
+    from source: Int32, to sink: Int32, group: DispatchGroup, prefix: Data = Data(),
+    transform: (@Sendable (Data) -> Data)? = nil,
     observe: (@Sendable (Data) -> Void)? = nil,
     onFinish: @escaping @Sendable () -> Void
   ) {
@@ -1516,13 +1674,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
     onDedicatedThread("cupertino.pump") {
       defer { group.leave() }
       var buffer = [UInt8](repeating: 0, count: 64 * 1024)
-      while true {
+      // A prefix that cannot be written is a server already gone: nothing is
+      // read, and `onFinish` tells the other side.
+      var open = writeAll(sink, prefix)
+      while open {
         let n = buffer.withUnsafeMutableBufferPointer { read(source, $0.baseAddress, $0.count) }
         if n < 0 { if errno == EINTR { continue } else { break } }
         if n == 0 { break }
-        let chunk = Data(buffer[0..<n])
+        let read = Data(buffer[0..<n])
+        let chunk = transform?(read) ?? read
         observe?(chunk)
-        guard writeAll(sink, chunk) else { break }
+        open = writeAll(sink, chunk)
       }
       // Let the far side see EOF instead of waiting forever — how, and whether
       // the descriptor is closed at all, is the caller's business.
@@ -1561,6 +1723,120 @@ nonisolated final class ServerHost: @unchecked Sendable {
       out.append(byte)
     }
     return .tooLong
+  }
+}
+
+/// The reply filter of one session, shared by its two pumps.
+///
+/// One filter behind one lock, because each side's call changes what the
+/// other must do: a request the client→server pump remembers is a response
+/// the server→client pump compares, and the order the two threads take the
+/// lock in is the order the server saw them. Nil once retired, which is when
+/// both pumps stop calling it.
+nonisolated private final class SharedFilter: Sendable {
+  private let state: OSAllocatedUnfairLock<ReplyFilter?>
+
+  init(_ filter: ReplyFilter) {
+    state = OSAllocatedUnfairLock(initialState: filter.isRetired ? nil : filter)
+  }
+
+  var isRetired: Bool { state.withLock { $0 == nil } }
+
+  /// One client line, before any of it reaches the server.
+  func client(_ line: Data) {
+    state.withLock { filter in
+      filter?.client(McpFrame.parse(line))
+      if filter?.isRetired == true { filter = nil }
+    }
+  }
+
+  /// What to do with one line of the server's output; nil once retired.
+  func server(_ line: Data) -> ReplyFilter.Verdict? {
+    state.withLock { filter in
+      guard var live = filter else { return nil }
+      let verdict = live.server(line)
+      filter = live.isRetired ? nil : live
+      return verdict
+    }
+  }
+}
+
+/// The client→server side of a filtered relay: every byte goes through as it
+/// came, and each complete line is shown to the filter before its chunk is
+/// written, so the server can never answer a request the filter has not seen.
+///
+/// `@unchecked` because only the pump that owns it calls `relay`, from one thread.
+nonisolated private final class ClientRelay: @unchecked Sendable {
+  private let filter: SharedFilter
+  private var framing = LineBuffer()
+  private var retired = false
+
+  /// `partial` is the start of a line the server was already written, which
+  /// the next chunk finishes.
+  init(filter: SharedFilter, partial: Data) {
+    self.filter = filter
+    _ = framing.append(partial)
+  }
+
+  func relay(_ chunk: Data) -> Data {
+    guard !retired else { return chunk }
+    if filter.isRetired {
+      retired = true
+      framing = LineBuffer()
+      return chunk
+    }
+    for line in framing.append(chunk) { filter.client(line) }
+    return chunk
+  }
+}
+
+/// The server→client side of a filtered relay: complete lines only, each
+/// passed, dropped or logged as a mismatch, until the filter retires; then
+/// what is held and everything after goes through as it comes.
+///
+/// `@unchecked` for the reason `ClientRelay` gives.
+nonisolated private final class ServerRelay: @unchecked Sendable {
+  private let filter: SharedFilter
+  private let surface: String
+  private var framing = LineBuffer()
+  private var retired = false
+  private static let newline = Data("\n".utf8)
+
+  init(filter: SharedFilter, surface: String) {
+    self.filter = filter
+    self.surface = surface
+  }
+
+  func relay(_ chunk: Data) -> Data {
+    guard !retired else { return chunk }
+    var out = Data()
+    for line in framing.append(chunk) {
+      switch filter.server(line) {
+      case nil, .pass?:
+        out += line + Self.newline
+      case .drop?:
+        continue
+      case .mismatch(let method, let forward)?:
+        // A replay the host already answered, or a live answer to a key some
+        // other session had recorded: the same missing input either way.
+        let what =
+          forward
+          ? "answered differently than recorded; a key input is missing, the client gets "
+            + "this server's answer"
+          : "answered differently on replay; a key input is missing, the client already has "
+            + "the cached answer"
+        hostLog(
+          surface, .error,
+          "handshake cache: \(method) \(what); cache off for \(surface) until restart")
+        assertionFailure("handshake cache: \(surface) \(method) answered differently on replay")
+        if forward { out += line + Self.newline }
+      }
+    }
+    if filter.isRetired {
+      retired = true
+      out += framing.takePending()
+    }
+    return out
   }
 }
 

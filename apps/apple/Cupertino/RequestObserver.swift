@@ -31,9 +31,11 @@ import os
 ///
 /// `@unchecked` because the checker cannot see the arrangement that makes it true: state
 /// both pumps and the renewal timer touch is behind `waiting`, `visible` and `connect`, and each
-/// `FrameSplitter` is fed by exactly one thread — `requests` by `saw`, `responses` by
+/// `FrameSplitter` is fed by one thread at a time — `requests` by `saw`, `responses` by
 /// `answered`, or both by the one in-process serving thread — so neither is ever reached
-/// from two threads at once. `pushes` is the same kind of state as `responses`: touched
+/// from two threads at once. A deferred node session hands `saw` over once: the session
+/// thread feeds it until the server starts, and the client→server pump from then on, a
+/// thread that session thread starts. `pushes` is the same kind of state as `responses`: touched
 /// only by whichever thread calls `answered` (the pump, or the in-process serving thread).
 nonisolated final class RequestObserver: @unchecked Sendable {
   private let surface: Surface
