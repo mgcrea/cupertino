@@ -343,6 +343,13 @@ enum ClientWiring {
   /// records the call instead.
   nonisolated(unsafe) static var endSessions: (String) -> Void = { _ in }
 
+  /// Why the HTTP listener is not serving, or nil while it is: the app points
+  /// it at `ServerHost.httpStartupError` at launch. While it says something,
+  /// an HTTP client whose entries are right reaches nothing, so it reads
+  /// `notServing` rather than green. A closure for the same reason as
+  /// `endSessions`.
+  nonisolated(unsafe) static var httpNotServing: () -> String? = { nil }
+
   /// The port HTTP entries name. A closure so `make wiring-check` can move it
   /// without writing a preference. A capture shows the release port whatever
   /// build took it.
@@ -527,6 +534,9 @@ enum ClientWiring {
     /// before HTTP. Nothing is broken; Switch to HTTP rewrites it, and nothing
     /// does so on its own.
     case oldTransport
+    /// Wired over HTTP as it should be, while the listener is not serving, for
+    /// the reason given: the main window's HTTP warning, word for word.
+    case notServing(String)
     /// Wired for some surfaces and not others — what an existing config looks
     /// like the day a new surface ships.
     case incomplete([String])
@@ -555,6 +565,7 @@ enum ClientWiring {
       case .stale(let found): "Wired to another copy of Cupertino, at \(found)."
       case .oldTransport:
         "Wired the old way, with a bridge per server. Switch to HTTP to drop them."
+      case .notServing(let why): why
       case .incomplete(let missing):
         "Wired, but missing \(missing.joined(separator: ", "))."
       case .extra(let leftover):
@@ -597,6 +608,9 @@ enum ClientWiring {
         servers: servers, expectedCommand: bridgePath, expected: expected,
         unexpected: unexpected, http: want(clientID, over: wired)))
     if capable == .http, wired == .bridge, verdict != .notConfigured { return .oldTransport }
+    if wired == .http, verdict == .configured, let why = httpNotServing() {
+      return .notServing(why)
+    }
     return verdict
   }
 

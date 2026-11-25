@@ -144,6 +144,27 @@ extension WiringCheck {
     autoRewireNeverSwitches()
     isOursClaimsOnlyOurs()
     aTokenIsNeverWorldReadable()
+    notServingIsNotGreen()
+  }
+
+  /// While the listener cannot bind its port, an HTTP-wired client reaches
+  /// nothing, so it must not read green; a bridge client is unaffected.
+  static func notServingIsNotGreen() {
+    print("\nan http client is not green while the listener is down")
+    reset()
+    let cursor = client("cursor")
+    _ = try? ClientWiring.switchToHTTP(cursor)
+    let desktop = client("claude-desktop")
+    _ = try? ClientWiring.configure(desktop)
+    let warning = "HTTP endpoint not listening on 127.0.0.1:8830: Address already in use."
+    ClientWiring.httpNotServing = { warning }
+    defer { ClientWiring.httpNotServing = { nil } }
+    let status = ClientWiring.status(of: cursor)
+    check("an HTTP client reads the listener's warning", status == .notServing(warning))
+    check("in the warning's own words", status.summary == warning)
+    check("a bridge client still reads configured", ClientWiring.status(of: desktop) == .configured)
+    ClientWiring.httpNotServing = { nil }
+    check("and once it serves, configured again", ClientWiring.status(of: cursor) == .configured)
   }
 
   // MARK: - HTTP wiring

@@ -310,7 +310,7 @@ struct ClientDetail: View {
   private func configureLabel(_ status: ClientWiring.Status) -> String {
     switch status {
     case .stale, .incomplete, .extra, .oldTransport: "Update"
-    case .configured: "Rewrite"
+    case .configured, .notServing: "Rewrite"
     default: "Configure"
     }
   }
@@ -1070,6 +1070,8 @@ private struct FolderRow: View {
       case .oldTransport:
         Text("Wired the old way, with a bridge per server. Update switches it to HTTP.")
           .font(.caption2).foregroundStyle(.orange)
+      case .notServing:
+        Text(status.summary).font(.caption2).foregroundStyle(.orange)
       default:
         EmptyView()
       }

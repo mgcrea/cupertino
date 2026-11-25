@@ -221,6 +221,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // value, so EPIPE arrives as a failed write on the one connection that
     // deserves it. This must be set before the first connection is served.
     _ = signal(SIGPIPE, SIG_IGN)
+    Self.raiseDescriptorLimit()
 
     do {
       try openSocket()
@@ -248,6 +249,34 @@ nonisolated final class ServerHost: @unchecked Sendable {
       defaultsObserver = NotificationCenter.default.addObserver(
         forName: UserDefaults.didChangeNotification, object: nil, queue: nil
       ) { [weak self] _ in self?.settingsChanged() }
+    }
+  }
+
+  /// Raises the soft descriptor limit to 8192, or the hard limit if that is
+  /// lower. An app starts at 256, and each HTTP session costs its connection,
+  /// two socketpair ends, a wake pipe per held stream and, past its first
+  /// call, a child's pipes: the 266 sessions of one busy Mac would run out.
+  /// Logged either way, so a refusal is diagnosable.
+  private static func raiseDescriptorLimit() {
+    var limit = rlimit()
+    guard getrlimit(RLIMIT_NOFILE, &limit) == 0 else {
+      hostLog("cupertino", .error, "descriptor limit unread: \(String(cString: strerror(errno)))")
+      return
+    }
+    let wanted = min(limit.rlim_max, 8192)
+    guard limit.rlim_cur < wanted else {
+      hostLog("cupertino", .info, "descriptor limit \(limit.rlim_cur), at least 8192 already")
+      return
+    }
+    let was = limit.rlim_cur
+    limit.rlim_cur = wanted
+    if setrlimit(RLIMIT_NOFILE, &limit) == 0 {
+      hostLog("cupertino", .info, "descriptor limit raised from \(was) to \(wanted)")
+    } else {
+      hostLog(
+        "cupertino", .error,
+        "descriptor limit left at \(was), not raised to \(wanted): "
+          + String(cString: strerror(errno)))
     }
   }
 
@@ -464,27 +493,42 @@ nonisolated final class ServerHost: @unchecked Sendable {
     httpListener?.endSessions(where: { $0.client == client })
   }
 
-  /// Moves the HTTP listener to `port`, for the Settings field: stops it, then
-  /// starts it there. Every HTTP session ends on the way, as a restart ends
-  /// them. A port that cannot be bound puts the listener back on the one it
-  /// had, and the reason is returned; the caller writes the setting only on
-  /// nil, so the stored port always names the one being served.
+  /// Moves the HTTP listener to `port`, for the Settings field: a listener is
+  /// bound there first, and only once it is does the old one stop, ending the
+  /// HTTP sessions open on it as a restart ends them. A port that cannot be
+  /// bound changes nothing at all, no session ends, and the reason is
+  /// returned; the caller writes the setting only on nil, so the stored port
+  /// always names the one being served.
   ///
-  /// It never touches a client config. Entries naming the old port read as
-  /// stale, and the client pane's Update rewrites them; so does the automatic
-  /// rewire at the next launch or surface switch, where it runs
-  /// (`ClientWiring.rewiresAutomatically`).
+  /// It never touches a client config itself: the Settings field asks
+  /// `ClientWiring.rewireAll` afterwards, where that runs, and elsewhere
+  /// entries naming the old port read as stale until Update rewrites them.
   func moveHTTP(to port: Int) -> String? {
-    let previous = http.withLock { $0.port } ?? HTTPListener.configuredPort
-    stopHTTP()
-    guard let reason = startHTTP(port: port) else { return nil }
-    let refused = "Could not listen on 127.0.0.1:\(port): \(reason)."
-    // Back on the old port, the refusal is the pane's to show, not the
-    // window's: nothing is wrong with what is being served.
-    guard startHTTP(port: previous) != nil else {
-      return refused + " Nor on \(previous) again; see the main window."
+    let tokens = Self.httpOverride?.tokens ?? HTTPTokens.shared
+    let next = HTTPListener(port: port, tokens: tokens, host: self)
+    do {
+      try next.start()
+    } catch {
+      let (serving, previous) = http.withLock { ($0.listener != nil, $0.port) }
+      let refused = "Could not listen on 127.0.0.1:\(port): \(error.localizedDescription)."
+      hostLog("cupertino", .info, "HTTP endpoint not moved. " + refused)
+      // The refusal is the pane's to show, not the window's: nothing is
+      // wrong with what is being served.
+      guard serving, let previous else {
+        return refused + " The HTTP endpoint is still not listening; see the main window."
+      }
+      return refused + " Cupertino is still on \(previous)."
     }
-    return refused + " Cupertino is still on \(previous)."
+    let old = http.withLock { state -> HTTPListener? in
+      defer {
+        state.listener = next
+        state.port = port
+        state.startupError = nil
+      }
+      return state.listener
+    }
+    old?.stop()
+    return nil
   }
 
   /// Ends every HTTP session and stops listening, before the unix socket goes,
@@ -654,6 +698,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     hostLog("cupertino", .error, detail)
     taken.watch?.cancel()
     close(taken.fd)
+    // The HTTP port too: whichever copy evicted this one serves HTTP as well,
+    // and two copies each answering half the clients is the state this stops.
+    stopHTTP()
   }
 
   /// Accept forever, and treat "forever" literally.

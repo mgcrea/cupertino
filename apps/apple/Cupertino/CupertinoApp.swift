@@ -74,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // cannot add it, and the next launch after it is switched on can. A config
     // already current is read and left alone, so repeating costs a read.
     ClientWiring.endSessions = { ServerHost.shared.endHTTPSessions(of: $0) }
+    ClientWiring.httpNotServing = { ServerHost.shared.httpStartupError }
     ClientWiring.rewireAll(because: "launch")
     ClientWiring.watchSurfaceSwitches()
     promptForLicenseIfNeeded()

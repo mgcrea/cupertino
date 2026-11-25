@@ -403,9 +403,8 @@ struct GeneralPane: View {
               // outside Applications, a capture and `autoWireClients NO` never
               // rewrite on their own.
               + (ClientWiring.rewiresAutomatically
-                ? "Clients wired over HTTP read as out of date until their entries name the "
-                  + "new port: Update in each one's pane rewrites them at once, and Cupertino "
-                  + "does it itself at its next launch or the next time a surface is switched."
+                ? "Cupertino rewrites the entries of clients wired over HTTP with the new port "
+                  + "as soon as it is listening there."
                 : "Clients wired over HTTP then read as out of date until you press Update in "
                   + "each one's pane; nothing is rewritten for you.")
           )
@@ -467,6 +466,9 @@ struct GeneralPane: View {
     } else {
       httpPort = typed
       portError = nil
+      // After the store, so the entries are written with the new port. Only
+      // where the automatic rewire runs at all: elsewhere Update does it.
+      if ClientWiring.rewiresAutomatically { ClientWiring.rewireAll(because: "port") }
     }
     // The clients' status follows the stored port: HTTP entries naming the
     // old one now read as stale.
@@ -870,7 +872,7 @@ enum StatusStyle {
   static func clientTint(_ status: ClientWiring.Status) -> Color {
     switch status {
     case .configured: .green
-    case .incomplete, .extra, .oldTransport: .orange
+    case .incomplete, .extra, .oldTransport, .notServing: .orange
     case .stale, .unreadable: .red
     // Grey covers two different absences on purpose. Neither is a fault, and
     // neither is something this app can fix without being asked.

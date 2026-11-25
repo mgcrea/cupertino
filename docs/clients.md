@@ -192,9 +192,12 @@ server to assume.
 
 **The port** is 8830 for a release build and 8831 for a Debug one, so the two never take each
 other's. It is set in Settings › General › HTTP endpoint, from 1024 to 65535. Applying a new one
-stops the listener and starts it on that port, ending the HTTP sessions open at that moment; a port
-another process holds is refused, the old one goes on being served and stays stored, and the field
-says why. Only `127.0.0.1` is bound, never a name or another interface, so nothing off this Mac can
+binds a listener there first and only then stops the old one, ending the HTTP sessions open on it; a
+port another process holds is refused with nothing changed, no session ended, the old one still
+served and stored, and the field says why. Where the automatic rewire runs, a move that took also
+rewrites every HTTP client's entries with the new port at once. While the listener is not serving
+at all (its port taken at launch), an HTTP client whose entries are right reads the main window's
+HTTP warning in orange, never a green _configured_. Only `127.0.0.1` is bound, never a name or another interface, so nothing off this Mac can
 connect.
 
 **Tokens.** Each HTTP client has one token, minted the first time it is wired over HTTP and kept in
@@ -223,9 +226,10 @@ somebody who wants a new surface without the new transport. The automatic rewire
 client either way: bridge entries are kept bridge entries and HTTP entries HTTP ones. An HTTP entry
 naming a port Cupertino has moved off, or a token that is not the client's, reads _stale_. Update
 rewrites it, and so does the automatic rewire (see [Keeping configs current](#keeping-configs-current)),
-at the next launch or the next time a surface is switched: a client somebody already switched is
-kept working on the new port with its own token, and its transport never changes. Changing the port
-therefore leaves HTTP clients stale until then, or until each one's Update is pressed.
+right after a port change, at the next launch or the next time a surface is switched: a client
+somebody already switched is kept working on the new port with its own token, and its transport
+never changes. Where the automatic rewire does not run, a port change leaves HTTP clients stale
+until each one's Update is pressed.
 
 **Folders.** A repository's `.mcp.json` (`project` scope) stays on the bridge: that file is meant to
 be committed and must never carry a token. A folder's block in `~/.claude.json` (`local` scope) is

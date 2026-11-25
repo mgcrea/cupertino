@@ -853,12 +853,25 @@ struct HostCheck {
 
     // ─── it comes up ────────────────────────────────────────────────────────
 
+    // Started from macOS's default for an app, so the raise is the host's.
+    var descriptors = rlimit()
+    getrlimit(RLIMIT_NOFILE, &descriptors)
+    descriptors.rlim_cur = min(256, descriptors.rlim_max)
+    setrlimit(RLIMIT_NOFILE, &descriptors)
+
     do {
       try ServerHost.shared.start()
     } catch {
       print("  FAIL could not start the host: \(error.localizedDescription)")
       exit(1)
     }
+    getrlimit(RLIMIT_NOFILE, &descriptors)
+    check(
+      "the host raises its descriptor limit to 8192, or the hard limit if lower, and logs it",
+      descriptors.rlim_cur >= min(descriptors.rlim_max, 8192)
+        && hostLogLines { $0.contains { $0.contains("descriptor limit") } }
+          .contains { $0.contains("descriptor limit") && $0.contains("8192") }
+    )
     check("the host starts with no error", ServerHost.shared.startupError == nil)
     check(
       "the socket file exists",
@@ -1974,12 +1987,18 @@ struct HostCheck {
         && HTTPMCP(port: moved)?.open() == true)
     let portHolder = HTTPListener(port: httpPort + 2, tokens: httpTokens, host: ServerHost.shared)
     let squatting = (try? portHolder.start()) != nil
+    let survivor = HTTPMCP(port: moved)
+    let survivorOpen = survivor?.open() == true
     let taken = ServerHost.shared.moveHTTP(to: httpPort + 2)
     check(
       "HTTP: a taken port is refused, and the old one kept",
       squatting && taken?.contains("127.0.0.1:\(httpPort + 2)") == true
         && ServerHost.shared.httpListener?.boundAddress == "127.0.0.1:\(moved)"
         && ServerHost.shared.httpStartupError == nil)
+    check(
+      "HTTP: and a refused move ends no session",
+      survivorOpen && survivor?.post(request(20, "ping")).messages.count == 1)
+    _ = survivor?.delete()
     portHolder.stop()
     _ = ServerHost.shared.moveHTTP(to: httpPort)
 
@@ -2062,6 +2081,10 @@ struct HostCheck {
     check(
       "and that this copy is no longer reachable",
       ServerHost.shared.startupError?.contains("no longer reachable") == true)
+    check(
+      "and its HTTP listener stops with it, so only one copy serves",
+      polled({ ServerHost.shared.httpListener == nil }, until: { $0 })
+        && HTTPProbe(port: httpPort) == nil)
 
     // ─── stopping ───────────────────────────────────────────────────────────
 
