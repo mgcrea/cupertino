@@ -30,7 +30,7 @@ import os
 /// were driven.
 ///
 /// `@unchecked` because the checker cannot see the arrangement that makes it true: state
-/// both pumps and the renewal timer touch is behind `waiting` and `visible`, and each
+/// both pumps and the renewal timer touch is behind `waiting`, `visible` and `connect`, and each
 /// `FrameSplitter` is fed by exactly one thread — `requests` by `saw`, `responses` by
 /// `answered`, or both by the one in-process serving thread — so neither is ever reached
 /// from two threads at once. `pushes` is the same kind of state as `responses`: touched
@@ -83,9 +83,19 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   private let mode: CallCapture.Mode
   private let content: Bool
 
-  init(surface: Surface, session: UUID) {
+  /// Who the socket says is calling, for the connect line. Nil when it was not told.
+  private let wiredClient: String?
+
+  /// What the session sent before its first call, until the line saying so is
+  /// logged; nil after, so a session past its connect phase parses nothing
+  /// more for it. Locked because `closed()` is called from the thread that
+  /// waited on the pumps, not from the one that feeds `note`.
+  private let connect = OSAllocatedUnfairLock<ConnectTraffic?>(initialState: ConnectTraffic())
+
+  init(surface: Surface, session: UUID, wiredClient: String? = nil) {
     self.surface = surface
     self.session = session
+    self.wiredClient = wiredClient
     self.mode = SurfaceSettings.captureMode(surface)
     self.content = SurfaceSettings.capturesContent(surface)
   }
@@ -173,7 +183,32 @@ nonisolated final class RequestObserver: @unchecked Sendable {
       failed: CallCapture.isFailure(object))
   }
 
+  /// The connection is over: log the connect line if no call ever ended the phase.
+  func closed() {
+    let line = connect.withLock { traffic -> String? in
+      defer { traffic = nil }
+      return traffic?.atClose()
+    }
+    if let line { logConnect(line) }
+  }
+
+  private func logConnect(_ line: String) {
+    hostLog(surface.id, .info, "\(line) (client \(wiredClient ?? "unknown"))")
+  }
+
+  /// Feed the connect phase, while it is open.
+  private func trace(_ line: Data) {
+    let said = connect.withLock { traffic -> String? in
+      guard traffic != nil else { return nil }
+      let said = traffic?.saw(McpFrame.parse(line))
+      if said != nil { traffic = nil }
+      return said
+    }
+    if let said { logConnect(said) }
+  }
+
   private func note(_ line: Data) {
+    trace(line)
     guard
       let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
       let method = object["method"] as? String

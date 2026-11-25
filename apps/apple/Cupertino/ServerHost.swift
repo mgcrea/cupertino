@@ -1383,7 +1383,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
         + (binaries.isDevelopment ? " — development build" : ""))
 
     let group = DispatchGroup()
-    let observer = RequestObserver(surface: surface, session: session)
+    let observer = RequestObserver(surface: surface, session: session, wiredClient: wiredClient)
 
     // Client -> server. Also the only place that sees requests, so it is where
     // tool calls are picked out for the log. On EOF, close the child's stdin so
@@ -1443,6 +1443,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
 
     group.wait()
+    observer.closed()
     process.waitUntilExit()
     // Whether it was reaped or the client simply went away: a pid is reused by
     // the kernel eventually, and a stale one left here is a signal sent to

@@ -1515,6 +1515,55 @@ struct UnitCheck {
       check("with no values, no host variable at all", none["APPLE_SAFARI_COOKIE_HOSTS"] == nil)
     }
 
+    // ─── McpFrame ───
+    print("\nMcpFrame: what a session sends before its first call")
+    do {
+      let req = McpFrame.parse(
+        Data(#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}"#.utf8))
+      check("request kind", req.kind == .request && req.method == "tools/list")
+      check("numeric id", req.id == Data("7".utf8))
+      check(
+        "string id keeps quotes",
+        McpFrame.parse(Data(#"{"id":"a","method":"ping"}"#.utf8)).id == Data(#""a""#.utf8))
+      check(
+        "notification",
+        McpFrame.parse(Data(#"{"method":"notifications/initialized"}"#.utf8)).kind == .notification)
+      check("error response", McpFrame.parse(Data(#"{"id":1,"error":{"code":-1}}"#.utf8)).isError)
+      check("garbage", McpFrame.parse(Data("not json".utf8)).kind == .unparsed)
+      check(
+        "canonical sorts and drops volatile meta",
+        McpFrame.canonical(
+          ["b": 1, "a": 2, "_meta": ["progressToken": 3]], droppingMeta: ["progressToken"])
+          == Data(#"{"a":2,"b":1}"#.utf8))
+      check(
+        "canonical keeps other meta",
+        McpFrame.canonical(
+          ["_meta": ["progressToken": 3, "x": 1]], droppingMeta: ["progressToken"])
+          == Data(#"{"_meta":{"x":1}}"#.utf8))
+      var lb = LineBuffer()
+      check(
+        "line buffer splits", lb.append(Data("a\nb\nc".utf8)) == [Data("a".utf8), Data("b".utf8)])
+      check(
+        "line buffer keeps tail", lb.pendingCount == 1 && lb.takePending() == Data("c".utf8))
+      var ct = ConnectTraffic()
+      _ = ct.saw(
+        .parse(Data(#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"x"}}}"#.utf8)))
+      _ = ct.saw(.parse(Data(#"{"method":"notifications/initialized"}"#.utf8)))
+      _ = ct.saw(
+        .parse(Data(#"{"id":2,"method":"tools/list","params":{"_meta":{"progressToken":5}}}"#.utf8))
+      )
+      let line = ct.saw(.parse(Data(#"{"id":3,"method":"tools/call","params":{}}"#.utf8)))
+      check(
+        "connect line lists methods",
+        line?.hasPrefix(
+          "connect: initialize, notifications/initialized, tools/list | meta: progressToken | handshake: "
+        ) == true)
+      check("connect line names the first call", line?.hasSuffix(" | first: tools/call") == true)
+      check(
+        "said once",
+        ct.saw(.parse(Data(#"{"id":4,"method":"tools/call"}"#.utf8))) == nil && ct.atClose() == nil)
+    }
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")
