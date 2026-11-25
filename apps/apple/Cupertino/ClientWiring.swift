@@ -87,6 +87,8 @@ enum ClientWiring {
     }
   }
 
+  typealias Transport = ClientWiringMerge.Transport
+
   nonisolated struct Client: Identifiable, Hashable {
     let id: String
     let displayName: String
@@ -105,6 +107,11 @@ enum ClientWiring {
     /// Full Disk Access, on every menu open, to draw a status glyph.
     let evidence: [URL]
     let wiring: Wiring
+    /// How this client can reach Cupertino. `.http` is what it is wired with
+    /// fresh and what Switch to HTTP moves it to; a client already wired keeps
+    /// the transport its entries have until somebody switches it. See
+    /// `transport(for:servers:)`.
+    let transport: Transport
 
     var isInstalled: Bool {
       // Which editors this Mac happens to have is a fact about this Mac. Under a
@@ -125,7 +132,9 @@ enum ClientWiring {
     var revealTarget: URL? { wiring.path }
   }
 
-  private nonisolated static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
+  /// Every client path hangs off this. Settable for `make wiring-check` only,
+  /// which points it at a scratch directory before anything reads `clients`.
+  nonisolated(unsafe) static var home = FileManager.default.homeDirectoryForCurrentUser
   /// Two clients keep their config here rather than in a dotfile.
   private static var support: URL { home.appendingPathComponent("Library/Application Support") }
 
@@ -158,6 +167,14 @@ enum ClientWiring {
   /// and Goose a YAML `extensions:` block, and neither has a CLI to hide
   /// behind — each would be a bespoke snippet maintained blind. `.command`
   /// accommodates them the day someone asks.
+  ///
+  /// **Transport.** Claude Code, VS Code, Cursor and Codex are `.http`; Claude
+  /// Desktop, LM Studio and Windsurf keep the bridge. That is Bastion's measured
+  /// table, standing in until the spike in `scripts/spikes/http-fallback.mjs`
+  /// has been run against each client: a client that does not fall back to the
+  /// 2025 handshake over HTTP goes back to `.bridge`, row by row, before this
+  /// ships. Moving a row only changes what a fresh wire and Switch to HTTP
+  /// write; nothing already wired changes transport on its own.
   static let clients: [Client] = [
     // Drop-in: strict JSON, servers under `mcpServers`, nothing to negotiate.
     Client(
@@ -180,7 +197,8 @@ enum ClientWiring {
       //
       // Not `projects["<dir>"].mcpServers` either — that is the folder feature
       // below, chosen deliberately, rather than a default a stray terminal picks.
-      wiring: .json(path: claudeCodeConfig, rootKey: "mcpServers")),
+      wiring: .json(path: claudeCodeConfig, rootKey: "mcpServers"),
+      transport: .http),
     Client(
       id: "claude-desktop",
       displayName: "Claude Desktop",
@@ -189,7 +207,9 @@ enum ClientWiring {
       evidence: [URL(fileURLWithPath: "/Applications/Claude.app")],
       wiring: .json(
         path: support.appendingPathComponent("Claude/claude_desktop_config.json"),
-        rootKey: "mcpServers")),
+        rootKey: "mcpServers"),
+      // Its config is validated against a stdio-only schema.
+      transport: .bridge),
     Client(
       id: "cursor",
       displayName: "Cursor",
@@ -200,7 +220,8 @@ enum ClientWiring {
       bundleID: "com.todesktop.230313mzl4w4u92",
       evidence: [URL(fileURLWithPath: "/Applications/Cursor.app")],
       wiring: .json(
-        path: home.appendingPathComponent(".cursor/mcp.json"), rootKey: "mcpServers")),
+        path: home.appendingPathComponent(".cursor/mcp.json"), rootKey: "mcpServers"),
+      transport: .http),
     Client(
       id: "lm-studio",
       displayName: "LM Studio",
@@ -211,7 +232,9 @@ enum ClientWiring {
         home.appendingPathComponent(".lmstudio"),
       ],
       wiring: .json(
-        path: home.appendingPathComponent(".lmstudio/mcp.json"), rootKey: "mcpServers")),
+        path: home.appendingPathComponent(".lmstudio/mcp.json"), rootKey: "mcpServers"),
+      // Not yet seen carrying a header into a URL entry.
+      transport: .bridge),
     Client(
       id: "windsurf",
       displayName: "Windsurf",
@@ -223,7 +246,9 @@ enum ClientWiring {
       ],
       wiring: .json(
         path: home.appendingPathComponent(".codeium/windsurf/mcp_config.json"),
-        rootKey: "mcpServers")),
+        rootKey: "mcpServers"),
+      // Not yet seen carrying a header into a URL entry.
+      transport: .bridge),
     // The one client that keeps its servers under `servers`. Held back for two
     // releases on a mix-up between two files: `settings.json` is the JSONC one
     // people maintain by hand, but MCP servers live in `User/mcp.json`, which is
@@ -243,7 +268,8 @@ enum ClientWiring {
         URL(fileURLWithPath: "/usr/local/bin/code"),
       ],
       wiring: .json(
-        path: support.appendingPathComponent("Code/User/mcp.json"), rootKey: "servers")),
+        path: support.appendingPathComponent("Code/User/mcp.json"), rootKey: "servers"),
+      transport: .http),
     Client(
       id: "codex",
       // Named for the file rather than for one of the three things that read
@@ -265,7 +291,8 @@ enum ClientWiring {
       // splices the `[mcp_servers]` blocks and quotes every other byte verbatim,
       // because this config is somebody's hand-written prose and structure and a
       // round trip through any serialiser would reformat and de-comment it.
-      wiring: .toml(path: home.appendingPathComponent(".codex/config.toml"))),
+      wiring: .toml(path: home.appendingPathComponent(".codex/config.toml")),
+      transport: .http),
   ]
 
   // MARK: - What we write
@@ -305,6 +332,75 @@ enum ClientWiring {
     ["command": bridgePath, "args": ["--server=\(surface.id)", "--client=\(client)"]]
   }
 
+  /// The tokens HTTP entries carry, one per client. `make wiring-check`
+  /// replaces it with one holding them in memory, so a check never reaches the
+  /// Keychain.
+  nonisolated(unsafe) static var tokens: HTTPTokens = .shared
+
+  /// The port HTTP entries name. A closure so `make wiring-check` can move it
+  /// without writing a preference. A capture shows the release port whatever
+  /// build took it.
+  nonisolated(unsafe) static var httpPort: () -> Int = {
+    DemoSeed.isEnabled ? DemoSeed.httpPort : HTTPPort.configured
+  }
+
+  /// Where one surface is served. `127.0.0.1` by literal address, as the
+  /// listener binds it: `localhost` can be made to resolve elsewhere.
+  nonisolated static func httpURL(for surface: Surface, port: Int) -> String {
+    "http://127.0.0.1:\(port)/s/\(surface.id)"
+  }
+
+  /// One HTTP entry, in the shape the JSON clients read: Claude Code, Cursor,
+  /// and VS Code under its `servers`.
+  ///
+  /// The token is a literal in the file, which is why every file holding one
+  /// is kept 0600 (see `ClientWiringMerge.write`). It names the client and
+  /// reaches nothing a bridge entry does not; the grants stay the app's.
+  nonisolated static func httpEntry(for surface: Surface, token: String, port: Int)
+    -> [String: Any]
+  {
+    [
+      "type": "http", "url": httpURL(for: surface, port: port),
+      "headers": ["Authorization": "Bearer \(token)"],
+    ]
+  }
+
+  /// Codex spells the same entry without a `type` (a `url` is what makes it
+  /// streamable HTTP) and with `http_headers`, which takes a literal header.
+  nonisolated static func codexHTTPEntry(for surface: Surface, token: String, port: Int)
+    -> [String: Any]
+  {
+    [
+      "url": httpURL(for: surface, port: port),
+      "http_headers": ["Authorization": "Bearer \(token)"],
+    ]
+  }
+
+  /// One entry of either transport, in the client's own format.
+  nonisolated static func entry(
+    for surface: Surface, client: Client, over transport: Transport, token: String, port: Int
+  ) -> [String: Any] {
+    switch (transport, client.wiring) {
+    case (.bridge, _): entry(for: surface, client: client.id)
+    case (.http, .json): httpEntry(for: surface, token: token, port: port)
+    case (.http, .toml): codexHTTPEntry(for: surface, token: token, port: port)
+    }
+  }
+
+  /// What a client row's entry would say, for the pane: the bridge command
+  /// line, or the URL. Never the token.
+  static func reach(for surface: Surface, client: Client, over transport: Transport) -> String {
+    switch transport {
+    case .bridge:
+      let written = entry(for: surface, client: client.id)
+      let command = written["command"] as? String ?? bridgePath
+      let arguments = (written["args"] as? [String] ?? []).joined(separator: " ")
+      return arguments.isEmpty ? command : "\(command) \(arguments)"
+    case .http:
+      return httpURL(for: surface, port: httpPort())
+    }
+  }
+
   /// Named after the thing that provides the server, not the thing it talks to.
   ///
   /// This key lands in a file the user owns, next to entries the app knows
@@ -332,6 +428,55 @@ enum ClientWiring {
       uniqueKeysWithValues: SurfaceSettings.enabledSurfaces.map {
         (serverKey(for: $0), entry(for: $0, client: client))
       })
+  }
+
+  /// Every surface switched on, over `transport`. The token is read, and
+  /// minted on its first use, only for HTTP: a bridge write never touches it.
+  private static func entries(for client: Client, over transport: Transport) throws
+    -> [String: [String: Any]]
+  {
+    guard transport == .http else { return entries(for: client.id) }
+    let token = try tokens.token(for: client.id)
+    let port = httpPort()
+    return Dictionary(
+      uniqueKeysWithValues: SurfaceSettings.enabledSurfaces.map {
+        (
+          serverKey(for: $0),
+          entry(for: $0, client: client, over: .http, token: token, port: port)
+        )
+      })
+  }
+
+  /// What a config should say over `transport`, for an audit: nil for the
+  /// bridge, whose expectation is `bridgePath` alone.
+  private static func want(_ clientID: String, over transport: Transport)
+    -> ClientWiringMerge.HTTPWant?
+  {
+    guard transport == .http else { return nil }
+    // A capture's entries carry a stand-in token, and a capture never reads
+    // the Keychain.
+    return ClientWiringMerge.HTTPWant(
+      port: httpPort(),
+      accepts: { DemoSeed.isEnabled || tokens.client(for: $0) == clientID })
+  }
+
+  /// The transport a write to this client uses, given what its config holds.
+  ///
+  /// The migration rule, in one place. A bridge client is always written with
+  /// the bridge. An HTTP client keeps whatever its entries already are — bridge
+  /// stays bridge until somebody presses Switch to HTTP, and HTTP stays HTTP —
+  /// and only one with nothing of ours in it is wired over HTTP from the start.
+  /// So nothing a person did not switch is ever switched for them, by Update or
+  /// by an automatic rewire.
+  static func transport(for client: Client, servers: [String: Any]) -> Transport {
+    transport(capable: client.transport, servers: servers)
+  }
+
+  /// The same rule for a scope rather than a client row: `capable` is what the
+  /// scope may be wired with.
+  private static func transport(capable: Transport, servers: [String: Any]) -> Transport {
+    guard capable == .http else { return .bridge }
+    return ClientWiringMerge.transport(of: servers) ?? .http
   }
 
   /// The keys to take out: for every surface switched off, the current key AND
@@ -368,8 +513,14 @@ enum ClientWiring {
     case notInstalled
     case notConfigured
     case configured
-    /// Present, but pointing somewhere else — usually a previous build.
+    /// Present, but pointing somewhere else — usually a previous build, or for
+    /// an HTTP entry a port Cupertino has moved off or a token it no longer
+    /// accepts.
     case stale(String)
+    /// An HTTP client still wired with a bridge per server, as every client was
+    /// before HTTP. Nothing is broken; Switch to HTTP rewrites it, and nothing
+    /// does so on its own.
+    case oldTransport
     /// Wired for some surfaces and not others — what an existing config looks
     /// like the day a new surface ships.
     case incomplete([String])
@@ -391,7 +542,13 @@ enum ClientWiring {
       case .notInstalled: "Not installed on this Mac."
       case .notConfigured: "No Cupertino servers in this client's config yet."
       case .configured: "Every surface that is switched on is wired."
+      case .stale(let found) where found == ClientWiringMerge.staleToken:
+        "Wired with \(found)."
+      case .stale(let found) where found.hasPrefix("port "):
+        "Wired to Cupertino on \(found), which it no longer listens on."
       case .stale(let found): "Wired to another copy of Cupertino, at \(found)."
+      case .oldTransport:
+        "Wired the old way, with a bridge per server. Switch to HTTP to drop them."
       case .incomplete(let missing):
         "Wired, but missing \(missing.joined(separator: ", "))."
       case .extra(let leftover):
@@ -411,22 +568,40 @@ enum ClientWiring {
     }
   }
 
-  private static func audit(path: URL, rootKey: String) throws -> Status {
-    let root = try ClientWiringMerge.readJSON(path)
-    let servers = root[rootKey] as? [String: Any] ?? [:]
-    return audit(servers: servers)
-  }
-
   /// The whole-file verdict, from servers somebody has already read.
   ///
   /// Split out when the detail pane arrived: that pane reads the file once and
   /// derives its rows AND its header from that one read, and it must reach this
   /// verdict rather than a second one computed from a second read.
-  static func audit(servers: [String: Any]) -> Status {
-    status(
+  static func audit(servers: [String: Any], client: Client) -> Status {
+    audit(servers: servers, clientID: client.id, capable: client.transport)
+  }
+
+  /// `capable` is what the scope can be wired with: the client's transport for
+  /// a client row and a local folder, the bridge for a `.mcp.json`. Entries are
+  /// judged against the transport they are already written in, and a bridge
+  /// config where HTTP is possible reads as `oldTransport` whatever else is
+  /// true of it, since Switch to HTTP finishes all of it in one write.
+  private static func audit(servers: [String: Any], clientID: String, capable: Transport)
+    -> Status
+  {
+    let wired = transport(capable: capable, servers: servers)
+    let verdict = status(
       from: ClientWiringMerge.audit(
         servers: servers, expectedCommand: bridgePath, expected: expected,
-        unexpected: unexpected))
+        unexpected: unexpected, http: want(clientID, over: wired)))
+    if capable == .http, wired == .bridge, verdict != .notConfigured { return .oldTransport }
+    return verdict
+  }
+
+  /// One row's verdict, by the rule `audit` reduces: against the transport the
+  /// client's entries are already in.
+  static func entryState(of servers: [String: Any], key: String, client: Client)
+    -> ClientWiringMerge.EntryState
+  {
+    ClientWiringMerge.state(
+      of: servers, key: key, expectedCommand: bridgePath,
+      http: want(client.id, over: transport(for: client, servers: servers)))
   }
 
   /// Routed through `read` rather than opening the file itself, so there is one
@@ -439,7 +614,7 @@ enum ClientWiring {
     guard client.isInstalled else { return .notInstalled }
     do {
       guard let config = try read(client) else { return .notConfigured }
-      return audit(servers: config.servers)
+      return audit(servers: config.servers, client: client)
     } catch {
       return .unreadable(error.localizedDescription)
     }
@@ -454,6 +629,8 @@ enum ClientWiring {
     /// Recoverable, and the recovery is a decision rather than a retry: the pane
     /// names the keys and offers to overwrite them. See `collisions(of:)`.
     case collision(client: String, keys: [String])
+    /// Switch to HTTP on a client that keeps the bridge.
+    case bridgeOnly(client: String)
 
     var errorDescription: String? {
       switch self {
@@ -462,6 +639,8 @@ enum ClientWiring {
         let verb = keys.count == 1 ? "was" : "were"
         return
           "\(list) in \(name)'s config \(verb) not written by Cupertino. Nothing was changed."
+      case .bridgeOnly(let name):
+        return "\(name) is wired with the bridge only. Nothing was changed."
       }
     }
   }
@@ -484,6 +663,10 @@ enum ClientWiring {
   /// the collision check and no other guard: the stamp, the retry, the backup
   /// and the atomic swap all still apply, and `isOurs` still decides what may be
   /// pruned.
+  ///
+  /// It writes the transport `transport(for:servers:)` picks: an HTTP client
+  /// already wired with the bridge is updated as a bridge client, and one with
+  /// nothing of ours yet is wired over HTTP. Switching is `switchToHTTP`.
   @discardableResult
   static func configure(_ client: Client, force: Bool = false) throws
     -> ClientWiringMerge.WriteOutcome
@@ -497,12 +680,62 @@ enum ClientWiring {
         throw WriteError.collision(client: client.displayName, keys: taken)
       }
     }
-    let outcome: ClientWiringMerge.WriteOutcome
+    // Decided from this read and kept for the write, so the button does what
+    // the pane said it would. A file that changes in between is re-merged
+    // with the same transport.
+    let wired = transport(for: client, servers: try read(client)?.servers ?? [:])
+    let outcome = try write(client, over: wired)
+    hostLog(
+      "cupertino", .info,
+      outcome == .unchanged
+        ? "\(client.displayName) already up to date at \(client.wiring.path.path)"
+        : "configured \(client.displayName) at \(client.wiring.path.path)"
+          + (wired == .http ? " over HTTP" : ""))
+    if wired == .http { openAtLogin(for: client) }
+    return outcome
+  }
+
+  /// Rewrites an HTTP client's entries as HTTP ones: the client's token, minted
+  /// now if it has none, in an entry per surface switched on. Every bridge
+  /// entry of ours under those keys is replaced, and the ones for surfaces
+  /// switched off and from before the rename are taken out, as Configure does.
+  ///
+  /// The one write that changes a client's transport, and only when somebody
+  /// presses it: see "Migration" in the HTTP endpoint's spec,
+  /// `docs/superpowers/specs/2026-11-25-http-endpoint-design.md`. HTTP clients
+  /// need Cupertino running, so it also turns on launch at login.
+  @discardableResult
+  static func switchToHTTP(_ client: Client, force: Bool = false) throws
+    -> ClientWiringMerge.WriteOutcome
+  {
+    guard client.transport == .http else {
+      throw WriteError.bridgeOnly(client: client.displayName)
+    }
+    if !force {
+      let taken = collisions(of: client)
+      guard taken.isEmpty else {
+        throw WriteError.collision(client: client.displayName, keys: taken)
+      }
+    }
+    let outcome = try write(client, over: .http)
+    hostLog(
+      "cupertino", .info,
+      "switched \(client.displayName) to HTTP at \(client.wiring.path.path)")
+    openAtLogin(for: client)
+    return outcome
+  }
+
+  /// Every surface switched on, over `transport`, with the legacy and
+  /// switched-off keys of ours taken out.
+  private static func write(_ client: Client, over transport: Transport) throws
+    -> ClientWiringMerge.WriteOutcome
+  {
+    let wanted = try entries(for: client, over: transport)
     switch client.wiring {
     case .json(let path, let rootKey):
-      outcome = try mergeWrite(into: path, newFileMode: 0o600) { root in
+      return try mergeWrite(into: path, newFileMode: 0o600) { root in
         ClientWiringMerge.merged(
-          into: root, rootKey: rootKey, entries: entries(for: client.id), legacy: legacyKeys,
+          into: root, rootKey: rootKey, entries: wanted, legacy: legacyKeys,
           remove: disabledKeys)
       }
     case .toml(let path):
@@ -510,16 +743,34 @@ enum ClientWiring {
       // here rather than by the merge, because a splice deletes line ranges and
       // has no dictionary to diff. `spliceWrite` still refuses to delete a span
       // whose entry is not ours — see its `removing` argument.
-      outcome = try spliceWrite(
-        into: path, upserting: entries(for: client.id),
-        removing: Set(legacyKeys.values).union(disabledKeys))
+      return try spliceWrite(
+        into: path, upserting: wanted, removing: Set(legacyKeys.values).union(disabledKeys))
     }
-    hostLog(
-      "cupertino", .info,
-      outcome == .unchanged
-        ? "\(client.displayName) already up to date at \(client.wiring.path.path)"
-        : "configured \(client.displayName) at \(client.wiring.path.path)")
-    return outcome
+  }
+
+  /// An HTTP entry reaches nobody while Cupertino is not running, and unlike
+  /// the bridge it cannot start the app. So wiring one turns on launch at
+  /// login, as the General pane would.
+  ///
+  /// Asked, never required: a refusal is logged and the write stands, since
+  /// the person can turn it on in General. Not from a copy outside an
+  /// Applications folder, whose registration would name a path that is gone by
+  /// the next login (the gate General's checkbox has), and not when it is on.
+  private static func openAtLogin(for client: Client) {
+    guard !DemoSeed.isEnabled, !LoginItem.isEnabled else { return }
+    guard InstallLocation.current.isStable else {
+      hostLog(
+        "cupertino", .info,
+        "\(client.displayName) is wired over HTTP; launch at login left off, since this copy is "
+          + "not in an Applications folder")
+      return
+    }
+    if let error = LoginItem.set(true) {
+      hostLog(
+        "cupertino", .error,
+        "\(client.displayName) is wired over HTTP, and launch at login could not be turned on: "
+          + error)
+    }
   }
 
   // MARK: - Keeping configs current
@@ -563,10 +814,13 @@ enum ClientWiring {
     disabledKeys.union(legacyKeys.values)
   }
 
-  private static func rewirePlan(servers: [String: Any]) -> ClientWiringMerge.RewirePlan {
+  private static func rewirePlan(
+    servers: [String: Any], clientID: String, over transport: Transport
+  ) -> ClientWiringMerge.RewirePlan {
     ClientWiringMerge.rewirePlan(
       servers: servers, expectedCommand: bridgePath, wanted: expected.map(\.key),
-      unwanted: unwantedKeys, exists: { FileManager.default.fileExists(atPath: $0) })
+      unwanted: unwantedKeys, exists: { FileManager.default.fileExists(atPath: $0) },
+      http: want(clientID, over: transport))
   }
 
   /// Bring every client already wired up to date with the surfaces switched on.
@@ -588,10 +842,18 @@ enum ClientWiring {
     for client in clients { rewire(client, because: reason) }
   }
 
-  private static func rewire(_ client: Client, because reason: String) {
+  /// One client's half of `rewireAll`.
+  ///
+  /// Each client keeps the transport its entries are in: a bridge config gains
+  /// bridge entries, an HTTP one HTTP entries at the current port with the
+  /// client's token. This never switches one to the other; see
+  /// `transport(for:servers:)`. Internal rather than private for `make
+  /// wiring-check`.
+  static func rewire(_ client: Client, because reason: String) {
     do {
       guard let config = try read(client) else { return }
-      let plan = rewirePlan(servers: config.servers)
+      let wired = transport(for: client, servers: config.servers)
+      let plan = rewirePlan(servers: config.servers, clientID: client.id, over: wired)
       guard case .write(let upsert, let remove) = plan else {
         if case .otherCopy(let path) = plan {
           hostLog(
@@ -600,6 +862,7 @@ enum ClientWiring {
         }
         return
       }
+      let wanted = try entries(for: client, over: wired)
       switch client.wiring {
       case .json(let path, let rootKey):
         _ = try mergeWrite(into: path, newFileMode: 0o600) { root in
@@ -608,16 +871,17 @@ enum ClientWiring {
           // else's in between.
           guard
             case .write(let upsert, let remove) = rewirePlan(
-              servers: root[rootKey] as? [String: Any] ?? [:])
+              servers: root[rootKey] as? [String: Any] ?? [:], clientID: client.id,
+              over: wired)
           else { return root }
           return ClientWiringMerge.merged(
             into: root, rootKey: rootKey,
-            entries: entries(for: client.id).filter { upsert.contains($0.key) },
+            entries: wanted.filter { upsert.contains($0.key) },
             legacy: legacyKeys, remove: Set(remove))
         }
       case .toml(let path):
         try spliceWrite(
-          into: path, upserting: entries(for: client.id).filter { upsert.contains($0.key) },
+          into: path, upserting: wanted.filter { upsert.contains($0.key) },
           removing: Set(remove))
       }
       hostLog(
@@ -818,8 +1082,20 @@ enum ClientWiring {
   /// from being a way to delete somebody's config — see `ClientWiringMerge.unmerged`.
   ///
   /// A file that does not exist is nothing to do rather than a file to create.
+  ///
+  /// An HTTP client's token is revoked once its entries are out, so a copy of
+  /// it left anywhere (a backup, a client's own snapshot of its config) stops
+  /// working. Not when the removal failed, which leaves the entries holding it
+  /// in the file; and not while a Claude Code folder still carries it, since
+  /// those blocks are a different scope with a button of their own.
   @discardableResult
   static func unwire(_ client: Client) throws -> ClientWiringMerge.WriteOutcome {
+    let outcome = try removeOurs(from: client)
+    if client.transport == .http { revokeToken(of: client) }
+    return outcome
+  }
+
+  private static func removeOurs(from client: Client) throws -> ClientWiringMerge.WriteOutcome {
     let path = client.wiring.path
     guard FileManager.default.fileExists(atPath: path.path) else { return .unchanged }
     let outcome: ClientWiringMerge.WriteOutcome
@@ -838,6 +1114,26 @@ enum ClientWiring {
     }
     hostLog("cupertino", .info, "removed our entries from \(client.displayName) at \(path.path)")
     return outcome
+  }
+
+  /// A failure is logged rather than thrown: the entries are already out,
+  /// which is what the button said it would do.
+  private static func revokeToken(of client: Client) {
+    if hasLocalScope(client), let root = try? ClientWiringMerge.readJSON(claudeCodeConfig),
+      ClientWiringMerge.holdsToken(root["projects"])
+    {
+      hostLog(
+        "cupertino", .info,
+        "kept \(client.displayName)'s HTTP token: a project folder is still wired with it")
+      return
+    }
+    do {
+      try tokens.revoke(client.id)
+    } catch {
+      hostLog(
+        "cupertino", .error,
+        "could not revoke \(client.displayName)'s HTTP token: \(error.localizedDescription)")
+    }
   }
 
   /// One named entry that this app did NOT write, out of one client's config.
@@ -908,10 +1204,14 @@ enum ClientWiring {
       let text = ClientWiringTOML.spliced(
         document, removing: Set(ours), upserting: upserting)
       guard text != document.text else { return .unchanged }
+      // A token in the file before or after, as the JSON path decides it.
+      let holdsToken =
+        ClientWiringMerge.holdsToken(document.servers)
+        || ClientWiringMerge.holdsToken(upserting as [String: Any])
       do {
         let backup = try ClientWiringMerge.write(
           Data(text.utf8), to: path, backupSuffix: "cupertino-backup", expecting: stamp,
-          newFileMode: 0o600)
+          newFileMode: 0o600, holdsToken: holdsToken)
         Task { @MainActor in ClientConfigRevision.shared.bump() }
         return .written(backup: backup)
       } catch ClientWiringMerge.WriteError.changedUnderneath(_) where attempt < attempts {
@@ -989,6 +1289,9 @@ enum ClientWiring {
   /// Deliberately the same call as `configure(_:)` makes for a client: a folder
   /// is not a special case of writing, it is the same write at a different
   /// path, and routing it anywhere else is how the two would drift.
+  ///
+  /// Bridge entries always, never HTTP: this file sits in a working tree and is
+  /// meant to be committed, and an HTTP entry would put a token in it.
   @discardableResult
   static func configureProject(_ folder: URL) throws -> ClientWiringMerge.WriteOutcome {
     let outcome = try mergeWrite(into: projectConfig(in: folder), newFileMode: nil) { root in
@@ -1002,16 +1305,26 @@ enum ClientWiring {
 
   /// The same merge, one level deeper: into `projects[<dir>].mcpServers` of
   /// Claude Code's config, leaving every other project block untouched.
+  ///
+  /// Over HTTP, with Claude Code's own token: the block lives in the same 0600
+  /// file as the client row's entries, and nothing in it is meant to leave this
+  /// Mac. Every press writes HTTP, a folder wired with the bridge included; the
+  /// folder card is the only thing that writes these blocks.
   @discardableResult
   static func configureLocal(_ folder: URL) throws -> ClientWiringMerge.WriteOutcome {
+    let wanted = try entries(for: claudeCode, over: .http)
     let outcome = try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
       ClientWiringMerge.mergedIntoLocalScope(
-        into: root, folder: folder.path, entries: entries(for: claudeCodeID), legacy: legacyKeys,
+        into: root, folder: folder.path, entries: wanted, legacy: legacyKeys,
         remove: disabledKeys)
     }
-    hostLog("cupertino", .info, "configured folder \(folder.path) in Claude Code")
+    hostLog("cupertino", .info, "configured folder \(folder.path) in Claude Code over HTTP")
+    openAtLogin(for: claudeCode)
     return outcome
   }
+
+  /// The Claude Code row, whose token the local scope writes.
+  private static var claudeCode: Client { clients.first { $0.id == claudeCodeID }! }
 
   /// What the folder row calls. The scope picks the file; nothing else about
   /// the two paths differs any more.
@@ -1057,7 +1370,10 @@ enum ClientWiring {
     case .project:
       let path = projectConfig(in: folder)
       guard FileManager.default.fileExists(atPath: path.path) else { return .notConfigured }
-      do { return try audit(path: path, rootKey: "mcpServers") } catch {
+      do {
+        let servers = try ClientWiringMerge.readJSON(path)["mcpServers"] as? [String: Any] ?? [:]
+        return audit(servers: servers, clientID: claudeCodeID, capable: .bridge)
+      } catch {
         return .unreadable(error.localizedDescription)
       }
     case .local:
@@ -1073,7 +1389,7 @@ enum ClientWiring {
       // with nothing of ours in it goes through the audit like any other.
       guard let servers = ClientWiringMerge.localScopeServers(in: root, folder: folder.path)
       else { return .notConfigured }
-      return audit(servers: servers)
+      return audit(servers: servers, clientID: claudeCodeID, capable: .http)
     }
   }
 

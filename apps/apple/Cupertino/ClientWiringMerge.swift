@@ -1,9 +1,11 @@
 import Foundation
 
 /// The part of client wiring that touches somebody else's file, with the app
-/// taken out of it: no AppKit, no `Surface`, no `Bundle`, no logging.
+/// taken out of it: no AppKit, no `Bundle`, no logging. `Surface` is the one
+/// thing it reads, and only its table of ids, so an HTTP entry is claimed for a
+/// surface that exists and nothing else.
 ///
-/// That subtraction is the point. `make wiring-check` compiles this one file
+/// That subtraction is the point. `make wiring-check` compiles this file
 /// beside `scripts/wiring-check.swift` and runs the result, which is the whole
 /// test story for a project with no test target. Everything policy-shaped —
 /// which clients exist, which key they use, where the bridge lives — stays in
@@ -11,6 +13,34 @@ import Foundation
 nonisolated enum ClientWiringMerge {
   /// The tail of every `command` this app has ever written into a config.
   static let bridgeSuffix = "/Contents/Helpers/cupertino-bridge"
+
+  /// How a client reaches Cupertino: a `cupertino-bridge` process per server,
+  /// or Cupertino's loopback HTTP endpoint.
+  enum Transport: Equatable {
+    case bridge
+    case http
+  }
+
+  /// What an HTTP entry should say: the port Cupertino listens on, and whether
+  /// a bearer token is the client's current one. A predicate rather than the
+  /// token itself, so an audit never has to mint one to compare against.
+  struct HTTPWant {
+    let port: Int
+    let accepts: (String) -> Bool
+  }
+
+  /// An HTTP entry of ours, taken apart.
+  struct Loopback: Equatable {
+    let port: Int
+    let surface: String
+    /// What follows `Bearer ` in its Authorization header, nil without one.
+    let token: String?
+  }
+
+  /// What `state` says of an HTTP entry whose token is not the client's.
+  /// Named, because the pane and the status sentence both read it, and neither
+  /// may ever quote the token itself.
+  static let staleToken = "a token Cupertino no longer accepts"
 
   // MARK: - Reading
 
@@ -51,21 +81,80 @@ nonisolated enum ClientWiringMerge {
   /// Whether an entry is one this app wrote, wherever the bundle was at the
   /// time. Deliberately not compared against the current bridge path: an entry
   /// left by a copy that has since moved is exactly the one worth cleaning up.
+  ///
+  /// Two shapes: a `command` ending in the bridge's path, or a `url` that is
+  /// exactly `http://127.0.0.1:<port>/s/<surface>` for a surface Cupertino
+  /// serves. Any port, for the same reason as any bundle path: an entry left on
+  /// a port Cupertino has since moved off is the one worth cleaning up. Nothing
+  /// looser: Bastion's `http://127.0.0.1:8720/s/prod/stripe` is two segments,
+  /// and `localhost`, https and every other host are somebody else's.
   static func isOurs(_ entry: Any?) -> Bool {
-    guard let entry = entry as? [String: Any],
-      let command = entry["command"] as? String
-    else { return false }
-    return command.hasSuffix(bridgeSuffix)
+    guard let entry = entry as? [String: Any] else { return false }
+    if let command = entry["command"] as? String { return command.hasSuffix(bridgeSuffix) }
+    return loopback(entry) != nil
+  }
+
+  /// An HTTP entry of ours, taken apart; nil for anything else, a bridge entry
+  /// included. JSON clients keep the header under `headers`, Codex under
+  /// `http_headers`.
+  static func loopback(_ entry: Any?) -> Loopback? {
+    guard let entry = entry as? [String: Any], entry["command"] == nil,
+      let url = entry["url"] as? String
+    else { return nil }
+    let prefix = "http://127.0.0.1:"
+    guard url.hasPrefix(prefix) else { return nil }
+    let rest = url.dropFirst(prefix.count)
+    guard let slash = rest.firstIndex(of: "/") else { return nil }
+    let digits = rest[..<slash]
+    guard (1...5).contains(digits.count), digits.allSatisfy({ $0.isASCII && $0.isNumber }),
+      let port = Int(digits)
+    else { return nil }
+    let path = rest[slash...]
+    guard path.hasPrefix("/s/") else { return nil }
+    let surface = String(path.dropFirst(3))
+    guard Surface.all.contains(where: { $0.id == surface }) else { return nil }
+    let headers = (entry["headers"] ?? entry["http_headers"]) as? [String: Any] ?? [:]
+    let authorization =
+      headers.first { $0.key.caseInsensitiveCompare("Authorization") == .orderedSame }?
+      .value as? String
+    let token = authorization.flatMap { value -> String? in
+      guard value.hasPrefix("Bearer ") else { return nil }
+      return String(value.dropFirst("Bearer ".count))
+    }
+    return Loopback(port: port, surface: surface, token: token)
+  }
+
+  /// How a servers object reaches Cupertino today: nil when nothing in it is
+  /// ours, HTTP when any entry of ours is (somebody switched it), the bridge
+  /// otherwise.
+  static func transport(of servers: [String: Any]) -> Transport? {
+    let ours = servers.values.filter { isOurs($0) }
+    if ours.isEmpty { return nil }
+    return ours.contains { loopback($0) != nil } ? .http : .bridge
+  }
+
+  /// Whether anything in a config is an HTTP entry of ours, and so holds a
+  /// bearer token: at any depth, so Claude Code's per-folder blocks count.
+  static func holdsToken(_ value: Any?) -> Bool {
+    switch value {
+    case let entry as [String: Any]:
+      if loopback(entry) != nil { return true }
+      return entry.values.contains { holdsToken($0) }
+    case let list as [Any]:
+      return list.contains { holdsToken($0) }
+    default:
+      return false
+    }
   }
 
   /// Where an entry points, whichever shape it is.
   ///
-  /// `command` first, then `url`. Cupertino only ever writes a `command`, so the
-  /// `url` half exists purely to *describe* entries it did not write: a Claude
-  /// Code config legitimately holds `{"type": "http", "url": ...}` blocks, and a
-  /// list of other people's servers that rendered one of those as "no command"
-  /// would be describing the file wrongly. `isOurs` stays command-only — reading
-  /// a url here never widens what this app claims as its own.
+  /// `command` first, then `url`. The `url` half describes HTTP entries, ours
+  /// and other people's: a Claude Code config legitimately holds `{"type":
+  /// "http", "url": ...}` blocks, and a list of other people's servers that
+  /// rendered one of those as "no command" would be describing the file
+  /// wrongly. Reading a url here never widens what this app claims as its own;
+  /// that is `isOurs`'s question.
   static func identity(of entry: Any?) -> String? {
     guard let entry = entry as? [String: Any] else { return nil }
     if let command = entry["command"] as? String { return command }
@@ -305,9 +394,25 @@ nonisolated enum ClientWiringMerge {
   /// because the key is derived from the surface id rather than chosen by
   /// anybody: no path through this app produces that pair, so the check would
   /// only ever fire on a file somebody edited themselves — and it has no remedy
-  /// to offer them that Configure does not already offer.
-  static func state(of servers: [String: Any], key: String, expectedCommand: String) -> EntryState {
+  /// to offer them that Configure does not already offer. The URL's surface is
+  /// left out of the HTTP comparison for the same reason.
+  ///
+  /// With `http`, the entry should be an HTTP one: it matches on the port and a
+  /// token the client holds, and is stale on either. A bridge entry of ours is
+  /// stale then too, by its command.
+  static func state(
+    of servers: [String: Any], key: String, expectedCommand: String, http: HTTPWant? = nil
+  ) -> EntryState {
     guard let entry = servers[key] as? [String: Any] else { return .missing }
+    if let http {
+      if let reach = loopback(entry) {
+        if reach.port != http.port { return .stale("port \(reach.port)") }
+        guard let token = reach.token, http.accepts(token) else { return .stale(staleToken) }
+        return .matches
+      }
+      let found = identity(of: entry)
+      return isOurs(entry) ? .stale(found ?? "unknown") : .foreign(found)
+    }
     let found = identity(of: entry)
     // Equality with the command we would write comes FIRST, and decides on its
     // own. `isOurs` is a suffix test, and its job is recognising entries written
@@ -378,13 +483,14 @@ nonisolated enum ClientWiringMerge {
     servers: [String: Any],
     expectedCommand: String,
     expected: [(key: String, label: String)],
-    unexpected: [(key: String, label: String)]
+    unexpected: [(key: String, label: String)],
+    http: HTTPWant? = nil
   ) -> Audit {
     audit(
       states: expected.map {
         (
           key: $0.key, label: $0.label,
-          state: state(of: servers, key: $0.key, expectedCommand: expectedCommand)
+          state: state(of: servers, key: $0.key, expectedCommand: expectedCommand, http: http)
         )
       },
       // Handed in rather than derived by scanning for `isOurs` keys absent from
@@ -431,23 +537,37 @@ nonisolated enum ClientWiringMerge {
   /// the app was moved or deleted, every client holding it is broken, and the
   /// bundle doing the rewiring is the one that exists. A foreign entry under a
   /// wanted key is skipped rather than refused, since there is nobody to ask.
+  ///
+  /// With `http`, the entries should be HTTP ones, and one on another port is
+  /// rewritten when its token is this client's (the port was changed) or when
+  /// it is on this port (the token was). On another port with a token this copy
+  /// never issued, it is another copy's: a Debug build listens on its own port
+  /// with tokens of its own, and is left alone like a bridge still on disk.
   static func rewirePlan(
     servers: [String: Any],
     expectedCommand: String,
     wanted: [String],
     unwanted: Set<String>,
-    exists: (String) -> Bool
+    exists: (String) -> Bool,
+    http: HTTPWant? = nil
   ) -> RewirePlan {
     let ours = servers.keys.filter { isOurs(servers[$0]) }.sorted()
     guard !ours.isEmpty else { return .notWired }
     // Any of ours, not only the wanted keys: a live copy still reachable under
     // a key this build would remove is just as much somebody else's wiring.
     for key in ours {
+      if let reach = loopback(servers[key]) {
+        guard let http, reach.port != http.port else { continue }
+        if !(reach.token.map(http.accepts) ?? false) {
+          return .otherCopy("http://127.0.0.1:\(reach.port)")
+        }
+        continue
+      }
       guard let command = identity(of: servers[key]), command != expectedCommand else { continue }
       if exists(command) { return .otherCopy(command) }
     }
     let upsert = wanted.filter {
-      switch state(of: servers, key: $0, expectedCommand: expectedCommand) {
+      switch state(of: servers, key: $0, expectedCommand: expectedCommand, http: http) {
       case .missing, .stale: true
       case .matches, .foreign: false
       }
@@ -531,12 +651,14 @@ nonisolated enum ClientWiringMerge {
     to url: URL,
     backupSuffix: String,
     expecting: Stamp? = nil,
-    newFileMode: Int? = nil
+    newFileMode: Int? = nil,
+    holdsToken: Bool? = nil
   ) throws -> URL? {
     try write(
       JSONSerialization.data(
         withJSONObject: root, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
-      to: url, backupSuffix: backupSuffix, expecting: expecting, newFileMode: newFileMode)
+      to: url, backupSuffix: backupSuffix, expecting: expecting, newFileMode: newFileMode,
+      holdsToken: holdsToken ?? Self.holdsToken(root))
   }
 
   /// What a write that may have had nothing to do did.
@@ -573,6 +695,9 @@ nonisolated enum ClientWiringMerge {
   /// diff in somebody's dotfiles with no change in it. `NSDictionary` equality
   /// is what makes that comparison over `Any` honest: nested dictionaries and
   /// arrays compare by contents, and numbers by value.
+  ///
+  /// A token in either half makes the file and its backup 0600: the backup of
+  /// an unwire holds the token the merge just took out.
   static func writeMerged(
     _ merged: [String: Any],
     over original: [String: Any]?,
@@ -585,7 +710,7 @@ nonisolated enum ClientWiringMerge {
     return .written(
       backup: try write(
         merged, to: url, backupSuffix: backupSuffix, expecting: expecting,
-        newFileMode: newFileMode))
+        newFileMode: newFileMode, holdsToken: holdsToken(merged) || holdsToken(original)))
   }
 
   /// The same write, given bytes somebody else produced.
@@ -596,13 +721,20 @@ nonisolated enum ClientWiringMerge {
   /// this line is identical for both, which is what stops the format from
   /// reaching any further into the app than the two functions that open and
   /// close a file.
+  ///
+  /// `holdsToken` is the exception to "a file we replace keeps its own mode":
+  /// a config holding a bearer token, before or after, is made 0600 and so is
+  /// its backup, whatever they were. A copy inherits the mode of what it
+  /// copied, so without it a client that keeps its config 0644 (VS Code,
+  /// Cursor) would leave a world-readable sibling holding the previous token.
   @discardableResult
   static func write(
     _ data: Data,
     to url: URL,
     backupSuffix: String,
     expecting: Stamp? = nil,
-    newFileMode: Int? = nil
+    newFileMode: Int? = nil,
+    holdsToken: Bool = false
   ) throws -> URL? {
     let fm = FileManager.default
     var backup: URL?
@@ -623,6 +755,9 @@ nonisolated enum ClientWiringMerge {
       backup = configured.appendingPathExtension(backupSuffix)
       try? fm.removeItem(at: backup!)
       try fm.copyItem(at: url, to: backup!)
+      if holdsToken {
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: backup!.path)
+      }
     } else {
       try fm.createDirectory(
         at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -634,6 +769,9 @@ nonisolated enum ClientWiringMerge {
       .appendingPathComponent(".cupertino-\(UUID().uuidString).tmp")
     try data.write(to: temp, options: .atomic)
     do {
+      // Before the swap as well as after it: the temp is the file the token
+      // first lands in, and `replaceItemAt` may carry the original's mode over.
+      if holdsToken { try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temp.path) }
       _ = try fm.replaceItemAt(url, withItemAt: temp)
     } catch {
       // `replaceItemAt` consumes the temp on success only. A failure here would
@@ -641,7 +779,9 @@ nonisolated enum ClientWiringMerge {
       try? fm.removeItem(at: temp)
       throw error
     }
-    if !existed, let newFileMode {
+    if holdsToken {
+      try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    } else if !existed, let newFileMode {
       try? fm.setAttributes([.posixPermissions: newFileMode], ofItemAtPath: url.path)
     }
     return backup

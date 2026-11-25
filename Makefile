@@ -853,11 +853,21 @@ license-check: ## Assert the app's licence check reads a key however it was past
 	@apps/apple/.build/license-check
 
 wiring-check: ## Assert the config merge leaves other people's files alone
+	@# ClientWiring.swift is compiled too, against the stand-ins in
+	@# wiring-check-app.swift: its client paths hang off a scratch home and its
+	@# tokens are held in memory, so the check never meets a real client config,
+	@# a preference, a login item or the Keychain.
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/wiring-check \
 		apps/apple/Cupertino/ClientWiringMerge.swift \
 		apps/apple/Cupertino/ClientWiringTOML.swift \
 		apps/apple/Cupertino/ClientAllowlist.swift \
+		apps/apple/Cupertino/ClientWiring.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/HTTPTokens.swift \
+		apps/apple/Cupertino/HTTPPort.swift \
+		scripts/wiring-check-app.swift \
+		scripts/wiring-check-http.swift \
 		scripts/wiring-check.swift
 	@apps/apple/.build/wiring-check
 

@@ -374,14 +374,18 @@ writing there would name an absolute path into an app bundle that differs per ma
 
 ## Tests
 
-`make wiring-check` compiles `ClientWiringMerge.swift` and `ClientWiringTOML.swift` beside
-`scripts/wiring-check.swift` with one `swiftc` invocation and runs the result — 314 assertions
-against fixtures. `make wiring-check-real` runs the same binary over the real configs on this Mac,
+`make wiring-check` compiles `ClientWiringMerge.swift`, `ClientWiringTOML.swift` and
+`ClientWiring.swift` beside `scripts/wiring-check.swift` with one `swiftc` invocation and runs the
+result. `make wiring-check-real` runs the same binary over the real configs on this Mac,
 read-only, and asserts the same guarantees against shapes nobody thought to fixture: 77 unrelated
 top-level keys, 101 project blocks, an entry that is a bare string, and a 248-line `config.toml`
-that a wire and an unwire have to give back byte-for-byte. A file that is not on this Mac is skipped rather than failed, so it is a
-developer target and not a CI one. That subtraction is the point:
-`ClientWiringMerge` imports nothing but Foundation, no AppKit, no `Surface`, no `Bundle`, no
-logging, so the half that touches somebody else's file is testable in a project with no test target.
-Everything policy-shaped — which clients exist, which key they use, where the bridge lives — stays
-in `ClientWiring`, which is not covered and is deliberately kept boring enough not to need to be.
+that a wire and an unwire have to give back byte-for-byte. A file that is not on this Mac is
+skipped rather than failed, so it is a developer target and not a CI one.
+
+`ClientWiringMerge` imports nothing but Foundation and reads only `Surface`'s table of ids, so the
+half that touches somebody else's file is testable in a project with no test target.
+`ClientWiring`, the policy on top of it (which client gets which transport, when a token is written
+and when it is revoked), is compiled against the stand-ins in `scripts/wiring-check-app.swift`:
+`ClientWiring.home` points every client path at a scratch directory, `ClientWiring.tokens` holds
+its tokens in memory, and no preference, login item, Keychain item or real config is touched. The
+check refuses to start if any client path still resolves outside the scratch directory.

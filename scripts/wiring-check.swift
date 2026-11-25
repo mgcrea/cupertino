@@ -136,6 +136,8 @@ struct WiringCheck {
     tomlDuplicateKeyIsImpossible()
     tomlBackupAtomicityAndMode()
     tomlStaleWriteIsRefused()
+    // `ClientWiring` itself, against a scratch home. See wiring-check-http.swift.
+    httpChecks()
 
     // Any paths on the command line are real client configs, read and never
     // written. See `make wiring-check-real`.

@@ -19,9 +19,11 @@ import SwiftUI
 /// in the app with the file open.
 ///
 /// Modelled on Bastion's `ClientDetail`, which solves the same problem one repo
-/// over. What is different here is the shape of an entry: Cupertino writes a
-/// bridge command and no URL, so there is no transport to choose and no token to
-/// explain.
+/// over. An entry is a bridge command or, for the clients that can reach a
+/// loopback URL with a header, Cupertino's HTTP endpoint and a token. Which one
+/// is not a choice made here: a client keeps the transport its entries are in,
+/// and Switch to HTTP is the one button that changes it. See
+/// `ClientWiring.transport(for:servers:)`.
 struct ClientDetail: View {
   let client: ClientWiring.Client
   /// Read for its invalidation, not for its answers — see `read()`.
@@ -30,6 +32,8 @@ struct ClientDetail: View {
   @State private var result: String?
   /// The keys a refused Configure named. Non-empty is the alert being up.
   @State private var collision: [String] = []
+  /// The refused write was Switch to HTTP, so Overwrite anyway switches too.
+  @State private var collidedOnSwitch = false
   /// The foreign entry whose removal is waiting to be confirmed.
   @State private var pending: Removal?
   /// Narrows the project list. Claude Code has ninety-eight folders in it.
@@ -78,6 +82,8 @@ struct ClientDetail: View {
     var others: [ClientWiringMerge.ForeignEntry]
     var projects: [(folder: String, entries: [ClientWiringMerge.ForeignEntry])]
     var hasOurEntries: Bool
+    /// What Configure writes, and what the rows are judged against.
+    var transport: ClientWiring.Transport
     /// The allowlist holds Bastion's wildcard, so Bastion keeps it current.
     var allowlistIsBastions = false
     /// Managed settings allow only their own list: no user-side remedy.
@@ -119,7 +125,7 @@ struct ClientDetail: View {
         rows: enabled.map {
           Row(surface: $0, key: ClientWiring.serverKey(for: $0), state: .missing)
         },
-        others: [], projects: [], hasOurEntries: false)
+        others: [], projects: [], hasOurEntries: false, transport: client.transport)
     }
 
     guard client.isInstalled else { return unread(.notInstalled) }
@@ -136,8 +142,7 @@ struct ClientDetail: View {
       let key = ClientWiring.serverKey(for: surface)
       return Row(
         surface: surface, key: key,
-        state: ClientWiringMerge.state(
-          of: servers, key: key, expectedCommand: ClientWiring.bridgePath),
+        state: ClientWiring.entryState(of: servers, key: key, client: client),
         isDisabled: config.disabled.contains(key))
     }
     // A switched-off surface earns a row only for an entry of ours that is
@@ -156,8 +161,7 @@ struct ClientDetail: View {
       rows.append(
         Row(
           surface: surface, key: key,
-          state: ClientWiringMerge.state(
-            of: servers, key: key, expectedCommand: ClientWiring.bridgePath),
+          state: ClientWiring.entryState(of: servers, key: key, client: client),
           isOff: true))
     }
 
@@ -182,7 +186,7 @@ struct ClientDetail: View {
       // The same file the rows were read from, reduced by the same function
       // `status(of:)` uses. The header sentence and the badges cannot disagree,
       // because there is one computation and one read behind both.
-      status: ClientWiring.audit(servers: servers),
+      status: ClientWiring.audit(servers: servers, client: client),
       rows: rows,
       others: ClientWiringMerge.foreignEntries(in: servers),
       // Claude Code's alone. A `projects` key in anybody else's config is not an
@@ -193,6 +197,7 @@ struct ClientDetail: View {
       // Including an entry for a surface this build has never heard of, which is
       // exactly the case worth being able to clean up.
       hasOurEntries: servers.values.contains { ClientWiringMerge.isOurs($0) },
+      transport: ClientWiring.transport(for: client, servers: servers),
       allowlistIsBastions: policy?.isBastions ?? false,
       allowlistIsManagedOnly: policy?.isManagedOnly ?? false)
   }
@@ -232,7 +237,9 @@ struct ClientDetail: View {
       isPresented: Binding(get: { !collision.isEmpty }, set: { if !$0 { collision = [] } })
     ) {
       Button("Cancel", role: .cancel) {}
-      Button("Overwrite anyway", role: .destructive) { configure(force: true) }
+      Button("Overwrite anyway", role: .destructive) {
+        if collidedOnSwitch { switchToHTTP(force: true) } else { configure(force: true) }
+      }
     } message: {
       Text(collisionMessage)
     }
@@ -257,6 +264,11 @@ struct ClientDetail: View {
       .fixedSize(horizontal: false, vertical: true)
 
       HStack(spacing: 8) {
+        // Beside Update rather than in its place: Update keeps the bridge, for
+        // somebody who wants the new surface without the new transport.
+        if snapshot.status == .oldTransport {
+          Button("Switch to HTTP") { switchToHTTP() }
+        }
         Button(configureLabel(snapshot.status)) { configure() }
           .disabled(!client.isInstalled)
         // Named, because it is no longer the only Remove on this screen: every
@@ -269,6 +281,18 @@ struct ClientDetail: View {
         Button("Reveal in Finder") { ClientWiring.reveal(client) }
         Spacer()
       }
+
+      // An HTTP entry cannot start the app the way the bridge does. A capture
+      // says the sentence a switched client shows, whatever this Mac's setting.
+      if snapshot.transport == .http, snapshot.hasOurEntries {
+        Text(
+          LoginItem.isEnabled || DemoSeed.isEnabled
+            ? "HTTP clients need Cupertino running; it now opens at login."
+            : "HTTP clients need Cupertino running. Turn on Launch at login in General so it is."
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+      }
     }
   }
 
@@ -278,7 +302,7 @@ struct ClientDetail: View {
   /// implied there was nothing there yet.
   private func configureLabel(_ status: ClientWiring.Status) -> String {
     switch status {
-    case .stale, .incomplete, .extra: "Update"
+    case .stale, .incomplete, .extra, .oldTransport: "Update"
     case .configured: "Rewrite"
     default: "Configure"
     }
@@ -322,17 +346,21 @@ struct ClientDetail: View {
           .font(.callout).foregroundStyle(.secondary)
       } else {
         ForEach(snapshot.rows) { row in
-          entryRow(row)
+          entryRow(row, over: snapshot.transport)
           if row.id != snapshot.rows.last?.id { Divider() }
         }
         Divider()
         // The sentence that makes writing another app's config defensible at
-        // all. Cupertino's entry is a path and a surface name; the permissions
-        // it spends are this app's, granted once, and revocable in System
-        // Settings.
+        // all. Cupertino's entry is a path and a surface name, or a loopback URL
+        // and a token that names the client; the permissions it spends are this
+        // app's, granted once, and revocable in System Settings.
         Text(
-          "Each entry names the bridge inside this app and one surface. No credential, no token "
-            + "and no permission is written into the file."
+          snapshot.transport == .http
+            ? "Each entry names one surface at Cupertino's address on this Mac, with a token that "
+              + "tells Cupertino which client is asking. No credential and no permission is "
+              + "written into the file, and the file is kept readable by you alone."
+            : "Each entry names the bridge inside this app and one surface. No credential, no "
+              + "token and no permission is written into the file."
         )
         .font(.caption).foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
@@ -340,7 +368,7 @@ struct ClientDetail: View {
     }
   }
 
-  private func entryRow(_ row: Row) -> some View {
+  private func entryRow(_ row: Row, over transport: ClientWiring.Transport) -> some View {
     VStack(alignment: .leading, spacing: 3) {
       HStack(alignment: .firstTextBaseline, spacing: 8) {
         SurfaceIconView(surface: row.surface)
@@ -363,7 +391,7 @@ struct ClientDetail: View {
           }
         }
       }
-      Text(reachLine(for: row.surface))
+      Text(ClientWiring.reach(for: row.surface, client: client, over: transport))
         .font(.system(.caption2, design: .monospaced))
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
@@ -374,7 +402,7 @@ struct ClientDetail: View {
       switch row.state {
       case .stale(let found):
         Text(
-          "Points at \(found) right now. \(row.isOff ? "Switching the surface back on and updating rewrites it." : "Update rewrites it.")"
+          "\(found == ClientWiringMerge.staleToken ? "Carries \(found)" : "Points at \(found)") right now. \(row.isOff ? "Switching the surface back on and updating rewrites it." : "Update rewrites it.")"
         )
         .font(.caption2)
         .foregroundStyle(row.isOff ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
@@ -424,20 +452,6 @@ struct ClientDetail: View {
     case .stale: Badge("points elsewhere", tint: .red)
     case .foreign: Badge("taken", tint: .red)
     }
-  }
-
-  /// The command line this entry would be written with.
-  ///
-  /// Composed from `ClientWiring.entry` rather than spelled out again. This
-  /// card's whole claim is "here is what Cupertino would write", so a second
-  /// copy of the arguments is a claim that can quietly stop being true — which
-  /// it did the day `--client=` landed and this line went on showing only
-  /// `--server=`.
-  private func reachLine(for surface: Surface) -> String {
-    let entry = ClientWiring.entry(for: surface, client: client.id)
-    let command = entry["command"] as? String ?? ClientWiring.bridgePath
-    let arguments = (entry["args"] as? [String] ?? []).joined(separator: " ")
-    return arguments.isEmpty ? command : "\(command) \(arguments)"
   }
 
   // MARK: - Claude Code's allowlist
@@ -722,6 +736,7 @@ struct ClientDetail: View {
     do {
       let outcome = try ClientWiring.configure(client, force: force)
       collision = []
+      collidedOnSwitch = false
       let count = SurfaceSettings.enabledSurfaces.count
       // Said apart, because "Wrote N entries" for a file nothing was written to
       // is the sentence that sent somebody looking for a change that did not
@@ -741,6 +756,26 @@ struct ClientDetail: View {
       // The refusal is the feature. It also lands in `result`, so the reason
       // survives after the alert is dismissed.
       result = ClientWiring.WriteError.collision(client: name, keys: keys).localizedDescription
+      collidedOnSwitch = false
+      collision = keys
+    } catch {
+      result = "Could not write the config: \(error.localizedDescription)"
+    }
+  }
+
+  private func switchToHTTP(force: Bool = false) {
+    do {
+      let outcome = try ClientWiring.switchToHTTP(client, force: force)
+      collision = []
+      collidedOnSwitch = false
+      result =
+        "Switched \(client.displayName) to HTTP in "
+        + "\(ClientWiring.configFile(of: client).path.path)."
+        + (outcome.backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
+        + " Restart \(client.displayName) to pick it up."
+    } catch ClientWiring.WriteError.collision(let name, let keys) {
+      result = ClientWiring.WriteError.collision(client: name, keys: keys).localizedDescription
+      collidedOnSwitch = true
       collision = keys
     } catch {
       result = "Could not write the config: \(error.localizedDescription)"
@@ -998,9 +1033,20 @@ private struct FolderRow: View {
           .controlSize(.small)
           .foregroundStyle(.secondary)
       }
-      if case .stale = status {
+      switch status {
+      case .stale(let found) where found.hasPrefix("/"):
         Text("Points at another copy of Cupertino. Update rewrites it.")
           .font(.caption2).foregroundStyle(.red)
+      case .stale:
+        Text("\(status.summary) Update rewrites it.")
+          .font(.caption2).foregroundStyle(.red)
+      // The folder card's own Update is the switch: there is no automatic pass
+      // over these blocks to keep a bridge current behind anybody's back.
+      case .oldTransport:
+        Text("Wired the old way, with a bridge per server. Update switches it to HTTP.")
+          .font(.caption2).foregroundStyle(.orange)
+      default:
+        EmptyView()
       }
     }
   }

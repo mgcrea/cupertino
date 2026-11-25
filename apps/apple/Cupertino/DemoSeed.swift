@@ -887,6 +887,10 @@ nonisolated enum DemoSeed {
   nonisolated static let bridgePath =
     "/Applications/Cupertino.app" + ClientWiringMerge.bridgeSuffix
 
+  /// The release build's port, so a plate taken from a Debug build does not
+  /// show 8831.
+  nonisolated static let httpPort = 8830
+
   /// The same stand-in the store rows and the wired folders use.
   nonisolated static let home = "/Users/you"
 
@@ -992,10 +996,14 @@ nonisolated enum DemoSeed {
     // landed: the plate went on showing a config the app would no longer write,
     // and nothing caught it because the fixture agreed with itself.
     // `ClientWiring.bridgePath` is seeded for a capture, so the path is right.
+    // Each client in the transport it would be wired with fresh, so an HTTP
+    // client reads as switched rather than as wired the old way. The token is
+    // a stand-in: the pane never shows one, and a capture never mints one.
     var servers: [String: Any] = [:]
     for surface in SurfaceSettings.enabledSurfaces {
-      servers[ClientWiring.serverKey(for: surface)] =
-        ClientWiring.entry(for: surface, client: client.id)
+      servers[ClientWiring.serverKey(for: surface)] = ClientWiring.entry(
+        for: surface, client: client, over: client.transport,
+        token: String(repeating: "0", count: 64), port: httpPort)
     }
     guard ClientWiring.hasLocalScope(client) else {
       return ClientWiring.Config(servers: servers, root: ["mcpServers": servers])

@@ -782,7 +782,7 @@ enum StatusStyle {
   static func clientTint(_ status: ClientWiring.Status) -> Color {
     switch status {
     case .configured: .green
-    case .incomplete, .extra: .orange
+    case .incomplete, .extra, .oldTransport: .orange
     case .stale, .unreadable: .red
     // Grey covers two different absences on purpose. Neither is a fault, and
     // neither is something this app can fix without being asked.
