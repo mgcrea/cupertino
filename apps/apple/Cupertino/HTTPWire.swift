@@ -214,4 +214,8 @@ nonisolated enum HTTPWire {
 
   /// The last chunk, which ends a chunked body.
   static let lastChunk = Data("0\r\n\r\n".utf8)
+
+  /// An SSE comment, in one chunk: framing a client reads and ignores, so a
+  /// held stream with nothing to say still writes.
+  static let keepAlive = chunk(Data(": \n\n".utf8))
 }

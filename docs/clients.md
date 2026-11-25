@@ -185,6 +185,11 @@ url = "http://127.0.0.1:8830/s/mail"
 http_headers = { Authorization = "Bearer <token>" }
 ```
 
+**The version header.** A request in a session may carry `MCP-Protocol-Version`, and one that does
+must name `2025-03-26`, `2025-06-18` or `2025-11-25`; any other value is refused with 400 and
+logged. One without it is served as `2025-03-26`, which is what the 2025-06-18 transport tells a
+server to assume.
+
 **The port** is 8830 for a release build and 8831 for a Debug one, so the two never take each
 other's. It is set in Settings › General › HTTP endpoint, from 1024 to 65535. Applying a new one
 stops the listener and starts it on that port, ending the HTTP sessions open at that moment; a port

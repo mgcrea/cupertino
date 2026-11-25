@@ -258,6 +258,8 @@ final class Client {
 final class HTTPProbe {
   enum Event: Equatable {
     case message(String)
+    /// A comment block with no data, which is what a keep-alive is.
+    case comment
     /// The body ended: the last chunk, or the connection closed.
     case ended
     case timedOut
@@ -422,7 +424,9 @@ final class HTTPProbe {
       }) {
         let block = String(decoding: decoded[..<end], as: UTF8.self)
         decoded.removeFirst(end + 2)
-        let data = block.split(separator: "\n").filter { $0.hasPrefix("data: ") }
+        let lines = block.split(separator: "\n")
+        if lines.allSatisfy({ $0.hasPrefix(":") }) { return .comment }
+        let data = lines.filter { $0.hasPrefix("data: ") }
           .map { String($0.dropFirst(6)) }.joined(separator: "\n")
         return .message(data)
       }
@@ -435,10 +439,13 @@ final class HTTPProbe {
   func messages(within seconds: Double) -> [String] {
     let deadline = Date().addingTimeInterval(seconds)
     var out: [String] = []
-    while case .message(let data) = event(within: deadline.timeIntervalSinceNow) {
-      out.append(data)
+    while true {
+      switch event(within: deadline.timeIntervalSinceNow) {
+      case .message(let data): out.append(data)
+      case .comment: continue
+      case .ended, .timedOut: return out
+      }
     }
-    return out
   }
 
   /// Whether the server closes this connection within `seconds`.
@@ -455,6 +462,8 @@ final class HTTPMCP {
   let surface: String
   let token: String
   var id: String?
+  /// The `MCP-Protocol-Version` sent once a session is open; nil sends none.
+  var version: String? = "2025-06-18"
   let probe: HTTPProbe
 
   init?(port: Int, surface: String = "mail", token: String = "t1") {
@@ -472,7 +481,7 @@ final class HTTPMCP {
     ]
     if let id {
       fields.append(("Mcp-Session-Id", id))
-      fields.append(("MCP-Protocol-Version", "2025-06-18"))
+      if let version { fields.append(("MCP-Protocol-Version", version)) }
     }
     return fields
   }
@@ -791,7 +800,7 @@ struct HostCheck {
     // that hangs a build is worse than one that fails it — the same argument
     // `audit-network.sh` makes about dying silently — so it is given a deadline
     // of its own.
-    let limit = 60.0
+    let limit = 120.0
     Thread.detachNewThread {
       Thread.sleep(forTimeInterval: limit)
       print("\n  FAIL host-check did not finish within \(Int(limit))s — something is deadlocked")
@@ -1834,6 +1843,109 @@ struct HostCheck {
       _ = theirs.delete()
     } else {
       check("HTTP: a reset ends its client's sessions (could not open them)", false)
+    }
+
+    // MCP-Protocol-Version: the 2025-06-18 transport says a server SHOULD
+    // assume 2025-03-26 when it is absent, so only a version nobody ships is
+    // refused, and logged.
+    mark = hostLogMark()
+    if let session = HTTPMCP(port: httpPort), session.open() {
+      session.version = nil
+      let bare = session.post(request(15, "ping"))
+      session.version = "2025-11-25"
+      let newest = session.post(request(16, "ping"))
+      session.version = "1999-01-01"
+      let bogus = session.post(request(17, "ping")).status
+      let log = hostLogLines(since: mark) {
+        $0.contains { $0.contains("400") && $0.contains("MCP-Protocol-Version") }
+      }
+      check(
+        "HTTP: a request with no MCP-Protocol-Version is served",
+        bare.status == 200 && bare.messages.count == 1)
+      check("HTTP: a known MCP-Protocol-Version is served", newest.messages.count == 1)
+      check(
+        "HTTP: an unknown MCP-Protocol-Version is refused 400 and logged",
+        bogus == 400 && log.contains { $0.contains("400") && $0.contains("MCP-Protocol-Version") })
+      session.version = "2025-06-18"
+      _ = session.delete()
+    } else {
+      check("HTTP: MCP-Protocol-Version (could not open a session)", false)
+    }
+
+    // A stream held open with nothing to say still writes: undici's default
+    // body timeout is 300 s, so a silent POST or GET stream would be aborted.
+    HTTPListener.sseKeepAlive = 1
+    if let session = HTTPMCP(port: httpPort), session.initialize() != nil,
+      let get = session.openGet()
+    {
+      check(
+        "HTTP: a held stream receives a keep-alive comment within the interval and a second",
+        get.event(within: 2) == .comment)
+      get.hangUp()
+      _ = session.delete()
+    } else {
+      check("HTTP: a held stream receives a keep-alive (could not open one)", false)
+    }
+    HTTPListener.sseKeepAlive = 15
+
+    // Sessions per client are capped: past the cap, the least recently active
+    // session with no open stream is ended, and when every one has a stream
+    // the new initialize is refused. A client of its own, so the sessions the
+    // cases above left open are not counted.
+    let capToken = (try? httpTokens.token(for: "vscode")) ?? ""
+    HTTPListener.sessionsPerClient = 2
+    mark = hostLogMark()
+    if let idle = HTTPMCP(port: httpPort, token: capToken), idle.initialize() != nil,
+      let streaming = HTTPMCP(port: httpPort, token: capToken), streaming.initialize() != nil,
+      let streamingGet = streaming.openGet(),
+      let third = HTTPMCP(port: httpPort, token: capToken), third.initialize() != nil
+    {
+      let short = String((idle.id ?? "").prefix(8))
+      let log = hostLogLines(since: mark) {
+        $0.contains { $0.contains(short) && $0.contains("vscode") }
+      }
+      check(
+        "HTTP: past the cap, the least recently active session with no stream is ended, and logged",
+        idle.post(request(18, "ping")).status == 404
+          && streaming.post(request(19, "ping")).messages.count == 1
+          && log.contains { $0.contains(short) && $0.contains("vscode") })
+      let thirdGet = third.openGet()
+      let refused = HTTPMCP(port: httpPort, token: capToken)?.post(Frames.initialize).status
+      check(
+        "HTTP: and with a stream open on every session, a new one is refused 503",
+        thirdGet != nil && refused == 503)
+      streamingGet.hangUp()
+      thirdGet?.hangUp()
+    } else {
+      check("HTTP: the per-client session cap (could not open the sessions)", false)
+    }
+    ServerHost.shared.endHTTPSessions(of: "vscode")
+    HTTPListener.sessionsPerClient = 512
+
+    // A connection holds a slot of the budget, so one that never finishes a
+    // head is closed 10 s from its first byte however it trickles, and one
+    // that sends nothing at all is closed 10 s in, not at the 75 s keep-alive
+    // only an admitted request earns. Both at once, so the check waits once.
+    if let trickle = HTTPProbe(port: httpPort), let silent = HTTPProbe(port: httpPort) {
+      let started = Date()
+      let head =
+        Array("POST /s/mail HTTP/1.1\r\nX-Slow: ".utf8) + Array(repeating: UInt8(97), count: 64)
+      var closedAt: TimeInterval?
+      for byte in head {
+        guard trickle.send(Data([byte])), !trickle.closed(within: 2) else {
+          closedAt = Date().timeIntervalSince(started)
+          break
+        }
+        if Date().timeIntervalSince(started) > 16 { break }
+      }
+      check(
+        "HTTP: a head trickled a byte every 2 s is closed by about 12 s",
+        closedAt.map { $0 >= 9 && $0 <= 13 } == true)
+      check(
+        "HTTP: and a connection that sent nothing is closed by then too",
+        silent.closed(within: 1))
+    } else {
+      check("HTTP: a trickled head is closed (could not connect)", false)
     }
 
     // The Settings field moves the listener: a free port rebinds, and a taken

@@ -50,6 +50,13 @@ nonisolated final class HTTPListener: @unchecked Sendable {
   /// How long a session that never opened a GET stream is kept with no
   /// request. Settable for the checks only.
   nonisolated(unsafe) static var idleLimit: TimeInterval = 1800
+  /// How often a held SSE stream with nothing to send writes a comment, so a
+  /// client's body timeout (undici's is 300 s) never fires on a silent call.
+  /// Settable for the checks only.
+  nonisolated(unsafe) static var sseKeepAlive: TimeInterval = 15
+  /// How many sessions one client may hold at once. Settable for the checks
+  /// only.
+  nonisolated(unsafe) static var sessionsPerClient = 512
 
   /// The port the app listens on: the user's setting, or the build's
   /// default. The default and the defaults key live in `HTTPPort`, which
@@ -63,8 +70,17 @@ nonisolated final class HTTPListener: @unchecked Sendable {
   /// How long a kept-alive connection may sit with no request before it is
   /// closed, in milliseconds.
   static let keepAliveIdleMs: Int32 = 75_000
-  /// How long a request may pause mid-head or mid-body, in milliseconds.
+  /// How long a request may pause mid-body, in milliseconds, and how long a
+  /// connection that has not yet had a request admitted may sit with none.
   static let ioTimeoutMs: Int32 = 10_000
+  /// How long a whole head may take from its first byte. A per-read wait
+  /// alone let a client trickling a byte every few seconds hold a slot of
+  /// the budget, before any token was checked, for as long as it liked.
+  static let headTimeout: TimeInterval = 10
+
+  /// The `MCP-Protocol-Version` values a session request may carry. One left
+  /// out is taken as 2025-03-26, as the 2025-06-18 transport says.
+  static let protocolVersions: Set<String> = ["2025-03-26", "2025-06-18", "2025-11-25"]
 
   enum ListenError: LocalizedError {
     case socket(String)
@@ -283,15 +299,26 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     // as soon as it is parsed, so the buffer always starts at the request's
     // body, then at the next request.
     var buffer: [UInt8] = []
-    while let (head, bodyStart) = readHead(fd, &buffer) {
+    // The 75 s keep-alive is earned by a request the gate admitted; until
+    // then a connection holding a slot with nothing to say is closed sooner.
+    var admitted = false
+    while let (head, bodyStart) = readHead(
+      fd, &buffer, idleMs: admitted ? Self.keepAliveIdleMs : Self.ioTimeoutMs)
+    {
       buffer.removeFirst(bodyStart)
-      guard handle(Exchange(fd: fd, head: head), &buffer) else { return }
+      let exchange = Exchange(fd: fd, head: head)
+      let goesOn = handle(exchange, &buffer)
+      admitted = admitted || exchange.admitted
+      guard goesOn else { return }
     }
   }
 
   /// The next request's head, or nil when the connection is done: closed,
-  /// idle past keep-alive, or refused for a head that could not be read.
-  private func readHead(_ fd: Int32, _ buffer: inout [UInt8]) -> (HTTPHead, Int)? {
+  /// idle past `idleMs`, past `headTimeout` from the head's first byte, or
+  /// refused for a head that could not be read.
+  private func readHead(_ fd: Int32, _ buffer: inout [UInt8], idleMs: Int32) -> (HTTPHead, Int)? {
+    // From the first byte of this head: bytes already buffered start it now.
+    var deadline = buffer.isEmpty ? nil : Date().addingTimeInterval(Self.headTimeout)
     while true {
       if !buffer.isEmpty {
         switch HTTPHeadParser.parse(buffer) {
@@ -309,8 +336,16 @@ nonisolated final class HTTPListener: @unchecked Sendable {
           break
         }
       }
-      let wait = buffer.isEmpty ? Self.keepAliveIdleMs : Self.ioTimeoutMs
+      let wait: Int32
+      if let deadline {
+        let left = deadline.timeIntervalSinceNow
+        guard left > 0 else { return nil }
+        wait = Int32(max(1, (left * 1000).rounded(.up)))
+      } else {
+        wait = idleMs
+      }
       guard Self.readMore(fd, &buffer, waitMs: wait) else { return nil }
+      if deadline == nil { deadline = Date().addingTimeInterval(Self.headTimeout) }
     }
   }
 
@@ -340,6 +375,8 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     /// A body was declared and not yet read: the connection cannot carry
     /// another request after a refusal.
     var bodyUnread: Bool
+    /// The gate admitted it: its token named a client.
+    var admitted = false
 
     init(fd: Int32, head: HTTPHead) {
       self.fd = fd
@@ -395,6 +432,7 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     guard BridgeProtocol.isWellFormedClient(client) else {
       return exchange.refuse(401, "the token names a malformed client id")
     }
+    exchange.admitted = true
 
     let named = head.header("mcp-session-id")
     // Everything about the session is read from the head, so a request for a
@@ -404,8 +442,14 @@ nonisolated final class HTTPListener: @unchecked Sendable {
       guard let found = lookup(named, client: client, surface: surface) else {
         return exchange.refuse(404, "no such session")
       }
-      guard head.header("mcp-protocol-version") != nil else {
-        return exchange.refuse(400, "MCP-Protocol-Version is required after initialize")
+      // Absent is 2025-03-26, which the transport tells a server to assume;
+      // present, it must be a revision this endpoint speaks. The value is the
+      // client's, so the log names the rule and not what was sent.
+      if let version = head.header("mcp-protocol-version"),
+        !Self.protocolVersions.contains(version)
+      {
+        return exchange.refuse(
+          400, "MCP-Protocol-Version is not 2025-03-26, 2025-06-18 or 2025-11-25")
       }
       session = found
     }
@@ -484,6 +528,13 @@ nonisolated final class HTTPListener: @unchecked Sendable {
       _ = exchange.refuse(503, "Cupertino is not serving")
       return nil
     }
+    guard makeRoom(for: client) else {
+      _ = exchange.refuse(
+        503,
+        "this client holds \(Self.sessionsPerClient) sessions, each with a stream open; "
+          + "end one and retry")
+      return nil
+    }
     var pair: [Int32] = [-1, -1]
     guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else {
       _ = exchange.refuse(503, "could not open a session: \(errnoText())")
@@ -526,6 +577,23 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     }
     hostLog(surface, .info, "HTTP session \(session.short) opened for \(client)")
     return session
+  }
+
+  /// Keeps a client under `sessionsPerClient`. A session with no GET stream
+  /// lives for the idle limit, two threads and two descriptors and maybe a
+  /// child, so a client that opens them faster than it ends them would
+  /// otherwise hold them all. At the cap, its least recently active session
+  /// with no stream open is ended, as a hang-up would end it; false when every
+  /// one has a stream open, which refuses the new one instead.
+  private func makeRoom(for client: String) -> Bool {
+    let mine = state.withLock { $0.sessions.values.filter { $0.client == client } }
+    guard mine.count >= Self.sessionsPerClient else { return true }
+    let idle = mine.compactMap { session in session.idleSince.map { (session, $0) } }
+    guard let (oldest, _) = idle.min(by: { $0.1 < $1.1 }) else { return false }
+    oldest.end(
+      "evicted, \(client) is at its cap of \(Self.sessionsPerClient) sessions and this was "
+        + "its least recently active with no stream open")
+    return true
   }
 
   /// The host's one-line answer to the handshake, `ok` or `err …`.
@@ -622,10 +690,17 @@ nonisolated private final class HTTPSession: @unchecked Sendable {
     /// Bumped by every request and every stream that ends; a timer that finds
     /// it moved has been overtaken.
     var activity = 0
+    /// When `activity` last moved, for the per-client cap's choice.
+    var lastActive = DispatchTime.now().uptimeNanoseconds
     /// Why this side ended the session; set once, with the shutdown.
     var ending: String?
     /// `fd` is closed. Set by the reader, under `writeLock`.
     var closed = false
+
+    mutating func touch() {
+      activity += 1
+      lastActive = DispatchTime.now().uptimeNanoseconds
+    }
   }
   private let state: OSAllocatedUnfairLock<State>
 
@@ -639,6 +714,14 @@ nonisolated private final class HTTPSession: @unchecked Sendable {
   }
 
   var info: HTTPSessionInfo { HTTPSessionInfo(id: id, client: client, surface: surface) }
+
+  /// When it was last active, while it has no stream open and is not ending;
+  /// nil otherwise.
+  var idleSince: UInt64? {
+    state.withLock { state in
+      state.streams.isEmpty && !state.closed && state.ending == nil ? state.lastActive : nil
+    }
+  }
 
   /// Enough of the id to tell sessions apart in the log, not enough to use.
   var short: String { String(id.prefix(8)) }
@@ -658,7 +741,7 @@ nonisolated private final class HTTPSession: @unchecked Sendable {
     defer { writeLock.unlock() }
     let decided = state.withLock { state -> (PostOutcome, SSEStream?)? in
       guard !state.closed, state.ending == nil else { return nil }
-      state.activity += 1
+      state.touch()
       assert(
         !state.router.openPosts.contains(id), "a stream id is posted on once, never while pending")
       let outcome = state.router.post(body, stream: id)
@@ -698,7 +781,7 @@ nonisolated private final class HTTPSession: @unchecked Sendable {
   func openGet(stream id: Int, fd connection: Int32, head: Data) -> SSEStream? {
     let opened = state.withLock { state -> (SSEStream, SSEStream?)? in
       guard !state.closed, state.ending == nil else { return nil }
-      state.activity += 1
+      state.touch()
       let previous = state.getStream.flatMap { state.streams[$0] }
       state.router.openGet(stream: id)
       state.getStream = id
@@ -718,7 +801,7 @@ nonisolated private final class HTTPSession: @unchecked Sendable {
       state.router.closeStream(id)
       state.streams[id] = nil
       if state.getStream == id { state.getStream = nil }
-      state.activity += 1
+      state.touch()
     }
     settle()
   }
@@ -878,6 +961,18 @@ nonisolated private final class SSEStream: @unchecked Sendable {
     _ = write(wake[1], &byte, 1)
   }
 
+  /// A comment, which an SSE client ignores, so a stream with nothing to say
+  /// still writes and no client's body timeout fires on it.
+  private func keepAlive() {
+    lock.withLock {
+      guard !done else { return }
+      if !writeAll(fd, HTTPWire.keepAlive) {
+        failed = true
+        done = true
+      }
+    }
+  }
+
   private func abandon() {
     lock.withLock {
       done = true
@@ -886,12 +981,21 @@ nonisolated private final class SSEStream: @unchecked Sendable {
   }
 
   /// Blocks until the stream ends. Watches the connection meanwhile, so a
-  /// client closing it is seen at once.
+  /// client closing it is seen at once, and writes a keep-alive every
+  /// `HTTPListener.sseKeepAlive`.
   func wait(early: inout [UInt8]) -> End {
     var chunk = [UInt8](repeating: 0, count: 16 * 1024)
+    let interval = HTTPListener.sseKeepAlive
+    var nextKeepAlive = Date().addingTimeInterval(interval)
     while true {
       if let end = lock.withLock({ done ? (failed ? End.failed : End.finished) : nil }) {
         return end
+      }
+      let untilKeepAlive = nextKeepAlive.timeIntervalSinceNow
+      if untilKeepAlive <= 0 {
+        keepAlive()
+        nextKeepAlive = Date().addingTimeInterval(interval)
+        continue
       }
       var fds = [
         pollfd(fd: fd, events: Int16(POLLIN), revents: 0),
@@ -899,12 +1003,14 @@ nonisolated private final class SSEStream: @unchecked Sendable {
       ]
       // Without a wake pipe (none could be made), a finish is seen on the
       // next tick rather than never.
-      let ready = poll(&fds, 2, wake[0] >= 0 ? -1 : 100)
+      let keepAliveMs = Int32(min(Double(Int32.max), max(1, (untilKeepAlive * 1000).rounded(.up))))
+      let ready = poll(&fds, 2, wake[0] >= 0 ? keepAliveMs : min(keepAliveMs, 100))
       if ready < 0 {
         if errno == EINTR { continue }
         abandon()
         return .clientGone
       }
+      if ready == 0 { continue }
       if fds[1].revents != 0 {
         _ = chunk.withUnsafeMutableBufferPointer { read(wake[0], $0.baseAddress, 16) }
       }
