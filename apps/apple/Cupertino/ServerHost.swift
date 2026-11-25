@@ -978,6 +978,17 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // has just paid because a timer they have already satisfied went off would
     // be indefensible.
     let licensed = LicenseStore.isLicensed
+    // A node session admitted on the trial whose server has not started is in
+    // neither `trialPIDs` nor `trialClients`. It is closed as an in-process one
+    // is, and its client reconnects onto the refusal.
+    //
+    // Read BEFORE `trialPIDs`, and that order is the guarantee. `startServer`
+    // writes the other way round: the pid into `trialPIDs` first, the session
+    // out of `deferredSessions` second. So if this read finds the session gone,
+    // its pid was already in `trialPIDs`, and the snapshot below, taken later,
+    // has it. Reading `trialPIDs` first could miss both: the snapshot taken
+    // before the insert, this read after the removal.
+    let deferred = licensed ? [] : closeDeferred { _, entry in entry.onTrial }
     let pids = trialPIDs.withLock { live -> Set<Int32> in
       let taken = live
       live.removeAll()
@@ -994,10 +1005,6 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return live.values.map(\.surface)
     }
     guard !licensed else { return }
-    // A node session admitted on the trial whose server has not started is in
-    // neither map above. It is closed as an in-process one is, and its client
-    // reconnects onto the refusal.
-    let deferred = closeDeferred { _, entry in entry.onTrial }
     for pid in pids {
       hostLog("host", .info, "trial ended — stopping server (pid \(pid))")
       kill(pid, SIGTERM)
@@ -1595,9 +1602,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let pid = process.processIdentifier
     if onTrial { _ = trialPIDs.withLock { $0.insert(pid) } }
     // Deferred no longer, and out of that map before the pid is in
-    // `serverPIDs`. After `trialPIDs`, so a trial ending now finds the session
-    // in one of the two. A narrowing that lands while it is in neither is the
-    // re-check's below.
+    // `serverPIDs`. After the `trialPIDs` insert, because `endTrialSessions`
+    // reads the two the other way round, `deferredSessions` first: a trial
+    // ending now then finds the session in at least one of them. A narrowing
+    // that lands while it is in neither map is the re-check's below.
     _ = deferredSessions.withLock { $0.removeValue(forKey: session) }
     serverProcesses.withLock { $0[pid] = process }
     serverPIDs.withLock { $0[pid] = config }
