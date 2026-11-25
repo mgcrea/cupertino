@@ -34,8 +34,11 @@ final class MemoryTokenVault: TokenVault, @unchecked Sendable {
   }
   func write(_ client: String, _ token: String) throws { lock.withLock { items[client] = token } }
   func delete(_ client: String) throws { _ = lock.withLock { items.removeValue(forKey: client) } }
+  /// How many times `all()` was called.
+  var listings = 0
   func all() throws -> [String: String] {
     try lock.withLock {
+      listings += 1
       if allFailures > 0 {
         allFailures -= 1
         throw Refused()
@@ -43,6 +46,28 @@ final class MemoryTokenVault: TokenVault, @unchecked Sendable {
       return items
     }
   }
+}
+
+/// A clock the token checks move by hand.
+final class ManualClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var now: TimeInterval = 1000
+  var read: @Sendable () -> TimeInterval { { [self] in lock.withLock { now } } }
+  func advance(_ seconds: TimeInterval) { lock.withLock { now += seconds } }
+}
+
+/// The log lines after `mark`, once the main actor has appended what was posted.
+func logLines(after mark: String) -> [String] {
+  let end = "unit-check end \(UUID().uuidString)"
+  hostLog("unit-check", .info, end, mirror: false)
+  let deadline = Date().addingTimeInterval(2)
+  var lines: [String] = []
+  repeat {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    lines = MainActor.assumeIsolated { LogStore.shared.entries.map(\.text) }
+  } while !lines.contains(end) && Date() < deadline
+  guard let start = lines.lastIndex(of: mark) else { return [] }
+  return Array(lines[(start + 1)...].prefix { $0 != end })
 }
 
 @main
@@ -2276,11 +2301,40 @@ struct UnitCheck {
       let flaky = MemoryTokenVault()
       try flaky.write("codex", stored)
       flaky.allFailures = 1
-      let relaunched = HTTPTokens(vault: flaky)
+      let clock = ManualClock()
+      let relaunched = HTTPTokens(vault: flaky, now: clock.read)
       let refused = relaunched.client(for: stored)
+      let listings = flaky.listings
+      clock.advance(4.9)
+      let early = relaunched.client(for: stored)
       check(
-        "a listing that failed is tried again, so a relaunch still knows every token",
-        refused == nil && relaunched.client(for: stored) == "codex")
+        "after a failed listing, nothing asks the vault again within 5 s",
+        refused == nil && early == nil && flaky.listings == listings)
+      clock.advance(0.2)
+      check(
+        "a listing that failed is tried again past 5 s, so a relaunch still knows every token",
+        relaunched.client(for: stored) == "codex" && flaky.listings == listings + 1)
+
+      let eager = MemoryTokenVault()
+      try eager.write("cursor", stored)
+      let preloaded = HTTPTokens(vault: eager)
+      preloaded.preload()
+      let afterPreload = eager.listings
+      check(
+        "preload lists the vault once, so the first request does not",
+        afterPreload == 1 && preloaded.client(for: stored) == "cursor"
+          && eager.listings == afterPreload)
+
+      let failing = MemoryTokenVault()
+      failing.allFailures = 1
+      let mark = "unit-check tokens \(UUID().uuidString)"
+      hostLog("unit-check", .info, mark, mirror: false)
+      HTTPTokens(vault: failing, now: ManualClock().read).preload()
+      let logged = logLines(after: mark)
+      check(
+        "a failed listing logs one line, naming no token",
+        logged.filter { $0.contains("HTTP tokens") }.count == 1
+          && !logged.contains { $0.contains(stored) })
 
       let unreadable = MemoryTokenVault()
       try unreadable.write("cursor", stored)
@@ -2296,6 +2350,11 @@ struct UnitCheck {
       check(
         "each build keeps its own tokens",
         KeychainTokenVault.service == "\(BridgeProtocol.appIdentifier).http-token")
+      // `make unit` compiles without DEBUG, so this is the release build's name,
+      // spelled out: the one the spec gives and the one shipped configs rely on.
+      check(
+        "the release Keychain service is io.mgcrea.cupertino.http-token",
+        KeychainTokenVault.service == "io.mgcrea.cupertino.http-token")
     } catch {
       check("HTTPTokens threw: \(error)", false)
     }

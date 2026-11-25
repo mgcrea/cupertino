@@ -124,8 +124,8 @@ nonisolated struct KeychainTokenVault: TokenVault {
 /// The token is written into that client's config and names the client on
 /// every HTTP request: `client(for:)` is what `HTTPGate.verify` calls. It runs
 /// on every request, from many threads, so it never reaches the vault: the map
-/// is read from the vault once, on first use, and kept in step on every mint
-/// and revoke, under one lock.
+/// is read from the vault once, at the listener's start (`preload`) or on
+/// first use, and kept in step on every mint and revoke, under one lock.
 nonisolated final class HTTPTokens: @unchecked Sendable {
   static let shared = HTTPTokens(vault: KeychainTokenVault())
 
@@ -141,14 +141,32 @@ nonisolated final class HTTPTokens: @unchecked Sendable {
 
   private struct State {
     var loaded = false
+    /// When the last listing failed, on `now`'s clock. See `load`.
+    var failedAt: TimeInterval?
     /// Keyed by client id.
     var tokens: [String: String] = [:]
   }
 
   private let vault: TokenVault
+  private let now: @Sendable () -> TimeInterval
   private let state = OSAllocatedUnfairLock(initialState: State())
 
-  init(vault: TokenVault) { self.vault = vault }
+  /// How long a failed listing is left before the vault is asked again.
+  static let retryAfter: TimeInterval = 5
+
+  /// `now` is a monotonic clock in seconds, for the retry back-off; the checks
+  /// pass one they move by hand.
+  init(
+    vault: TokenVault,
+    now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+  ) {
+    self.vault = vault
+    self.now = now
+  }
+
+  /// Lists the vault now, so the first request does not pay for it. The
+  /// listener calls it as it starts, off the main thread.
+  func preload() { state.withLock { load(&$0) } }
 
   /// The client's token, minted and stored on its first call.
   ///
@@ -198,13 +216,38 @@ nonisolated final class HTTPTokens: @unchecked Sendable {
   }
 
   /// Reads the vault until a listing succeeds. A failed one leaves the map
-  /// unloaded, so the next call tries again rather than refusing every
-  /// token until the app is relaunched. Tokens minted or read meanwhile stay
-  /// in the map, and the listing is merged under them.
+  /// unloaded, so a later call tries again rather than refusing every token
+  /// until the app is relaunched, but not within `retryAfter` of the failure:
+  /// every request runs this under the lock, and a Keychain that keeps
+  /// refusing must not be asked once per request. Requests in that window see
+  /// the map as it is. Tokens minted or read meanwhile stay in the map, and
+  /// the listing is merged under them.
+  ///
+  /// A failure is logged once per attempt, by its status alone: the error's
+  /// text is the Keychain's, and nothing here may put a token in the log.
   private func load(_ state: inout State) {
-    guard !state.loaded, let listed = try? vault.all() else { return }
-    state.tokens.merge(listed) { cached, _ in cached }
-    state.loaded = true
+    guard !state.loaded else { return }
+    let at = now()
+    if let failed = state.failedAt, at - failed < Self.retryAfter { return }
+    do {
+      let listed = try vault.all()
+      state.tokens.merge(listed) { cached, _ in cached }
+      state.loaded = true
+      state.failedAt = nil
+    } catch {
+      state.failedAt = at
+      hostLog(
+        "cupertino", .error,
+        "HTTP tokens: the Keychain listing failed (\(Self.status(of: error))); "
+          + "trying again in \(Int(Self.retryAfter)) s at the earliest")
+    }
+  }
+
+  /// A failure as its status: the OSStatus of a Keychain error, the type's
+  /// name for anything else.
+  private static func status(of error: Error) -> String {
+    if case KeychainTokenVault.VaultError.keychain(let status) = error { return "status \(status)" }
+    return String(describing: type(of: error))
   }
 
   /// 32 bytes from the system's CSPRNG, as 64 lowercase hex characters. A
