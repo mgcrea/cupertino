@@ -738,8 +738,9 @@ enum ClientWiring {
   /// Only for a client whose entries are HTTP; one still on the bridge has no
   /// token, and pressing this must not switch it. Claude Code's folder blocks
   /// carry the same token, so each one holding an HTTP entry of ours is
-  /// rewritten after it, as its card's Update would; a folder left with the
-  /// old token would stop working with nothing to say so but a stale card.
+  /// rewritten too, as its card's Update would; a folder left with the old
+  /// token would stop working with nothing to say so but a stale card. In the
+  /// same write as the user scope, so the one backup is the file as it was.
   ///
   /// The refusals all come before the revoke, so a refused Reset changes
   /// nothing. A write that fails after it leaves the client signed out with
@@ -755,23 +756,30 @@ enum ClientWiring {
       throw WriteError.collision(client: client.displayName, keys: taken)
     }
     try tokens.revoke(client.id)
-    let outcome = try write(client, over: .http)
+    let outcome: ClientWiringMerge.WriteOutcome
+    if hasLocalScope(client), case .json(let path, let rootKey) = client.wiring {
+      let wanted = try entries(for: client, over: .http)
+      outcome = try mergeWrite(into: path, newFileMode: 0o600) { root in
+        var root = ClientWiringMerge.merged(
+          into: root, rootKey: rootKey, entries: wanted, legacy: legacyKeys,
+          remove: disabledKeys)
+        // From the root being merged, so the retry after a concurrent write
+        // finds the folders as they are then.
+        let projects = root["projects"] as? [String: Any] ?? [:]
+        for folder in projects.keys.sorted() where ClientWiringMerge.holdsToken(projects[folder]) {
+          root = ClientWiringMerge.mergedIntoLocalScope(
+            into: root, folder: folder, entries: wanted, legacy: legacyKeys,
+            remove: disabledKeys)
+        }
+        return root
+      }
+    } else {
+      outcome = try write(client, over: .http)
+    }
     hostLog(
       "cupertino", .info,
       "reset \(client.displayName)'s HTTP token at \(client.wiring.path.path)")
-    if hasLocalScope(client) {
-      for folder in foldersHoldingToken() { try configureLocal(folder) }
-    }
     return outcome
-  }
-
-  /// The Claude Code folders whose block holds an HTTP entry of ours.
-  private static func foldersHoldingToken() -> [URL] {
-    guard let root = try? ClientWiringMerge.readJSON(claudeCodeConfig),
-      let projects = root["projects"] as? [String: Any]
-    else { return [] }
-    return projects.filter { ClientWiringMerge.holdsToken($0.value) }.keys.sorted()
-      .map { URL(fileURLWithPath: $0) }
   }
 
   /// Every surface switched on, over `transport`, with the legacy and

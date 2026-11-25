@@ -469,6 +469,15 @@ extension WiringCheck {
       "Claude Code's folder carries the new token",
       token("claude-code") != shared && allHTTP(local, token: token("claude-code"))
         && allHTTP(servers(of: claude), token: token("claude-code")))
+    let backup = URL(fileURLWithPath: ClientWiring.claudeCodeConfig.path + ".cupertino-backup")
+    let before = (try? ClientWiringMerge.readJSON(backup)) ?? [:]
+    check(
+      "in one write, so the backup is the file from before the reset",
+      allHTTP(before["mcpServers"] as? [String: Any] ?? [:], token: shared)
+        && allHTTP(
+          ClientWiringMerge.localScopeServers(in: before, folder: folder.path) ?? [:],
+          token: shared)
+    )
 
     // Only a client whose entries are HTTP: one still on the bridge has no
     // token to reset, and pressing it must not switch it.
