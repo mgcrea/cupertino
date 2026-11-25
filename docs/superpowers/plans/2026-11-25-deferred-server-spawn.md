@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Answerable without a process: `initialize`, `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`; `ping` is answered with `{}` and never spawns, and is not replayed.
+- Answerable without a process: `initialize`, `server/discover`, `tools/list`, `prompts/list`, `resources/list`, `resources/templates/list`, `ping`. `ping` is learned and keyed like the lists, never composed by the host: node answers it in the 2025 era and refuses it (`-32601`) in the 2026-07-28 era, and an error is never recorded, so a modern-era ping spawns. It is replayed like any other line.
 - Errors are never recorded. Over-keying is safe; under-keying is the only way to be wrong, so keys take whole dicts.
 - Volatile `_meta` fields dropped from the key start as `["progressToken"]` and grow only from Checkpoint A's findings.
 - Cache off when `ServerBinaries.isDevelopment`, unless the default `deferSpawnInDevelopment` is true. A kill switch default `deferServerSpawn` (absent means on) turns the whole deferral off.
@@ -168,7 +168,7 @@ check("kill switch", !HandshakeCache.isOn(ServerBinaries(node: URL(fileURLWithPa
   - `nonisolated struct ReplyFilter { enum Verdict: Equatable { case pass, drop, mismatch(String) }; mutating func client(_ frame: McpFrame); mutating func server(_ line: Data) -> Verdict; var isRetired: Bool }`
 
 Rules `DeferredSession.client` follows:
-- `ping` → `.answer` of `{"jsonrpc":"2.0","id":<id>,"result":{}}\n`, not added to the transcript.
+- `ping` follows the answerable-request rules below: a hit is answered with node's recorded bytes, a miss spawns.
 - Notification → transcript, `.hold`.
 - Answerable request that hits the cache (cache not disabled for the surface) → transcript, remember `(id, key, drop: true)`, `.answer(frame + "\n")`.
 - Anything else → transcript, `trigger` set, `.spawn`. A trigger that is an answerable miss is remembered as `(id, key, drop: false)` so its live answer is recorded.
@@ -182,7 +182,7 @@ Rules `DeferredSession.client` follows:
 - [ ] **Step 1: Write the failing tests** (`// ─── DeferredSession ───`). Use the `base` from Task 2, a fresh `HandshakeCache()`, and lines `I` = `initialize` id 1 with `clientInfo {name:"cc"}`, `N` = `notifications/initialized`, `L` = `tools/list` id 2 with `_meta.progressToken` 1, `T` = `tools/call` id 3:
   - `cold session spawns on initialize`: first `client(I)` is `.spawn`, `replay() == I + "\n"`.
   - `warm session answers without a process`: pre-record `I` and `L` answers (node-style frames) via `SessionKeys`-built keys. Then `client(I)` is `.answer` with id `1`, `client(N)` is `.hold`, `client(L)` with `progressToken` 9 is `.answer` with id `2`, `client(T)` is `.spawn`, and `replay() == [I, N, L(token 9), T]` joined.
-  - `ping is answered and not replayed`: ping id 9 gives `.answer(#"{"jsonrpc":"2.0","id":9,"result":{}}"# + "\n")`, and the ping is absent from `replay()`.
+  - `ping is learned, not composed`: on a cache with no ping answer, ping id 9 gives `.spawn` and is in `replay()`; node's answer is recorded, and a later session's ping is answered with node's bytes under its own id. A ping refused with `-32601` is passed and not recorded, so the next session's ping spawns too.
   - `different clientInfo misses`: an `initialize` with `name:"codex"` gives `.spawn` against the warm cache.
   - `pipelined chunk`: feed `I`, `N`, `L` through a `LineBuffer` from one `Data` and drive `client` per line. The answers come back in order 1, 2.
   - `filter drops what the host served`: after the warm spawn, `server(<I answer, id 1>) == .drop`.

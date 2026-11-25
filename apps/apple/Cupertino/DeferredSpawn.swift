@@ -6,10 +6,14 @@ import Foundation
 /// See docs/superpowers/specs/2026-11-25-deferred-server-spawn-design.md.
 nonisolated enum DeferredSpawn {
   /// Requests the host can answer from a recorded reply, without a process.
-  /// `ping` is not one of them: it is answered with `{}` and never recorded.
+  ///
+  /// `ping` is one of them, learned like the lists rather than answered by
+  /// the host: node answers it in one protocol era and refuses it in the
+  /// other, and an error is never recorded, so a ping a server would refuse
+  /// starts one, as it would have reached one before.
   static let answerable: Set<String> = [
     "initialize", "server/discover", "tools/list", "prompts/list", "resources/list",
-    "resources/templates/list",
+    "resources/templates/list", "ping",
   ]
 
   /// The requests whose params say who the client is and what it can do.
@@ -45,11 +49,8 @@ nonisolated struct ConnectTraffic {
       methods.append(frame.method ?? "?")
       return nil
     case .request:
+      // `ping` is answerable, so it is part of the connect phase too.
       let method = frame.method ?? "?"
-      if method == "ping" {
-        methods.append(method)
-        return nil
-      }
       guard DeferredSpawn.answerable.contains(method) else { break }
       methods.append(method)
       let params = frame.params as? [String: Any]
@@ -133,9 +134,9 @@ private nonisolated struct Remembered {
 ///
 /// Fed every client line until `client` says `.spawn`; past that it keeps
 /// saying `.spawn` and records nothing, since what follows is the relay's. The
-/// transcript is every line but pings, in the order they came, the trigger
-/// included, so the server that starts sees the session as if it had been
-/// there from the first byte.
+/// transcript is every line, in the order they came, the trigger included, so
+/// the server that starts sees the session as if it had been there from the
+/// first byte.
 ///
 /// An id is remembered once: a client reusing one the host is still waiting
 /// on gets no answer from the cache for it, but starts the server, so the
@@ -167,10 +168,6 @@ nonisolated struct DeferredSession {
   mutating func client(_ line: Data) -> Step {
     guard trigger == nil else { return .spawn }
     let frame = McpFrame.parse(line)
-    if frame.kind == .request, frame.method == "ping", let id = frame.id {
-      return .answer(
-        Data(#"{"jsonrpc":"2.0","id":"#.utf8) + id + Data(#","result":{}}"#.utf8) + Self.newline)
-    }
     transcript.append(line)
     if frame.kind == .notification { return .hold }
     let key = keys.key(for: frame)
@@ -240,11 +237,12 @@ nonisolated struct ReplyFilter {
 
   /// Called with every client frame after the spawn, before it is forwarded.
   ///
-  /// A `ping` is neutral, as it is everywhere else: it neither ends the
-  /// connect phase nor is recorded. An id still remembered keeps its first
-  /// entry, so a reused one never turns a host-served answer into a live one.
+  /// A `ping` does not end the connect phase: it is answerable, so it is
+  /// remembered and its answer recorded like a list's. An id still remembered
+  /// keeps its first entry, so a reused one never turns a host-served answer
+  /// into a live one.
   mutating func client(_ frame: McpFrame) {
-    guard connectPhase, frame.kind == .request, frame.method != "ping" else { return }
+    guard connectPhase, frame.kind == .request else { return }
     guard let key = keys.key(for: frame), let id = frame.id else {
       connectPhase = false
       return

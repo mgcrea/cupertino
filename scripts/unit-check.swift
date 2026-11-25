@@ -1745,13 +1745,42 @@ struct UnitCheck {
           == [initLine, notified, listLine(token: 9), callLine].map { $0 + nl }.reduce(Data(), +))
       check("the trigger is the call", warm.trigger?.method == "tools/call")
 
-      var ping = DeferredSession(base: base, cache: HandshakeCache())
+      // A ping is learned like a list, never composed: node answers it with
+      // its own bytes in the legacy era and refuses it in the 2026-07-28 one,
+      // and the host must do whichever a fresh server would.
+      let pingLine = Data(#"{"jsonrpc":"2.0","id":9,"method":"ping"}"#.utf8)
+      let pingAnswer = Data(#"{"result":{},"jsonrpc":"2.0","id":9}"#.utf8)
+      let pings = warmCache()
+      var pinging = DeferredSession(base: base, cache: pings)
+      _ = pinging.client(initLine)
+      check("a ping the cache has not heard starts the server", pinging.client(pingLine) == .spawn)
+      check("and is replayed", pinging.replay() == initLine + nl + pingLine + nl)
+      var pingFilter = pinging.filter()
+      _ = pingFilter.server(iAnswer)
+      check("the server's answer to it reaches the client", pingFilter.server(pingAnswer) == .pass)
+      var pingedLater = DeferredSession(base: base, cache: pings)
+      _ = pingedLater.client(initLine)
       check(
-        "ping is answered with an empty result",
-        ping.client(Data(#"{"jsonrpc":"2.0","id":9,"method":"ping"}"#.utf8))
-          == .answer(Data(#"{"jsonrpc":"2.0","id":9,"result":{}}"#.utf8) + nl))
-      _ = ping.client(initLine)
-      check("ping is not replayed", ping.replay() == initLine + nl)
+        "a later session's ping is answered with node's own bytes",
+        pingedLater.client(Data(#"{"jsonrpc":"2.0","id":"p","method":"ping"}"#.utf8))
+          == .answer(Data(#"{"result":{},"jsonrpc":"2.0","id":"p"}"#.utf8) + nl))
+      let refusing = warmCache()
+      var modernPing = DeferredSession(base: base, cache: refusing)
+      _ = modernPing.client(initLine)
+      _ = modernPing.client(pingLine)
+      var modernFilter = modernPing.filter()
+      _ = modernFilter.server(iAnswer)
+      check(
+        "a ping refused as unknown reaches the client",
+        modernFilter.server(
+          Data(
+            #"{"jsonrpc":"2.0","id":9,"error":{"code":-32601,"message":"Method not found"}}"#.utf8))
+          == .pass)
+      var pingAgain = DeferredSession(base: base, cache: refusing)
+      _ = pingAgain.client(initLine)
+      check(
+        "and is not recorded, so the next session's ping starts a server too",
+        pingAgain.client(pingLine) == .spawn)
 
       var codex = DeferredSession(base: base, cache: warmCache())
       check(

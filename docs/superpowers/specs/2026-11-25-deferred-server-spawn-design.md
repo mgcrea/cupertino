@@ -101,7 +101,11 @@ against anti-goal 3).
   client's `id` (number or string, verbatim) and leaves every other byte alone. Errors are never
   recorded.
 - **Whitelist**: `initialize`, `server/discover`, `tools/list`, `prompts/list`, `resources/list`,
-  `resources/templates/list`. `ping` is answered by the host with `{}` and never spawns.
+  `resources/templates/list`, `ping`. `ping` is learned and keyed like the lists, never composed:
+  in the 2025 era node answers it with its own bytes (`{"result":{},"jsonrpc":"2.0","id":…}`),
+  which the host then serves; in the 2026-07-28 era node refuses it with `-32601`, an error is
+  never recorded, so a modern-era ping starts the server, as it reached one before. A ping is
+  part of the transcript and is replayed like any other line.
 - Bounded by bytes, not entries: a full listing is up to ~25 KB (Mail, writes on; ~106 KB across
   eight surfaces, per `facade.ts`), so a cap of a few MB with LRU eviction. Never invalidated
   otherwise.

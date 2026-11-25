@@ -18,7 +18,8 @@
 // what the key leaves out:
 //
 // - the request ids: small numbers, strings, large numbers;
-// - the order of the list calls, with `tools/list` sent twice in some;
+// - the order of the list calls and `ping`, with `tools/list` sent twice in
+//   some;
 // - the `_meta.progressToken` values;
 // - the order of keys inside every params object.
 //
@@ -62,6 +63,9 @@ const ENVELOPE = {
 };
 
 const LISTS = ["tools/list", "prompts/list", "resources/list", "resources/templates/list"];
+// `ping` is answerable too: the host learns its answer like a list's, so it
+// rides in every variant, at a different place in each.
+const REQUESTS = [...LISTS, "ping"];
 
 // Reverse the key order of every object, recursively. The key sorts its
 // params, so a server must not answer differently to the same params written
@@ -82,7 +86,7 @@ const VARIANTS = [
   {
     name: "numeric ids",
     id: (n) => n,
-    order: LISTS,
+    order: REQUESTS,
     discoverAt: 0,
     token: 1,
     keys: (v) => v,
@@ -93,6 +97,7 @@ const VARIANTS = [
     order: [
       "resources/templates/list",
       "tools/list",
+      "ping",
       "resources/list",
       "prompts/list",
       "tools/list",
@@ -104,7 +109,7 @@ const VARIANTS = [
   {
     name: "large ids, reversed, tools/list twice",
     id: (n) => 9_000_000 + n * 7,
-    order: ["tools/list", ...LISTS.toReversed()],
+    order: ["tools/list", ...REQUESTS.toReversed()],
     discoverAt: 5,
     token: "progress-c-0123456789",
     keys: reverseKeys,
@@ -142,11 +147,17 @@ const stepsFor = (variant, era) => {
 
 class CheckFailure extends Error {}
 
-// The one error answer expected: voice-memos registers no prompts, so it does
-// not advertise the prompts capability and `prompts/list` there is an
-// unadvertised method. Every other error answer fails the check.
-const isExpectedError = (surface, method, error) =>
-  surface === "voice-memos" && method === "prompts/list" && error?.code === -32601;
+// The two error answers expected, both "method not found":
+// - voice-memos registers no prompts, so it does not advertise the prompts
+//   capability and `prompts/list` there is an unadvertised method;
+// - the 2026-07-28 era has no `ping`, so a modern-era ping is refused on
+//   every surface. The cache never records an error, so such a ping starts a
+//   server, as it reached one before the cache existed.
+// Every other error answer fails the check.
+const isExpectedError = (surface, era, method, error) =>
+  error?.code === -32601 &&
+  ((surface === "voice-memos" && method === "prompts/list") ||
+    (era === "modern" && method === "ping"));
 
 const label = (surface, writes, era, method) =>
   `${surface} ${writes ? "writes-on" : "writes-off"} ${era}${method ? ` ${method}` : ""}`;
@@ -233,7 +244,7 @@ const runVariant = async (surface, script, env, writes, era, variant) => {
       // An error answer passes only where it is expected, so a server that
       // refuses the envelope, fails to start its tools, or loses a method
       // cannot pass by answering every variant with the same error.
-      if ("error" in msg && !isExpectedError(surface, step.method, msg.error)) {
+      if ("error" in msg && !isExpectedError(surface, era, step.method, msg.error)) {
         throw fail(step.method, `unexpected error answer:\n  ${line.slice(0, 300)}`);
       }
       if (line.endsWith(suffix)) {
