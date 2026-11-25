@@ -765,13 +765,10 @@ nonisolated enum ClientWiringMerge {
 
     // Write beside the target, then swap: a config half-written because the
     // machine slept is worse than one not written at all.
-    let temp = url.deletingLastPathComponent()
-      .appendingPathComponent(".cupertino-\(UUID().uuidString).tmp")
-    try data.write(to: temp, options: .atomic)
+    let temp = try temporaryFile(holding: data, beside: url, holdsToken: holdsToken)
     do {
-      // Before the swap as well as after it: the temp is the file the token
-      // first lands in, and `replaceItemAt` may carry the original's mode over.
-      if holdsToken { try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temp.path) }
+      // The temp is 0600 from creation; the target is set again after the
+      // swap, since `replaceItemAt` may carry the original's mode over.
       _ = try fm.replaceItemAt(url, withItemAt: temp)
     } catch {
       // `replaceItemAt` consumes the temp on success only. A failure here would
@@ -785,6 +782,47 @@ nonisolated enum ClientWiringMerge {
       try? fm.setAttributes([.posixPermissions: newFileMode], ofItemAtPath: url.path)
     }
     return backup
+  }
+
+  /// The file a write is staged in, beside its target so the swap is a rename.
+  ///
+  /// For a token, created 0600 by `open` itself rather than written and then
+  /// chmodded: `Data.write` makes a file at the umask's mode (0644), and the
+  /// token would sit in it, world-readable, until the chmod ran.
+  static func temporaryFile(holding data: Data, beside url: URL, holdsToken: Bool) throws -> URL {
+    let temp = url.deletingLastPathComponent()
+      .appendingPathComponent(".cupertino-\(UUID().uuidString).tmp")
+    guard holdsToken else {
+      try data.write(to: temp, options: .atomic)
+      return temp
+    }
+    let fd = open(temp.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o600)
+    guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+    func fail(_ code: Int32) -> Error {
+      close(fd)
+      unlink(temp.path)
+      return POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
+    }
+    // A umask can only take bits away, and one that took the owner's would
+    // leave a file nobody can read back: set exactly 0600.
+    guard fchmod(fd, 0o600) == 0 else { throw fail(errno) }
+    let bytes = [UInt8](data)
+    var offset = 0
+    while offset < bytes.count {
+      let written = bytes.withUnsafeBufferPointer {
+        Darwin.write(fd, $0.baseAddress! + offset, bytes.count - offset)
+      }
+      if written < 0 {
+        if errno == EINTR { continue }
+        throw fail(errno)
+      }
+      offset += written
+    }
+    guard close(fd) == 0 else {
+      unlink(temp.path)
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    return temp
   }
 
   /// The servers a Claude Code **local**-scope entry holds for one folder.

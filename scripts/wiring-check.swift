@@ -100,6 +100,7 @@ struct WiringCheck {
     allowlistScopesMerge()
     allowlistOffersTheRuleThatFits()
     allowlistRecognisesBastion()
+    allowlistJudgesHTTPEntriesByURL()
     unrelatedKeysSurvive()
     rootKeyIsReal()
     legacyMigratesOnlyWhenOurs()
@@ -2387,5 +2388,87 @@ struct WiringCheck {
     check(
       "Bastion writes the user file only",
       !bastion([:], managed: ["allowedMcpServers": [["serverUrl": "http://127.0.0.1:8720/s/*"]]]))
+  }
+
+  /// An HTTP entry as Cupertino writes it into `~/.claude.json`.
+  static let mailOverHTTP: [String: Any] = [
+    "type": "http", "url": "http://127.0.0.1:8830/s/mail",
+    "headers": ["Authorization": "Bearer t"],
+  ]
+
+  /// Claude Code's remote-server rule mirrors its stdio one: once the merged
+  /// allowlist holds a `serverUrl`, a URL server must match one, and its name
+  /// no longer admits it. A `serverUrl` in a denylist blocks it.
+  static func allowlistJudgesHTTPEntriesByURL() {
+    print("\nClaude Code's allowlist: HTTP entries")
+    func judge(_ user: [String: Any], managed: [String: Any] = [:]) -> ClientAllowlist.Verdict {
+      verdict(user, managed: managed, key: "cupertino-mail", entry: mailOverHTTP)
+    }
+    let bastions: [String: Any] = [
+      "allowedMcpServers": [["serverUrl": "http://127.0.0.1:8720/s/*"], desktopRule]
+    ]
+    check("no list: allowed", judge([:]) == .allowed)
+    check("Bastion's list without our URL: not allowed", judge(bastions) == .notAllowed)
+    check(
+      "an exact serverUrl: allowed",
+      judge(["allowedMcpServers": [["serverUrl": "http://127.0.0.1:8830/s/mail"]]]) == .allowed)
+    check(
+      "a wildcard that covers it: allowed",
+      judge(["allowedMcpServers": [["serverUrl": "http://127.0.0.1:8830/s/*"]]]) == .allowed)
+    check(
+      "a wildcard is a glob, not a prefix of the port",
+      judge(["allowedMcpServers": [["serverUrl": "http://127.0.0.1:88*/x/*"]]]) == .notAllowed)
+    check(
+      "a URL list stops the name admitting it",
+      judge([
+        "allowedMcpServers": [
+          ["serverUrl": "http://127.0.0.1:8720/s/*"], ["serverName": "cupertino-mail"],
+        ]
+      ]) == .notAllowed)
+    check(
+      "a names-only list admits it by name",
+      judge(["allowedMcpServers": [["serverName": "cupertino-mail"]]]) == .allowed)
+    check(
+      "a names-only list without it does not",
+      judge(["allowedMcpServers": [["serverName": "linear"]]]) == .notAllowed)
+    check(
+      "a commands-only list matches it by name",
+      judge(["allowedMcpServers": [desktopRule, ["serverName": "cupertino-mail"]]]) == .allowed
+        && judge(["allowedMcpServers": [desktopRule]]) == .notAllowed)
+    check(
+      "a serverUrl in the denylist: denied",
+      judge(["deniedMcpServers": [["serverUrl": "http://127.0.0.1:8830/s/*"]]])
+        == .denied(inManaged: false))
+    check(
+      "in the managed denylist: denied by managed settings",
+      judge([:], managed: ["deniedMcpServers": [["serverUrl": "http://127.0.0.1:8830/s/mail"]]])
+        == .denied(inManaged: true))
+    check(
+      "a serverName in the denylist: denied",
+      judge(["deniedMcpServers": [["serverName": "cupertino-mail"]]]) == .denied(inManaged: false))
+    check(
+      "and the deny wins over an exact allow",
+      judge([
+        "allowedMcpServers": [["serverUrl": "http://127.0.0.1:8830/s/mail"]],
+        "deniedMcpServers": [["serverUrl": "http://127.0.0.1:*"]],
+      ]) == .denied(inManaged: false))
+
+    func rule(_ user: [String: Any]) -> [String: Any]? {
+      ClientAllowlist.rule(
+        key: "cupertino-mail", entry: mailOverHTTP,
+        policy: ClientAllowlist.policy(user: user, managed: [:]))
+    }
+    let offered = rule(bastions)
+    check(
+      "under a URL list it offers the exact URL",
+      deepEqual(offered, ["serverUrl": "http://127.0.0.1:8830/s/mail"]))
+    check(
+      "which is not read as Bastion's wildcard",
+      !ClientAllowlist.policy(user: ["allowedMcpServers": [offered ?? [:]]], managed: [:])
+        .isBastions)
+    check(
+      "under a names list it offers the name",
+      deepEqual(
+        rule(["allowedMcpServers": [["serverName": "x"]]]), ["serverName": "cupertino-mail"]))
   }
 }

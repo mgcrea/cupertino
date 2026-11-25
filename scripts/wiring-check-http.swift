@@ -142,6 +142,7 @@ extension WiringCheck {
     localScopeIsHTTP()
     autoRewireNeverSwitches()
     isOursClaimsOnlyOurs()
+    aTokenIsNeverWorldReadable()
   }
 
   // MARK: - HTTP wiring
@@ -558,5 +559,46 @@ extension WiringCheck {
     check(
       "Remove Cupertino's entries takes ours and leaves Bastion's",
       left["cupertino-mail"] == nil && deepEqual(left["prod-stripe"], bastion))
+  }
+
+  // MARK: - A token file is 0600 from the moment it exists
+
+  /// The temp a write is staged in is the first file a token lands in, before
+  /// any chmod could run, so it has to be created 0600. Checked with the umask
+  /// cleared, which is what would let a file made any other way come out
+  /// world-readable; both the JSON and the TOML path stage through this.
+  static func aTokenIsNeverWorldReadable() {
+    print("\na token file is 0600 from creation")
+    reset()
+    let target = scratchHome.appendingPathComponent("mcp.json")
+    let previous = umask(0)
+    defer { umask(previous) }
+    let temp = try? ClientWiringMerge.temporaryFile(
+      holding: Data("token".utf8), beside: target, holdsToken: true)
+    check("the staged temp of a token write is created 0600", temp.flatMap(mode) == 0o600)
+    check(
+      "and holds the bytes",
+      temp.flatMap { try? Data(contentsOf: $0) } == Data("token".utf8))
+    if let temp { try? FileManager.default.removeItem(at: temp) }
+
+    _ = try? ClientWiringMerge.write(
+      [
+        "mcpServers": [
+          "cupertino-mail": ClientWiring.httpEntry(
+            for: Surface.named("mail")!, token: "t", port: 8830)
+        ]
+      ],
+      to: target, backupSuffix: "cupertino-backup")
+    check("a token config written under an open umask is 0600", mode(target) == 0o600)
+    let codex = scratchHome.appendingPathComponent("config.toml")
+    let text = ClientWiringTOML.spliced(
+      ClientWiringTOML.empty, removing: [],
+      upserting: [
+        "cupertino-mail": ClientWiring.codexHTTPEntry(
+          for: Surface.named("mail")!, token: "t", port: 8830)
+      ])
+    _ = try? ClientWiringMerge.write(
+      Data(text.utf8), to: codex, backupSuffix: "cupertino-backup", holdsToken: true)
+    check("and so is a TOML one", mode(codex) == 0o600)
   }
 }

@@ -169,7 +169,8 @@ struct ClientDetail: View {
     // as configured can be missing from every session. Only entries that are
     // already right: a `taken` key is somebody else's server, and a rule built
     // from a `points elsewhere` entry would stop matching the moment Update
-    // rewrites it. Judged as written, since the list matches command and args.
+    // rewrites it. Judged as written, since the list matches a stdio entry's
+    // command and args, and an HTTP entry's URL.
     var policy: ClientAllowlist.Policy?
     if client.id == ClientWiring.claudeCodeID {
       let read = ClientAllowlist.read()
@@ -485,15 +486,21 @@ struct ClientDetail: View {
           )
           .font(.caption).foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
-        } else if snapshot.allowlistIsBastions {
-          Text(
-            "The list is Bastion's (Only Bastion, on its Claude Code pane). Bastion adds "
-              + "\(notAllowed.count == 1 ? "it" : "them") when it next brings the list current; "
-              + "Update on that pane does it now."
-          )
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
         } else {
+          // Bastion adds an exact rule for every server in `.claude.json` it did
+          // not write, a URL as much as a command (its `ClientLockdown.plan`;
+          // its own entries are the three-segment `/s/<profile>/<server>`, so
+          // Cupertino's `/s/<surface>` is not one). The snippet stays beside
+          // that, for a Bastion that has not caught up or is not running.
+          if snapshot.allowlistIsBastions {
+            Text(
+              "The list is Bastion's (Only Bastion, on its Claude Code pane). Bastion adds "
+                + "\(notAllowed.count == 1 ? "it" : "them") when it next brings the list current; "
+                + "Update on that pane does it now."
+            )
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+          }
           let snippet = ClientAllowlist.snippet(notAllowed.compactMap(\.rule))
           Text(
             "Add \(notAllowed.count == 1 ? "this entry" : "these entries") to allowedMcpServers in \(settings):"
