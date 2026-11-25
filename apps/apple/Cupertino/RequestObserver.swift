@@ -90,12 +90,16 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   /// logged; nil after, so a session past its connect phase parses nothing
   /// more for it. Locked because `closed()` is called from the thread that
   /// waited on the pumps, not from the one that feeds `note`.
-  private let connect = OSAllocatedUnfairLock<ConnectTraffic?>(initialState: ConnectTraffic())
+  ///
+  /// Nil from the start unless `tracesConnect`: only a node-hosted session has
+  /// a spawn to defer, and only `run` calls `closed()`.
+  private let connect: OSAllocatedUnfairLock<ConnectTraffic?>
 
-  init(surface: Surface, session: UUID, wiredClient: String? = nil) {
+  init(surface: Surface, session: UUID, wiredClient: String? = nil, tracesConnect: Bool = false) {
     self.surface = surface
     self.session = session
     self.wiredClient = wiredClient
+    self.connect = OSAllocatedUnfairLock(initialState: tracesConnect ? ConnectTraffic() : nil)
     self.mode = SurfaceSettings.captureMode(surface)
     self.content = SurfaceSettings.capturesContent(surface)
   }

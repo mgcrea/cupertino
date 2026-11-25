@@ -1383,7 +1383,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
         + (binaries.isDevelopment ? " — development build" : ""))
 
     let group = DispatchGroup()
-    let observer = RequestObserver(surface: surface, session: session, wiredClient: wiredClient)
+    let observer = RequestObserver(
+      surface: surface, session: session, wiredClient: wiredClient, tracesConnect: true)
 
     // Client -> server. Also the only place that sees requests, so it is where
     // tool calls are picked out for the log. On EOF, close the child's stdin so
