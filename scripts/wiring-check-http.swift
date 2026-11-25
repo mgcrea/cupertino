@@ -145,6 +145,122 @@ extension WiringCheck {
     isOursClaimsOnlyOurs()
     aTokenIsNeverWorldReadable()
     notServingIsNotGreen()
+    launchAtLoginOnlyOnASwitch()
+    aRowFlippedToTheBridge()
+    codexSwitchesFromTheBridge()
+  }
+
+  /// The same row with another transport, as a change to the table would leave it.
+  static func flipped(_ row: ClientWiring.Client, to transport: ClientWiringMerge.Transport)
+    -> ClientWiring.Client
+  {
+    ClientWiring.Client(
+      id: row.id, displayName: row.displayName, symbol: row.symbol, bundleID: row.bundleID,
+      evidence: row.evidence, wiring: row.wiring, transport: transport)
+  }
+
+  /// Launch at login is asked for when a write moves a scope onto HTTP, never
+  /// again by an Update of one already there: somebody who turned it off in
+  /// General must not have it turned back on by every Update.
+  static func launchAtLoginOnlyOnASwitch() {
+    print("\nlaunch at login only when the transport changes")
+    reset()
+    let cursor = client("cursor")
+    _ = try? ClientWiring.configure(cursor)
+    check("a first HTTP wire asks for launch at login", LoginItem.requests == [true])
+    LoginItem.isEnabled = false
+    LoginItem.requests = []
+    _ = try? ClientWiring.configure(cursor)
+    check(
+      "an Update of a client already on HTTP does not ask again",
+      LoginItem.requests.isEmpty && allHTTP(servers(of: cursor), token: token("cursor")))
+
+    reset()
+    place(bridgeConfig(), at: cursor.wiring.path)
+    _ = try? ClientWiring.switchToHTTP(cursor)
+    check("Switch to HTTP from the bridge asks for it", LoginItem.requests == [true])
+
+    reset()
+    let folder = scratchHome.appendingPathComponent("Projects/app")
+    _ = try? ClientWiring.configureLocal(folder)
+    check("a folder's first HTTP wire asks for it", LoginItem.requests == [true])
+    LoginItem.isEnabled = false
+    LoginItem.requests = []
+    _ = try? ClientWiring.configureLocal(folder)
+    check("and its Update, already on HTTP, does not", LoginItem.requests.isEmpty)
+  }
+
+  /// A row moved from `.http` to `.bridge` in the table: nothing automatic
+  /// switches a client the person switched, nor signs it out. Update is what
+  /// rewrites it with the bridge, and revokes the token once nothing holds it.
+  static func aRowFlippedToTheBridge() {
+    print("\na row flipped to the bridge")
+    reset()
+    let cursor = client("cursor")
+    _ = try? ClientWiring.switchToHTTP(cursor)
+    let old = token("cursor")
+    let bridgeRow = flipped(cursor, to: .bridge)
+    var ended: [String] = []
+    ClientWiring.endSessions = { ended.append($0) }
+    defer { ClientWiring.endSessions = { _ in } }
+
+    ClientWiring.rewire(bridgeRow, because: "a check")
+    check(
+      "the automatic rewire leaves its HTTP entries as they are",
+      allHTTP(servers(of: cursor), token: old))
+    check(
+      "and its token live, with no session ended",
+      ClientWiring.tokens.client(for: old) == "cursor" && ended.isEmpty)
+    let status = ClientWiring.status(of: bridgeRow)
+    check(
+      "the pane reads them stale, with Update to rewrite them",
+      {
+        if case .stale = status { return true }
+        return false
+      }() && status.summary.contains("HTTP"))
+
+    _ = try? ClientWiring.configure(bridgeRow)
+    check("Update rewrites them with the bridge", allBridge(servers(of: cursor)))
+    check(
+      "and revokes the token now nothing holds it, ending its sessions",
+      ClientWiring.tokens.client(for: old) == nil && ended == ["cursor"])
+    check("and it reads configured", ClientWiring.status(of: bridgeRow) == .configured)
+
+    // Unwire of the flipped row signs it out too.
+    reset()
+    _ = try? ClientWiring.switchToHTTP(cursor)
+    let again = token("cursor")
+    _ = try? ClientWiring.unwire(bridgeRow)
+    check(
+      "Unwire of a flipped row revokes the token its HTTP entries held",
+      ClientWiring.tokens.client(for: again) == nil
+        && !servers(of: cursor).values.contains { ClientWiringMerge.isOurs($0) })
+  }
+
+  /// Codex wired with the bridge, then switched: each bridge table is
+  /// replaced by an HTTP one in place, and everything that is not ours stays
+  /// byte for byte, which the unwire back to the original proves.
+  static func codexSwitchesFromTheBridge() {
+    print("\ncodex bridge to http")
+    reset()
+    let codex = client("codex")
+    place(codexConfig, at: codex.wiring.path)
+    _ = try? ClientWiring.configure(flipped(codex, to: .bridge))
+    check(
+      "the fixture is wired with the bridge first, and reads the old way",
+      allBridge(servers(of: codex)) && ClientWiring.status(of: codex) == .oldTransport)
+    _ = try? ClientWiring.switchToHTTP(codex)
+    let switched = (try? String(contentsOf: codex.wiring.path, encoding: .utf8)) ?? ""
+    check(
+      "Switch to HTTP replaces every bridge table with an HTTP one",
+      allHTTP(servers(of: codex), token: token("codex"))
+        && !switched.contains(ClientWiringMerge.bridgeSuffix))
+    check("it reads back as configured", ClientWiring.status(of: codex) == .configured)
+    check("the file is 0600", mode(codex.wiring.path) == 0o600)
+    _ = try? ClientWiring.unwire(codex)
+    check(
+      "and everything not ours is the original, byte for byte",
+      (try? String(contentsOf: codex.wiring.path, encoding: .utf8)) == codexConfig)
   }
 
   /// While the listener cannot bind its port, an HTTP-wired client reaches
@@ -403,11 +519,15 @@ extension WiringCheck {
     _ = try? ClientWiring.switchToHTTP(cursor)
     let old = token("cursor")
     check("the token is live before", ClientWiring.tokens.client(for: old) == "cursor")
+    var ended: [String] = []
+    ClientWiring.endSessions = { ended.append($0) }
+    defer { ClientWiring.endSessions = { _ in } }
     _ = try? ClientWiring.unwire(cursor)
     check(
       "after unwire the entries are gone",
       !servers(of: cursor).values.contains { ClientWiringMerge.isOurs($0) })
     check("and the token is revoked", ClientWiring.tokens.client(for: old) == nil)
+    check("and its live HTTP sessions are ended", ended == ["cursor"])
 
     // A removal that fails leaves the token: the entries holding it are still
     // in the file.
@@ -417,6 +537,7 @@ extension WiringCheck {
     place("{ not json", at: cursor.wiring.path)
     check("an unreadable config refuses the unwire", (try? ClientWiring.unwire(cursor)) == nil)
     check("and keeps the token", ClientWiring.tokens.client(for: kept) == "cursor")
+    check("and ends no session", ended == ["cursor"])
 
     // Claude Code's token is also the one its folders carry. Removing the
     // user-scope entries leaves the folders working.
@@ -428,13 +549,13 @@ extension WiringCheck {
     _ = try? ClientWiring.unwire(claude)
     check(
       "a token a folder still carries is kept",
-      ClientWiring.tokens.client(for: shared) == "claude-code")
+      ClientWiring.tokens.client(for: shared) == "claude-code" && ended == ["cursor"])
     _ = try? ClientWiring.unwire(
       folder: scratchHome.appendingPathComponent("Projects/app"), scope: .local)
     _ = try? ClientWiring.unwire(claude)
     check(
-      "and revoked once nothing carries it",
-      ClientWiring.tokens.client(for: shared) == nil)
+      "and revoked once nothing carries it, its sessions ended",
+      ClientWiring.tokens.client(for: shared) == nil && ended == ["cursor", "claude-code"])
 
     // A bridge client has no token to revoke, and unwiring it mints none.
     reset()

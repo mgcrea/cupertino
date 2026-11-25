@@ -173,8 +173,12 @@ enum ClientWiring {
   /// table, standing in until the spike in `scripts/spikes/http-fallback.mjs`
   /// has been run against each client: a client that does not fall back to the
   /// 2025 handshake over HTTP goes back to `.bridge`, row by row, before this
-  /// ships. Moving a row only changes what a fresh wire and Switch to HTTP
-  /// write; nothing already wired changes transport on its own.
+  /// ships. Moving a row to `.http` changes only what a fresh wire and Switch
+  /// to HTTP write. Moving one to `.bridge` leaves a client already wired over
+  /// HTTP as it is in every automatic path, its entries and its token both:
+  /// the pane reads them stale, and Update rewrites them with the bridge and
+  /// then revokes the token, as Unwire does. Nothing changes transport on its
+  /// own.
   static let clients: [Client] = [
     // Drop-in: strict JSON, servers under `mcpServers`, nothing to negotiate.
     Client(
@@ -562,6 +566,8 @@ enum ClientWiring {
         "Wired with \(found)."
       case .stale(let found) where found.hasPrefix("port "):
         "Wired to Cupertino on \(found), which it no longer listens on."
+      case .stale(let found) where found.hasPrefix("http://127.0.0.1:"):
+        "Wired over HTTP, which this client no longer uses. Update rewrites it with the bridge."
       case .stale(let found): "Wired to another copy of Cupertino, at \(found)."
       case .oldTransport:
         "Wired the old way, with a bridge per server. Switch to HTTP to drop them."
@@ -707,7 +713,9 @@ enum ClientWiring {
     // Decided from this read and kept for the write, so the button does what
     // the pane said it would. A file that changes in between is re-merged
     // with the same transport.
-    let wired = transport(for: client, servers: try read(client)?.servers ?? [:])
+    let servers = try read(client)?.servers ?? [:]
+    let before = ClientWiringMerge.transport(of: servers)
+    let wired = transport(for: client, servers: servers)
     let outcome = try write(client, over: wired)
     hostLog(
       "cupertino", .info,
@@ -715,7 +723,16 @@ enum ClientWiring {
         ? "\(client.displayName) already up to date at \(client.wiring.path.path)"
         : "configured \(client.displayName) at \(client.wiring.path.path)"
           + (wired == .http ? " over HTTP" : ""))
-    if wired == .http { openAtLogin(for: client) }
+    // Only a write that moves the client onto HTTP: somebody who turned
+    // launch at login off in General must not have every Update turn it on.
+    if wired == .http, before != .http { openAtLogin(for: client) }
+    // A row moved to the bridge with HTTP entries: this write replaced them,
+    // and the token they held goes once nothing in the file holds it.
+    if wired == .bridge, before == .http,
+      !ClientWiringMerge.holdsToken((try? read(client))??.servers)
+    {
+      revokeToken(of: client)
+    }
     return outcome
   }
 
@@ -932,6 +949,16 @@ enum ClientWiring {
   static func rewire(_ client: Client, because reason: String) {
     do {
       guard let config = try read(client) else { return }
+      // A row moved to the bridge, on a client somebody switched to HTTP:
+      // rewriting its entries as bridge ones would switch it back, and the
+      // token would stay live in every backup. Update is how that happens.
+      if client.transport == .bridge, ClientWiringMerge.transport(of: config.servers) == .http {
+        hostLog(
+          "cupertino", .info,
+          "left \(client.displayName) alone (\(reason)): its HTTP entries stay until Update "
+            + "rewrites them with the bridge")
+        return
+      }
       let wired = transport(for: client, servers: config.servers)
       let plan = rewirePlan(servers: config.servers, clientID: client.id, over: wired)
       guard case .write(let upsert, let remove) = plan else {
@@ -1168,10 +1195,16 @@ enum ClientWiring {
   /// working. Not when the removal failed, which leaves the entries holding it
   /// in the file; and not while a Claude Code folder still carries it, since
   /// those blocks are a different scope with a button of their own.
+  ///
+  /// A row moved to the bridge whose file still held HTTP entries has a token
+  /// to revoke as well, and so does any client whose token is revoked: its
+  /// live HTTP sessions are ended with it.
   @discardableResult
   static func unwire(_ client: Client) throws -> ClientWiringMerge.WriteOutcome {
+    let heldToken =
+      client.transport == .http || ClientWiringMerge.holdsToken((try? read(client))??.servers)
     let outcome = try removeOurs(from: client)
-    if client.transport == .http { revokeToken(of: client) }
+    if heldToken { revokeToken(of: client) }
     return outcome
   }
 
@@ -1209,6 +1242,9 @@ enum ClientWiring {
     }
     do {
       try tokens.revoke(client.id)
+      // As Reset does: the revoke refuses the next request, and this closes
+      // a GET stream that would otherwise go on delivering.
+      endSessions(client.id)
     } catch {
       hostLog(
         "cupertino", .error,
@@ -1393,13 +1429,17 @@ enum ClientWiring {
   @discardableResult
   static func configureLocal(_ folder: URL) throws -> ClientWiringMerge.WriteOutcome {
     let wanted = try entries(for: claudeCode, over: .http)
+    let before = (try? ClientWiringMerge.readJSON(claudeCodeConfig))
+      .flatMap { ClientWiringMerge.localScopeServers(in: $0, folder: folder.path) }
+      .flatMap { ClientWiringMerge.transport(of: $0) }
     let outcome = try mergeWrite(into: claudeCodeConfig, newFileMode: 0o600) { root in
       ClientWiringMerge.mergedIntoLocalScope(
         into: root, folder: folder.path, entries: wanted, legacy: legacyKeys,
         remove: disabledKeys)
     }
     hostLog("cupertino", .info, "configured folder \(folder.path) in Claude Code over HTTP")
-    openAtLogin(for: claudeCode)
+    // As `configure`: only when this write moved the folder onto HTTP.
+    if before != .http { openAtLogin(for: claudeCode) }
     return outcome
   }
 

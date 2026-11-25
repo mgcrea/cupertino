@@ -213,17 +213,22 @@ new token is written; the old one no longer works." It is a reset rather than a 
 automatic rewire finds an entry with a revoked token stale and mints the client a new one, so a
 bare revoke would be undone without a word. _Remove Cupertino's entries_ is what signs a client out
 for good: it revokes the token once the entries are out, unless a Claude Code folder still carries
-it. The button shows only for a client whose entries are HTTP; one still on the bridge has no token.
+it, and ends that client's open HTTP sessions, as Reset does. The button shows only for a client whose entries are HTTP; one still on the bridge has no token.
 
 **Launch at login.** An HTTP entry reaches nobody while Cupertino is not running, and unlike the
-bridge it cannot start the app. So wiring a client over HTTP turns on launch at login, from a copy
-in an Applications folder, and the pane says HTTP clients need Cupertino running. A refusal is
-logged and the write stands.
+bridge it cannot start the app. So a write that moves a client onto HTTP (a first wire, _Switch to HTTP_, a
+folder's first HTTP wire) turns on launch at login, from a copy in an Applications folder, and the
+pane says HTTP clients need Cupertino running. An Update of a client already on HTTP does not ask
+again, so somebody who turned it off in General keeps it off. A refusal is logged and the write
+stands.
 
 **Migration: nothing silent.** A client wired with bridge entries where HTTP is its transport reads
 _Wired the old way_, with a _Switch to HTTP_ button beside Update. Update keeps the bridge, for
 somebody who wants a new surface without the new transport. The automatic rewire never switches a
-client either way: bridge entries are kept bridge entries and HTTP entries HTTP ones. An HTTP entry
+client either way: bridge entries are kept bridge entries and HTTP entries HTTP ones. That holds
+when a row of the table moves to the bridge too: a client already wired over HTTP is left as it is,
+entries and token, and reads _stale_ until its Update rewrites it with the bridge, which then
+revokes the token as _Remove Cupertino's entries_ would. An HTTP entry
 naming a port Cupertino has moved off, or a token that is not the client's, reads _stale_. Update
 rewrites it, and so does the automatic rewire (see [Keeping configs current](#keeping-configs-current)),
 right after a port change, at the next launch or the next time a surface is switched: a client
