@@ -606,7 +606,7 @@ struct MainView: View {
         .lineLimit(1)
         .truncationMode(.middle)
         .frame(maxWidth: .infinity, alignment: .leading)
-      Text("pid \(session.pid)")
+      Text(session.pid.map { "pid \($0)" } ?? "not started")
         .foregroundStyle(.secondary)
         .monospacedDigit()
       Text("\(session.calls) call\(session.calls == 1 ? "" : "s")")

@@ -96,6 +96,47 @@ nonisolated final class ServerHost: @unchecked Sendable {
   private let trialClients = OSAllocatedUnfairLock<[UUID: (surface: String, fd: Int32)]>(
     initialState: [:])
 
+  /// Node sessions whose server has not started, by session: `serverPIDs`'
+  /// counterpart for a session that has no pid yet.
+  ///
+  /// Such a session answers its client from the lists it had at connect, so a
+  /// switch turned off since has to reach it as it reaches a running server.
+  /// It has no process to stop, so its socket is shut down instead, and the
+  /// client sees the end of stream a stopped server gives it and reconnects
+  /// under the settings as they now are.
+  ///
+  /// The descriptor rule is `trialClients`': only ever shut down under this
+  /// lock, and `run` takes its entry out before it returns to `serve`, which
+  /// closes the descriptor. A session that starts its server is taken out
+  /// before its pid goes into `serverPIDs`; the re-check after that covers the
+  /// moment it is in neither.
+  private let deferredSessions = OSAllocatedUnfairLock<[UUID: DeferredEntry]>(initialState: [:])
+
+  nonisolated private struct DeferredEntry {
+    let fd: Int32
+    let surface: String
+    /// The settings the session's environment was built from at connect,
+    /// compared as a running server's are.
+    let config: SpawnConfig
+    let onTrial: Bool
+  }
+
+  /// Takes the entries `pick` chooses out of `deferredSessions` and shuts each
+  /// one's socket down, in the same critical section, for the reason given
+  /// there. Returns what it closed.
+  private func closeDeferred(
+    _ pick: @Sendable (UUID, DeferredEntry) -> Bool
+  ) -> [(session: UUID, surface: String)] {
+    deferredSessions.withLock { live in
+      let chosen = live.filter { pick($0.key, $0.value) }
+      for (session, entry) in chosen {
+        shutdown(entry.fd, SHUT_RDWR)
+        live.removeValue(forKey: session)
+      }
+      return chosen.map { (session: $0.key, surface: $0.value.surface) }
+    }
+  }
+
   /// Why the socket never came up, if it did not. Kept rather than only logged:
   /// a host that failed to listen is the one state where nothing will ever
   /// work, and stderr is invisible to someone who launched the app from Finder.
@@ -953,12 +994,19 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return live.values.map(\.surface)
     }
     guard !licensed else { return }
+    // A node session admitted on the trial whose server has not started is in
+    // neither map above. It is closed as an in-process one is, and its client
+    // reconnects onto the refusal.
+    let deferred = closeDeferred { _, entry in entry.onTrial }
     for pid in pids {
       hostLog("host", .info, "trial ended — stopping server (pid \(pid))")
       kill(pid, SIGTERM)
     }
     for surface in closed {
       hostLog(surface, .info, "trial ended — closing in-process session")
+    }
+    for (_, surface) in deferred {
+      hostLog(surface, .info, "trial ended — closing a session whose server had not started")
     }
   }
 
@@ -979,6 +1027,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     for pid in pids {
       hostLog(surface.id, .info, "switched off — stopping server (pid \(pid))")
       kill(pid, SIGTERM)
+    }
+    for _ in closeDeferred({ _, entry in entry.surface == surface.id }) {
+      hostLog(surface.id, .info, "switched off — closing a session whose server had not started")
     }
     if surface.id == "sound" { enforceRecordingGate() }
   }
@@ -1004,6 +1055,23 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// A lend has no spawn config of its own and needs none: it is served
   /// in-process and reads its BORROWER's switches per request.
   func settingsChanged() {
+    // A session whose server has not started is narrowed by the same rule,
+    // against the settings it was given at connect. Decided outside the lock,
+    // which only takes out and shuts down what is still there: a session id is
+    // never reused, so an entry still present is the one that was judged.
+    let waiting = deferredSessions.withLock { $0 }
+    let lost = waiting.compactMapValues { entry in
+      Surface.named(entry.surface).flatMap { entry.config.narrowing(to: .current($0)) }
+    }
+    if !lost.isEmpty {
+      for (session, surface) in closeDeferred({ session, _ in lost[session] != nil }) {
+        hostLog(
+          surface, .info,
+          "\(lost[session] ?? "a setting switched off") — closing a session whose server had not started"
+        )
+      }
+    }
+
     let spawned = serverPIDs.withLock { $0 }
     let narrowed = spawned.compactMapValues { config in
       Surface.named(config.surface).flatMap { config.narrowing(to: .current($0)) }
@@ -1348,6 +1416,23 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
 
     hostLog(surface.id, .info, "session open, server deferred")
+    // Connected, so in the Activity window now, with no pid until a call
+    // starts a server.
+    Task(priority: Sessions.priority) { @MainActor in
+      Sessions.shared.opened(id: session, surface: surface.id, pid: nil)
+    }
+    deferredSessions.withLock {
+      $0[session] = DeferredEntry(
+        fd: client, surface: surface.id, config: spawn.config, onTrial: onTrial)
+    }
+    // Out before `serve` closes the descriptor, however this returns.
+    // `startServer` has normally taken it out long before; this is the floor.
+    defer { _ = deferredSessions.withLock { $0.removeValue(forKey: session) } }
+    // A switch turned off between the read at connect and the line above found
+    // nothing to close. Asking once more now that there is something closes
+    // that window, as `startServer` does for a pid.
+    settingsChanged()
+
     let base = HandshakeBase(
       surface: surface.id,
       build: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown",
@@ -1508,25 +1593,33 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return
     }
     let pid = process.processIdentifier
-    if onTrial { trialPIDs.withLock { $0.insert(pid) } }
+    if onTrial { _ = trialPIDs.withLock { $0.insert(pid) } }
+    // Deferred no longer, and out of that map before the pid is in
+    // `serverPIDs`. After `trialPIDs`, so a trial ending now finds the session
+    // in one of the two. A narrowing that lands while it is in neither is the
+    // re-check's below.
+    _ = deferredSessions.withLock { $0.removeValue(forKey: session) }
     serverProcesses.withLock { $0[pid] = process }
     serverPIDs.withLock { $0[pid] = config }
     // A switch turned off between the read at connect and this line found no
     // pid to stop. Asking once more now that there is one closes that window.
     settingsChanged()
-    // The name too: a deferred session saw its `initialize` before it was
-    // open, and `named` ignores a session it does not have yet.
+    // A deferred session has had its row since connect, and keeps it.
+    let wasDeferred = handoff != nil
     Task(priority: Sessions.priority) { @MainActor in
-      Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
-      if let name = Sessions.clientName(session) { Sessions.shared.named(id: session, name) }
+      if !wasDeferred {
+        Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
+      } else {
+        Sessions.shared.started(id: session, pid: pid)
+      }
     }
     let started = handoff.map { "\($0.reason), starting server" } ?? "server started"
     hostLog(
       surface.id, .info,
       "\(started) (pid \(pid))" + (binaries.isDevelopment ? " — development build" : ""))
-    // After `opened`, so the trigger's call is counted against a session the
-    // Activity window has, and before the server can read it, so a visible
-    // call's notice is up first, as it is for every other call.
+    // Before the server can read it, so a visible call's notice is up first, as
+    // it is for every other call. The session's row has been there since
+    // connect, so the call is counted against it.
     if let handoff { observer.saw(handoff.unobserved) }
 
     let group = DispatchGroup()
@@ -1600,7 +1693,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // Whether it was reaped or the client simply went away: a pid is reused by
     // the kernel eventually, and a stale one left here is a signal sent to
     // whatever inherits the number.
-    if onTrial { trialPIDs.withLock { $0.remove(pid) } }
+    if onTrial { _ = trialPIDs.withLock { $0.remove(pid) } }
     serverPIDs.withLock { $0[pid] = nil }
     serverProcesses.withLock { $0[pid] = nil }
     Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }

@@ -2,7 +2,8 @@ import Foundation
 import Observation
 import os
 
-/// The server processes that are running right now, one per accepted connection.
+/// The connections open right now, one per accepted client, each with its
+/// server process once it has one.
 ///
 /// `ServerHost` deliberately keeps no state of its own — a connection lives on
 /// the stack inside `serve`/`run` and dies with it — so this is the only place
@@ -16,7 +17,10 @@ final class Sessions {
   struct Session: Identifiable {
     let id: UUID
     let surface: String
-    let pid: Int32
+    /// Nil while a node session's server has not started: the host answers its
+    /// handshake and lists itself, and starts one at the first call. `started`
+    /// fills it in.
+    var pid: Int32?
     let startedAt: Date
     /// From the MCP `initialize` handshake, not from the socket. The peer is
     /// accepted with a nil address and never identified, so the client's own
@@ -36,9 +40,16 @@ final class Sessions {
 
   private(set) var live: [Session] = []
 
-  func opened(id: UUID, surface: String, pid: Int32) {
+  func opened(id: UUID, surface: String, pid: Int32?) {
     live.append(
       Session(id: id, surface: surface, pid: pid, startedAt: Date(), client: nil, calls: 0))
+  }
+
+  /// A session opened with no pid has started its server. The same row, so
+  /// one connection is never counted twice.
+  func started(id: UUID, pid: Int32) {
+    guard let index = live.firstIndex(where: { $0.id == id }) else { return }
+    live[index].pid = pid
   }
 
   /// Seed a fully-formed session at a fixed instant, for `DemoSeed` only.

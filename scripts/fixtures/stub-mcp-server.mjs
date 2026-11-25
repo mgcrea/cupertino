@@ -8,7 +8,8 @@
 // holds. Any other request gets a JSON-RPC error. Notifications are read and
 // not answered.
 //
-// STUB_LOG   a file to which `<pid> <line>` is appended for every line read.
+// STUB_LOG   a file to which `<pid> started` is appended once, as the stub
+//            boots, and `<pid> <line>` for every line read after that.
 // STUB_SKEW  a method answered with a different result, to make a replay
 //            disagree with what the host recorded.
 //
@@ -19,6 +20,10 @@ import { createInterface } from "node:readline";
 
 const log = process.env.STUB_LOG;
 const skew = process.env.STUB_SKEW;
+
+// Before anything is read, so a server that was started and never written to
+// still shows.
+if (log) appendFileSync(log, `${process.pid} started\n`);
 
 const results = {
   initialize: {

@@ -220,6 +220,19 @@ final class Client {
     }
   }
 
+  /// Whether the host closes the connection within `seconds`, past any
+  /// replies still on their way. Returns as soon as it does.
+  func closed(within seconds: Double) -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while true {
+      switch next(within: deadline.timeIntervalSinceNow) {
+      case .closed: return true
+      case .timedOut: return false
+      case .line: continue
+      }
+    }
+  }
+
   /// The `result` of the next reply, if it is one for `id`.
   func result(for id: Int, within seconds: Double) -> [String: Any]? {
     guard case .line(let text) = next(within: seconds),
@@ -281,7 +294,10 @@ enum Stub {
     }
   }
 
-  /// Every line a stub read, with the pid that read it.
+  /// What a stub writes to the log as it boots, before it reads anything.
+  static let bootLine = "started"
+
+  /// Every line a stub logged, with its pid: its boot line, then every line it read.
   static func entries() -> [(pid: String, line: String)] {
     let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
     return text.split(separator: "\n").compactMap { row in
@@ -292,11 +308,28 @@ enum Stub {
 
   static func pids() -> Set<String> { Set(entries().map(\.pid)) }
 
-  static func lines(of pid: String) -> [String] {
-    entries().filter { $0.pid == pid }.map(\.line)
+  /// Every stub that booted, whether or not it was written to.
+  static func started() -> Set<String> {
+    Set(entries().filter { $0.line == bootLine }.map(\.pid))
   }
 
-  /// A pid not in `known` that has read something, within `seconds`.
+  /// The lines `pid` read, without its boot line.
+  static func lines(of pid: String) -> [String] {
+    entries().filter { $0.pid == pid && $0.line != bootLine }.map(\.line)
+  }
+
+  /// Whether `pid` has exited, within `seconds`.
+  static func exited(_ pid: String, within seconds: Double) -> Bool {
+    guard let number = Int32(pid) else { return false }
+    let deadline = Date().addingTimeInterval(seconds)
+    repeat {
+      if kill(number, 0) != 0, errno == ESRCH { return true }
+      Thread.sleep(forTimeInterval: 0.02)
+    } while Date() < deadline
+    return false
+  }
+
+  /// A pid not in `known` that has booted, within `seconds`.
   static func newPid(besides known: Set<String>, within seconds: Double) -> String? {
     let deadline = Date().addingTimeInterval(seconds)
     repeat {
@@ -332,11 +365,64 @@ enum Frames {
   }
 }
 
-/// Every host log line so far. `hostLog` posts to the store on the main actor,
-/// which only runs while the main run loop does.
-func hostLogLines() -> [String] {
-  RunLoop.main.run(until: Date().addingTimeInterval(0.2))
-  return MainActor.assumeIsolated { LogStore.shared.entries.map(\.text) }
+/// `read`, with the main run loop turning, until `done` holds or `seconds` pass.
+///
+/// `hostLog` and `Sessions` post to the main actor, which only runs while the
+/// main run loop does, so a check reads them through this.
+func polled<T>(within seconds: Double = 5, _ read: () -> T, until done: (T) -> Bool) -> T {
+  let deadline = Date().addingTimeInterval(seconds)
+  var value = read()
+  while !done(value), Date() < deadline {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    value = read()
+  }
+  return value
+}
+
+/// The host log lines, once `done` holds of them or `seconds` pass.
+func hostLogLines(within seconds: Double = 5, until done: ([String]) -> Bool) -> [String] {
+  polled(
+    within: seconds, { MainActor.assumeIsolated { LogStore.shared.entries.map(\.text) } },
+    until: done)
+}
+
+/// Puts a line of the check's own in the host log and waits for it, so the
+/// lines after it are what happened since.
+func hostLogMark() -> String {
+  let mark = "host-check mark \(UUID().uuidString)"
+  hostLog("host-check", .info, mark, mirror: false)
+  _ = hostLogLines { $0.contains(mark) }
+  return mark
+}
+
+/// The lines logged after `mark`, once `done` holds of them or `seconds` pass.
+func hostLogLines(
+  since mark: String, within seconds: Double = 5, until done: ([String]) -> Bool
+) -> [String] {
+  func after(_ lines: [String]) -> [String] {
+    lines.lastIndex(of: mark).map { Array(lines[($0 + 1)...]) } ?? []
+  }
+  return after(hostLogLines(within: seconds) { done(after($0)) })
+}
+
+/// Everything logged after `mark` up to now, for a check that something was
+/// NOT logged: a second mark is waited for, and the queue drained behind it,
+/// so a line posted before it has landed.
+func hostLogLines(since mark: String) -> [String] {
+  let end = hostLogMark()
+  RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+  let lines = hostLogLines(since: mark) { $0.contains(end) }
+  return Array(lines.prefix { $0 != end })
+}
+
+/// Whether a line says a server was started, by either path.
+func isServerStart(_ line: String) -> Bool {
+  line.contains("server started (pid") || line.contains("starting server (pid")
+}
+
+/// The Activity window's mail rows.
+func mailRows() -> [Sessions.Session] {
+  MainActor.assumeIsolated { Sessions.shared.live.filter { $0.surface == "mail" } }
 }
 
 /// A request line.
@@ -852,9 +938,14 @@ struct HostCheck {
       check(
         "with the deferral off a warm session's server reads its first frame",
         answered && pid != nil)
+      let started = pid.map { pid in
+        { (line: String) in line.hasPrefix("server started (pid \(pid))") }
+      }
       check(
         "and it was started at connect, not deferred",
-        pid.map { pid in hostLogLines().contains { $0.hasPrefix("server started (pid \(pid))") } }
+        started.map { started in
+          hostLogLines { $0.contains(where: started) }.contains(where: started)
+        }
           == true)
       client.hangUp()
     } else {
@@ -880,12 +971,19 @@ struct HostCheck {
       check("first session spawns and answers (could not connect)", false)
     }
 
+    // Marked before connecting, so the lines after it are this session's whole life.
+    var mark = hostLogMark()
     if let client = Client(handshake: wired) {
       let known = Stub.pids()
+      let booted = Stub.started()
       let ids = open(client)
       Thread.sleep(forTimeInterval: 0.5)
       let quiet = Stub.pids().subtracting(known).isEmpty
       check("second session starts nothing before a call", ids == [1, 2] && quiet)
+      check(
+        "no stub booted for it and the host logged no start",
+        Stub.started().subtracting(booted).isEmpty
+          && !hostLogLines(since: mark).contains(where: isServerStart))
       let call = Frames.call()
       client.send(call)
       let after = client.ids(until: 3, drain: 0.3)
@@ -895,19 +993,23 @@ struct HostCheck {
         "its call starts one, which reads the whole session in order",
         read == [Frames.initialize, Frames.initialized, Frames.list(token: token), call])
       check("and the client gets exactly one answer per id", ids + after == [1, 2, 3])
-      let log = hostLogLines()
+      let startedLine = "first tools/call, starting server (pid \(pid ?? "none"))"
+      let log = hostLogLines(since: mark) { $0.contains { $0.hasPrefix(startedLine) } }
+      let deferredAt = log.firstIndex(of: "session open, server deferred")
+      let startedAt = log.firstIndex { $0.hasPrefix(startedLine) }
       check(
         "the log says the server was deferred, then why it started",
-        log.contains("session open, server deferred")
-          && log.contains { $0.hasPrefix("first tools/call, starting server (pid ") })
+        pid != nil && deferredAt != nil && startedAt != nil && deferredAt! < startedAt!)
       client.hangUp()
       Thread.sleep(forTimeInterval: 0.2)
     } else {
       check("second session starts nothing before a call (could not connect)", false)
     }
 
+    mark = hostLogMark()
     if let client = Client(handshake: wired) {
       let known = Stub.pids()
+      let booted = Stub.started()
       client.send(Frames.initialize)
       let answered = client.result(for: 1, within: 5) != nil
       client.send(Frames.initialized)
@@ -916,6 +1018,12 @@ struct HostCheck {
       check(
         "hang-up while deferred starts nothing",
         answered && Stub.pids().subtracting(known).isEmpty)
+      let log = hostLogLines(since: mark) { $0.contains("session closed, no server was started") }
+      check(
+        "nothing booted for it, and the host logged its close and no start",
+        Stub.started().subtracting(booted).isEmpty
+          && log.contains("session closed, no server was started")
+          && !log.contains(where: isServerStart))
     } else {
       check("hang-up while deferred starts nothing (could not connect)", false)
     }
@@ -991,17 +1099,136 @@ struct HostCheck {
       check(
         "skewed replay disables the cache",
         ids + after == [1, 2, 3] && HandshakeCache.shared.isDisabled(surface: "mail"))
+      let skewed = { (line: String) in
+        line.hasPrefix("handshake cache: tools/list answered differently on replay")
+      }
       check(
         "and the host log says so",
-        hostLogLines().contains {
-          $0.hasPrefix("handshake cache: tools/list answered differently on replay")
-        })
+        hostLogLines { $0.contains(where: skewed) }.contains(where: skewed))
       client.hangUp()
       Thread.sleep(forTimeInterval: 0.2)
     } else {
       check("skewed replay disables the cache (could not connect)", false)
     }
     Stub.skew(nil)
+    HandshakeCache.shared.reset()
+
+    // ─── the Activity window, before the server starts ──────────────────────
+    //
+    // A deferred session is connected, so it has a row from the moment it
+    // opens, with no pid, and that row gains the pid when the server starts.
+    // A second row then would count one connection twice.
+    warm()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    let rowsBefore = Set(mailRows().map(\.id))
+    if let client = Client(handshake: wired) {
+      _ = open(client)
+      let rows = polled(
+        { mailRows().filter { !rowsBefore.contains($0.id) } }, until: { !$0.isEmpty })
+      check(
+        "a deferred session has its Activity row, with no pid yet",
+        rows.count == 1 && rows.first?.pid == nil)
+      let known = Stub.pids()
+      client.send(Frames.call())
+      _ = client.ids(until: 3)
+      let pid = Stub.newPid(besides: known, within: 5)
+      let row = rows.first?.id
+      let after = polled({ mailRows().filter { $0.id == row } }, until: { $0.first?.pid != nil })
+      check(
+        "and the row gains its server's pid when it starts, with no second row",
+        pid != nil && after.count == 1 && after.first?.pid.map { String($0) } == pid
+          && mailRows().filter { !rowsBefore.contains($0.id) }.count == 1)
+      client.hangUp()
+      Thread.sleep(forTimeInterval: 0.2)
+    } else {
+      check("a deferred session has its Activity row, with no pid yet (could not connect)", false)
+    }
+
+    // ─── a setting narrowed under a session whose server has not started ────
+    //
+    // A deferred session answers from what it was given at connect, so a
+    // switch turned off reaches it as it reaches a running server: it is
+    // closed, and its client reconnects under the settings as they now are.
+    // Each case warms the cache for the settings it opens under, so the
+    // session is still deferred when the switch moves, and says no stub booted
+    // for it, so the close is the deferred one and not a server stopped.
+    let writesKey = "allowWrites.mail"
+    let writesWere = UserDefaults.standard.bool(forKey: writesKey)
+    func writes(_ on: Bool) { UserDefaults.standard.register(defaults: [writesKey: on]) }
+    /// A session past its opening and still deferred, with the stubs booted before it.
+    func deferredSession() -> (client: Client, booted: Set<String>)? {
+      let booted = Stub.started()
+      guard let client = Client(handshake: wired) else { return nil }
+      return open(client) == [1, 2] ? (client, booted) : nil
+    }
+
+    writes(true)
+    HandshakeCache.shared.reset()
+    warm()
+    if let (client, booted) = deferredSession() {
+      writes(false)
+      ServerHost.shared.settingsChanged()
+      check("writes off closes a deferred session", client.closed(within: 1))
+      check("and nothing was started for it", Stub.started().subtracting(booted).isEmpty)
+      client.hangUp()
+    } else {
+      check("writes off closes a deferred session (could not open one)", false)
+    }
+
+    warm()
+    if let (client, booted) = deferredSession() {
+      writes(true)
+      ServerHost.shared.settingsChanged()
+      check("widening leaves it alone", client.next(within: 1) == .timedOut)
+      check("and starts nothing", Stub.started().subtracting(booted).isEmpty)
+      client.hangUp()
+    } else {
+      check("widening leaves it alone (could not open one)", false)
+    }
+
+    if let (client, booted) = deferredSession() {
+      ServerHost.shared.stopSessions(for: mailSurface)
+      check("switched off closes it", client.closed(within: 1))
+      check(
+        "and nothing was started for the switched-off one",
+        Stub.started().subtracting(booted).isEmpty)
+      client.hangUp()
+    } else {
+      check("switched off closes it (could not open one)", false)
+    }
+
+    // The call and the narrowing race: the session may still be deferred, be
+    // between the two maps, or be running. Whichever, it ends.
+    if let (client, _) = deferredSession() {
+      let known = Stub.pids()
+      client.send(Frames.call())
+      writes(false)
+      ServerHost.shared.settingsChanged()
+      let deadline = Date().addingTimeInterval(2)
+      var ended = false
+      while !ended, Date() < deadline {
+        ended =
+          client.closed(within: 0.05)
+          || Stub.pids().subtracting(known).first.map { Stub.exited($0, within: 0) } == true
+      }
+      check("narrowed while starting, it still ends", ended)
+      client.hangUp()
+      writes(true)
+      Thread.sleep(forTimeInterval: 0.2)
+    } else {
+      check("narrowed while starting, it still ends (could not open one)", false)
+    }
+
+    // Last: it stops every server admitted on the trial, which is all of these.
+    if let (client, booted) = deferredSession() {
+      ServerHost.shared.endTrialSessions()
+      check("trial end closes it", !LicenseStore.isLicensed && client.closed(within: 1))
+      check("and nothing was started for the trial one", Stub.started().subtracting(booted).isEmpty)
+      client.hangUp()
+    } else {
+      check("trial end closes it (could not open one)", false)
+    }
+    writes(writesWere)
     HandshakeCache.shared.reset()
     ServerHost.locateOverride = nil
 
