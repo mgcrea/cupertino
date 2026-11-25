@@ -30,10 +30,12 @@ import os
 /// were driven.
 ///
 /// `@unchecked` because the checker cannot see the arrangement that makes it true: state
-/// both pumps and the renewal timer touch is behind `waiting` and `visible`, and each
-/// `FrameSplitter` is fed by exactly one thread — `requests` by `saw`, `responses` by
+/// both pumps and the renewal timer touch is behind `waiting`, `visible` and `connect`, and each
+/// `FrameSplitter` is fed by one thread at a time — `requests` by `saw`, `responses` by
 /// `answered`, or both by the one in-process serving thread — so neither is ever reached
-/// from two threads at once. `pushes` is the same kind of state as `responses`: touched
+/// from two threads at once. A deferred node session hands `saw` over once: the session
+/// thread feeds it until the server starts, and the client→server pump from then on, a
+/// thread that session thread starts. `pushes` is the same kind of state as `responses`: touched
 /// only by whichever thread calls `answered` (the pump, or the in-process serving thread).
 nonisolated final class RequestObserver: @unchecked Sendable {
   private let surface: Surface
@@ -83,9 +85,23 @@ nonisolated final class RequestObserver: @unchecked Sendable {
   private let mode: CallCapture.Mode
   private let content: Bool
 
-  init(surface: Surface, session: UUID) {
+  /// Who the socket says is calling, for the connect line. Nil when it was not told.
+  private let wiredClient: String?
+
+  /// What the session sent before its first call, until the line saying so is
+  /// logged; nil after, so a session past its connect phase parses nothing
+  /// more for it. Locked because `closed()` is called from the thread that
+  /// waited on the pumps, not from the one that feeds `note`.
+  ///
+  /// Nil from the start unless `tracesConnect`: only a node-hosted session has
+  /// a spawn to defer, and only `run` calls `closed()`.
+  private let connect: OSAllocatedUnfairLock<ConnectTraffic?>
+
+  init(surface: Surface, session: UUID, wiredClient: String? = nil, tracesConnect: Bool = false) {
     self.surface = surface
     self.session = session
+    self.wiredClient = wiredClient
+    self.connect = OSAllocatedUnfairLock(initialState: tracesConnect ? ConnectTraffic() : nil)
     self.mode = SurfaceSettings.captureMode(surface)
     self.content = SurfaceSettings.capturesContent(surface)
   }
@@ -173,7 +189,46 @@ nonisolated final class RequestObserver: @unchecked Sendable {
       failed: CallCapture.isFailure(object))
   }
 
+  /// The connection is over: log the connect line if no call ever ended the phase.
+  func closed() {
+    let line = connect.withLock { traffic -> String? in
+      defer { traffic = nil }
+      return traffic?.atClose()
+    }
+    if let line { logConnect(line) }
+  }
+
+  /// To the Activity log, and to the unified log, which keeps a day of them
+  /// where the Activity log keeps its last thousand rows and the stderr mirror
+  /// goes nowhere for an app started with `open`. Read them back with
+  /// `log show --style compact --last 1d --predicate 'subsystem == "io.mgcrea.cupertino"
+  /// AND category == "connect" AND process == "Cupertino"'`; the process term leaves out
+  /// what `make host-check` logs under the same subsystem.
+  ///
+  /// Public, because the line holds method names, `_meta` key names, hashes
+  /// and the wired client's id only, never a param's value or `clientInfo`
+  /// (see `ConnectTraffic`). Notice, not info: info is not kept on disk.
+  private func logConnect(_ line: String) {
+    let text = "\(line) (client \(wiredClient ?? "unknown"))"
+    hostLog(surface.id, .info, text)
+    Self.connectLog.notice("\(self.surface.id, privacy: .public): \(text, privacy: .public)")
+  }
+
+  private static let connectLog = Logger(subsystem: "io.mgcrea.cupertino", category: "connect")
+
+  /// Feed the connect phase, while it is open.
+  private func trace(_ line: Data) {
+    let said = connect.withLock { traffic -> String? in
+      guard traffic != nil else { return nil }
+      let said = traffic?.saw(McpFrame.parse(line))
+      if said != nil { traffic = nil }
+      return said
+    }
+    if let said { logConnect(said) }
+  }
+
   private func note(_ line: Data) {
+    trace(line)
     guard
       let object = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
       let method = object["method"] as? String

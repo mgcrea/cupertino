@@ -665,6 +665,9 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/ServerLocator.swift \
 		apps/apple/Cupertino/Surfaces.swift \
 		apps/apple/Cupertino/ClientFacade.swift \
+		apps/apple/Cupertino/McpFrame.swift \
+		apps/apple/Cupertino/DeferredSpawn.swift \
+		apps/apple/Cupertino/HandshakeCache.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
@@ -730,6 +733,9 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/LicenseStore.swift \
 		apps/apple/Cupertino/Revocations.swift \
 		apps/apple/Cupertino/RequestObserver.swift \
+		apps/apple/Cupertino/McpFrame.swift \
+		apps/apple/Cupertino/DeferredSpawn.swift \
+		apps/apple/Cupertino/HandshakeCache.swift \
 		apps/apple/Cupertino/CallCapture.swift \
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/InProcessRPC.swift \
@@ -766,7 +772,27 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/ClientFacade.swift \
 		apps/apple/Cupertino/StoreLane/*.swift \
 		apps/apple/.build/host-check-BridgeProtocol.swift scripts/host-check.swift
-	@apps/apple/.build/host-check
+	@# The deferred-spawn cases start a stub MCP server under node, so node is a
+	@# requirement here rather than a skip: a check that quietly passed without
+	@# it would pass on exactly the machines that never ran it.
+	@command -v node >/dev/null 2>&1 || { echo "  FAIL host-check needs node on PATH, for scripts/fixtures/stub-mcp-server.mjs" >&2; exit 1; }
+	@HOST_CHECK_NODE="$$(command -v node)" HOST_CHECK_STUB="$(CURDIR)/scripts/fixtures/stub-mcp-server.mjs" \
+		apps/apple/.build/host-check
+
+handshake-check: ## Prove cached handshake answers do not depend on what the cache key leaves out
+	@# Spawns the nine real node servers (packages/*/dist/cli.js) under the
+	@# app's default environment, in variants that differ only in what
+	@# HandshakeCache's key leaves out (ids, call order, progress tokens, key
+	@# order), and fails on any answer that differs. Build them first, as
+	@# `smoke` needs them: this target does not build, so a stale dist/ is
+	@# exactly what it would check. HANDSHAKE_SERVERS_DIR=$(STAGED)/servers
+	@# checks the bundled servers `make servers` stages instead.
+	@if [ -z "$$HANDSHAKE_SERVERS_DIR" ] && [ ! -f packages/mail/dist/cli.js ]; then \
+		echo "  FAIL handshake-check: packages/mail/dist/cli.js is missing (run pnpm -r build first)" >&2; \
+		exit 1; \
+	fi
+	@command -v node >/dev/null 2>&1 || { echo "  FAIL handshake-check needs node on PATH" >&2; exit 1; }
+	@node scripts/handshake-equivalence.mjs
 
 audit-log-check: ## Assert a write the audit log cannot make leaves the chain intact, not broken
 	@# `BridgeProtocol` is STUBBED by the check rather than compiled in, and that
@@ -1599,7 +1625,7 @@ clean: ## Remove the app build output
 	simulator-spike dispatch-check unit store-lane-check chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \
-	blame-setup icon clean smoke-swift audit-log-check host-check bridge-protocol-check \
+	blame-setup icon clean smoke-swift audit-log-check host-check handshake-check bridge-protocol-check \
 	wiring-check-real server-deps verify-servers verify-extension sparkle sparkle-keys \
 	sparkle-key-shred appcast readme-check demo-gif extension-icons
 

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Asserts what `CallCapture` records and — more to the point — what it does
@@ -1513,6 +1514,606 @@ struct UnitCheck {
       check("and carries the hosts", env["APPLE_SAFARI_COOKIE_HOSTS"] == "yahoo.com, example.org")
       let none = ServerLocator.environment(for: safari, allowWrites: false)
       check("with no values, no host variable at all", none["APPLE_SAFARI_COOKIE_HOSTS"] == nil)
+    }
+
+    // ─── McpFrame ───
+    print("\nMcpFrame: what a session sends before its first call")
+    do {
+      let req = McpFrame.parse(
+        Data(#"{"jsonrpc":"2.0","id":7,"method":"tools/list","params":{}}"#.utf8))
+      check("request kind", req.kind == .request && req.method == "tools/list")
+      check("numeric id", req.id == Data("7".utf8))
+      check(
+        "string id keeps quotes",
+        McpFrame.parse(Data(#"{"id":"a","method":"ping"}"#.utf8)).id == Data(#""a""#.utf8))
+      check(
+        "notification",
+        McpFrame.parse(Data(#"{"method":"notifications/initialized"}"#.utf8)).kind == .notification)
+      check("error response", McpFrame.parse(Data(#"{"id":1,"error":{"code":-1}}"#.utf8)).isError)
+      check("garbage", McpFrame.parse(Data("not json".utf8)).kind == .unparsed)
+      check(
+        "canonical sorts and drops volatile meta",
+        McpFrame.canonical(
+          ["b": 1, "a": 2, "_meta": ["progressToken": 3]], droppingMeta: ["progressToken"])
+          == Data(#"{"a":2,"b":1}"#.utf8))
+      check(
+        "canonical keeps other meta",
+        McpFrame.canonical(
+          ["_meta": ["progressToken": 3, "x": 1]], droppingMeta: ["progressToken"])
+          == Data(#"{"_meta":{"x":1}}"#.utf8))
+      var lb = LineBuffer()
+      check(
+        "line buffer splits", lb.append(Data("a\nb\nc".utf8)) == [Data("a".utf8), Data("b".utf8)])
+      check(
+        "line buffer keeps tail", lb.pendingCount == 1 && lb.takePending() == Data("c".utf8))
+      check(
+        "string id keeps its slashes",
+        McpFrame.parse(Data(#"{"id":"a/b","method":"ping"}"#.utf8)).id == Data(#""a/b""#.utf8))
+      var crlf = LineBuffer()
+      check(
+        "line buffer strips one carriage return and skips a bare one",
+        crlf.append(Data("a\r\n\r\nb".utf8)) == [Data("a".utf8)]
+          && crlf.append(Data("\r".utf8)).isEmpty
+          && crlf.append(Data("\n".utf8)) == [Data("b".utf8)] && crlf.pendingCount == 0)
+      var split = LineBuffer()
+      _ = split.append(Data("ab".utf8))
+      check(
+        "line buffer joins a line across chunks",
+        split.append(Data("c\nd".utf8)) == [Data("abc".utf8)] && split.pendingCount == 1)
+      var big = LineBuffer()
+      let piece = Data(repeating: UInt8(ascii: "x"), count: 1024)
+      let started = Date()
+      for _ in 0..<4096 { _ = big.append(piece) }
+      let tail = big.append(Data("\n".utf8))
+      let elapsed = Date().timeIntervalSince(started)
+      check(
+        "line buffer reads a 4 MB frame in 1 KB chunks without rescanning (\(Int(elapsed * 1000)) ms)",
+        tail.count == 1 && tail[0].count == 4 << 20 && elapsed < 1)
+      var ct = ConnectTraffic()
+      _ = ct.saw(
+        .parse(Data(#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"x"}}}"#.utf8)))
+      _ = ct.saw(.parse(Data(#"{"method":"notifications/initialized"}"#.utf8)))
+      _ = ct.saw(
+        .parse(Data(#"{"id":2,"method":"tools/list","params":{"_meta":{"progressToken":5}}}"#.utf8))
+      )
+      let line = ct.saw(.parse(Data(#"{"id":3,"method":"tools/call","params":{}}"#.utf8)))
+      /// The first 8 hex of the SHA-256 of `text`, worked out here rather than by the code checked.
+      func fp(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
+      }
+      let hello = fp(#"{"clientInfo":{"name":"x"}}"#)
+      check(
+        "connect line lists methods, meta keys, the handshake, the first call and each params",
+        line
+          == "connect: initialize, notifications/initialized, tools/list | meta: progressToken"
+          + " | handshake: \(hello) | first: tools/call"
+          + " | params: initialize=\(hello), tools/list=\(fp("{}"))")
+      check(
+        "said once",
+        ct.saw(.parse(Data(#"{"id":4,"method":"tools/call"}"#.utf8))) == nil && ct.atClose() == nil)
+
+      var closing = ConnectTraffic()
+      _ = closing.saw(
+        .parse(Data(#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"x"}}}"#.utf8)))
+      check(
+        "a session that never called says so at close",
+        closing.atClose()
+          == "connect: initialize | meta: none | handshake: \(hello) | first: none (closed)"
+          + " | params: initialize=\(hello)")
+      check(
+        "a session that sent nothing says so too",
+        ConnectTraffic().atClose()
+          == "connect: none | meta: none | handshake: none | first: none (closed) | params: none")
+
+      var pinging = ConnectTraffic()
+      let pingSaid = pinging.saw(.parse(Data(#"{"id":1,"method":"ping"}"#.utf8)))
+      let listSaid = pinging.saw(.parse(Data(#"{"id":2,"method":"tools/list"}"#.utf8)))
+      let callSaid = pinging.saw(.parse(Data(#"{"id":3,"method":"tools/call"}"#.utf8)))
+      check(
+        "a ping keeps the connect phase open",
+        pingSaid == nil && listSaid == nil
+          && callSaid?.hasPrefix("connect: ping, tools/list | ") == true
+          && callSaid?.hasSuffix(" | params: ping=\(fp("null")), tools/list=\(fp("null"))") == true)
+
+      /// The connect line of a session listing tools with these `_meta` values, then calling.
+      func listed(_ meta: String) -> String? {
+        var traffic = ConnectTraffic()
+        _ = traffic.saw(
+          .parse(Data(#"{"id":2,"method":"tools/list","params":{"_meta":\#(meta)}}"#.utf8)))
+        return traffic.saw(.parse(Data(#"{"id":3,"method":"tools/call"}"#.utf8)))
+      }
+      check(
+        "a fingerprint does not move with the progress token",
+        listed(#"{"progressToken":5}"#) == listed(#"{"progressToken":"other"}"#)
+          && listed(#"{"progressToken":5}"#)?.hasSuffix(" | params: tools/list=\(fp("{}"))") == true
+      )
+      check(
+        "but does with any other _meta value, which is what it is there to show",
+        listed(#"{"x":1}"#) != listed(#"{"x":2}"#))
+    }
+
+    // ─── HandshakeCache ───
+    print("\nHandshakeCache: replies recorded from an identical server")
+    do {
+      let base = HandshakeBase(
+        surface: "mail", build: "1", node: "/n", script: "/s", env: ["PATH": "/usr/bin:/bin"])
+      let k = HandshakeKey(
+        base: base, handshake: nil, method: "tools/list", params: Data("{}".utf8))
+      let frame = Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":7}"#.utf8)
+      check(
+        "reply swaps id",
+        CachedReply(frame: frame, id: Data("7".utf8))?.frame(id: Data(#""x""#.utf8))
+          == Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":"x"}"#.utf8))
+      check(
+        "id not last is uncacheable",
+        CachedReply(frame: Data(#"{"jsonrpc":"2.0","id":7,"result":{}}"#.utf8), id: Data("7".utf8))
+          == nil)
+      let buffer = Data(repeating: UInt8(ascii: " "), count: 1 << 20) + frame
+      let sliced = CachedReply(frame: buffer.suffix(frame.count), id: Data("7".utf8))
+      let ownStorage = buffer.withUnsafeBytes { whole in
+        sliced?.head.withUnsafeBytes { head in
+          guard let h = head.baseAddress, let w = whole.baseAddress else { return false }
+          return h < w || h >= w + whole.count
+        } ?? false
+      }
+      check("a reply cut from a larger buffer holds its own bytes", ownStorage)
+      let held = HandshakeCache(byteCap: 1 << 20)
+      _ = held.record(k, frame: frame, id: Data("7".utf8))
+      check(
+        "an answer of another shape for a held key is a mismatch",
+        held.record(
+          k, frame: Data(#"{"jsonrpc":"2.0","id":7,"result":{}}"#.utf8), id: Data("7".utf8))
+          == .mismatch && held.isDisabled(surface: "mail"))
+      let c = HandshakeCache(byteCap: 1 << 20)
+      check("stored", c.record(k, frame: frame, id: Data("7".utf8)) == .stored)
+      check("hit", c.reply(for: k) != nil)
+      check("same again matches", c.record(k, frame: frame, id: Data("7".utf8)) == .matched)
+      let envKey = HandshakeKey(
+        base: HandshakeBase(
+          surface: "mail", build: "1", node: "/n", script: "/s", env: ["PATH": "/x"]),
+        handshake: nil, method: "tools/list", params: Data("{}".utf8))
+      check("env is in the key", c.reply(for: envKey) == nil)
+      let other = Data(#"{"result":{"tools":[1]},"jsonrpc":"2.0","id":7}"#.utf8)
+      check(
+        "different answer is a mismatch", c.record(k, frame: other, id: Data("7".utf8)) == .mismatch
+      )
+      check(
+        "mismatch disables the surface", c.isDisabled(surface: "mail") && c.reply(for: k) == nil)
+      check("disabled refuses records", c.record(k, frame: frame, id: Data("7".utf8)) == .disabled)
+      let small = HandshakeCache(byteCap: 100)
+      let big = Data(
+        (#"{"result":""# + String(repeating: "a", count: 40) + #"","jsonrpc":"2.0","id":1}"#).utf8)
+      let k1 = HandshakeKey(
+        base: base, handshake: nil, method: "tools/list", params: Data("1".utf8))
+      let k2 = HandshakeKey(
+        base: base, handshake: nil, method: "tools/list", params: Data("2".utf8))
+      _ = small.record(k1, frame: big, id: Data("1".utf8))
+      _ = small.record(k2, frame: big, id: Data("1".utf8))
+      check("byte cap evicts oldest", small.reply(for: k1) == nil && small.reply(for: k2) != nil)
+      let tiny = Data(#"{"result":{},"jsonrpc":"2.0","id":1}"#.utf8)
+      let tinyBytes = CachedReply(frame: tiny, id: Data("1".utf8))!.byteCount
+      let keyed = HandshakeCache(byteCap: 100)
+      let heavy = HandshakeKey(
+        base: base, handshake: Data(repeating: UInt8(ascii: "h"), count: 40), method: "tools/list",
+        params: Data(repeating: UInt8(ascii: "p"), count: 40))
+      check(
+        "a key's own bytes count toward the cap",
+        tinyBytes < 100 && keyed.record(heavy, frame: tiny, id: Data("1".utf8)) == .uncacheable
+          && keyed.byteCount == 0)
+      _ = keyed.record(k1, frame: tiny, id: Data("1".utf8))
+      check("and toward the bytes held", keyed.byteCount == tinyBytes + k1.params.count)
+      keyed.disable(surface: "mail")
+      check("and leave with the entry", keyed.byteCount == 0)
+      let d = UserDefaults(suiteName: "unit-check-\(UUID())")!
+      check(
+        "off for dev builds",
+        !HandshakeCache.isOn(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: true), defaults: d))
+      d.set(true, forKey: "deferSpawnInDevelopment")
+      check(
+        "dev opt-in",
+        HandshakeCache.isOn(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: true), defaults: d))
+      check(
+        "a mismatch traps a Debug build on release binaries only",
+        DeferredSpawn.assertsOnMismatch(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: false))
+          && !DeferredSpawn.assertsOnMismatch(
+            ServerBinaries(
+              node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+              isDevelopment: true))
+      )
+      d.set(false, forKey: "deferServerSpawn")
+      check(
+        "kill switch",
+        !HandshakeCache.isOn(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: false), defaults: d))
+    }
+
+    // ─── DeferredSession ───
+    print("\nDeferredSession: a session answered before its server exists")
+    do {
+      let base = HandshakeBase(
+        surface: "mail", build: "1", node: "/n", script: "/s", env: ["PATH": "/usr/bin:/bin"])
+      let initLine = Data(
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"cc"}}}"#
+          .utf8)
+      let notified = Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8)
+      func listLine(token: Int, id: Int = 2) -> Data {
+        Data(
+          #"{"jsonrpc":"2.0","id":\#(id),"method":"tools/list","params":{"_meta":{"progressToken":\#(token)}}}"#
+            .utf8)
+      }
+      let callLine = Data(
+        #"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"x"}}"#.utf8)
+      let nl = Data("\n".utf8)
+      // Node-style answers: the id last.
+      let iAnswer = Data(
+        #"{"result":{"protocolVersion":"2025-06-18"},"jsonrpc":"2.0","id":1}"#.utf8)
+      let lAnswer = Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":2}"#.utf8)
+      let lOther = Data(#"{"result":{"tools":[{"name":"y"}]},"jsonrpc":"2.0","id":2}"#.utf8)
+
+      /// The keys a session that sends initLine then L would ask under.
+      func keys() -> (i: HandshakeKey, l: HandshakeKey) {
+        var k = SessionKeys(base: base)
+        let i = k.key(for: .parse(initLine))!
+        let l = k.key(for: .parse(listLine(token: 1)))!
+        return (i, l)
+      }
+      /// A fresh cache holding the initLine and L answers.
+      func warmCache() -> HandshakeCache {
+        let cache = HandshakeCache()
+        let k = keys()
+        _ = cache.record(k.i, frame: iAnswer, id: Data("1".utf8))
+        _ = cache.record(k.l, frame: lAnswer, id: Data("2".utf8))
+        return cache
+      }
+      /// A session on a warm cache that sent initLine, notified, L and then callLine.
+      func warmSpawn(_ cache: HandshakeCache) -> DeferredSession {
+        var s = DeferredSession(base: base, cache: cache)
+        _ = s.client(initLine)
+        _ = s.client(notified)
+        _ = s.client(listLine(token: 9))
+        _ = s.client(callLine)
+        return s
+      }
+
+      var k = SessionKeys(base: base)
+      check("a notification has no key", k.key(for: .parse(notified)) == nil)
+      check("a call has no key", k.key(for: .parse(callLine)) == nil)
+      let before = k.key(for: .parse(listLine(token: 1)))
+      let ki = k.key(for: .parse(initLine))
+      let after = k.key(for: .parse(listLine(token: 4)))
+      check("the handshake key carries no handshake", ki != nil && ki?.handshake == nil)
+      check(
+        "a list after the handshake carries it, whatever its progress token",
+        after?.handshake != nil && after != before && after == keys().l)
+
+      var cold = DeferredSession(base: base, cache: HandshakeCache())
+      check("cold session spawns on initialize", cold.client(initLine) == .spawn)
+      check("cold replay is the initialize", cold.replay() == initLine + nl)
+      check("the trigger is the initialize", cold.trigger?.method == "initialize")
+
+      var warm = DeferredSession(base: base, cache: warmCache())
+      check("warm initialize is answered with id 1", warm.client(initLine) == .answer(iAnswer + nl))
+      check("the initialized notification is held", warm.client(notified) == .hold)
+      check(
+        "a list with another progress token is answered with id 2",
+        warm.client(listLine(token: 9)) == .answer(lAnswer + nl))
+      check("a call spawns", warm.client(callLine) == .spawn)
+      check(
+        "warm replay is the whole session in order",
+        warm.replay()
+          == [initLine, notified, listLine(token: 9), callLine].map { $0 + nl }.reduce(Data(), +))
+      check("the trigger is the call", warm.trigger?.method == "tools/call")
+
+      // A ping is learned like a list, never composed: node answers it with
+      // its own bytes in the legacy era and refuses it in the 2026-07-28 one,
+      // and the host must do whichever a fresh server would.
+      let pingLine = Data(#"{"jsonrpc":"2.0","id":9,"method":"ping"}"#.utf8)
+      let pingAnswer = Data(#"{"result":{},"jsonrpc":"2.0","id":9}"#.utf8)
+      let pings = warmCache()
+      var pinging = DeferredSession(base: base, cache: pings)
+      _ = pinging.client(initLine)
+      check("a ping the cache has not heard starts the server", pinging.client(pingLine) == .spawn)
+      check("and is replayed", pinging.replay() == initLine + nl + pingLine + nl)
+      var pingFilter = pinging.filter()
+      _ = pingFilter.server(iAnswer)
+      check("the server's answer to it reaches the client", pingFilter.server(pingAnswer) == .pass)
+      var pingedLater = DeferredSession(base: base, cache: pings)
+      _ = pingedLater.client(initLine)
+      check(
+        "a later session's ping is answered with node's own bytes",
+        pingedLater.client(Data(#"{"jsonrpc":"2.0","id":"p","method":"ping"}"#.utf8))
+          == .answer(Data(#"{"result":{},"jsonrpc":"2.0","id":"p"}"#.utf8) + nl))
+      let refusing = warmCache()
+      var modernPing = DeferredSession(base: base, cache: refusing)
+      _ = modernPing.client(initLine)
+      _ = modernPing.client(pingLine)
+      var modernFilter = modernPing.filter()
+      _ = modernFilter.server(iAnswer)
+      check(
+        "a ping refused as unknown reaches the client",
+        modernFilter.server(
+          Data(
+            #"{"jsonrpc":"2.0","id":9,"error":{"code":-32601,"message":"Method not found"}}"#.utf8))
+          == .pass)
+      var pingAgain = DeferredSession(base: base, cache: refusing)
+      _ = pingAgain.client(initLine)
+      check(
+        "and is not recorded, so the next session's ping starts a server too",
+        pingAgain.client(pingLine) == .spawn)
+
+      var codex = DeferredSession(base: base, cache: warmCache())
+      check(
+        "different clientInfo misses",
+        codex.client(
+          Data(
+            #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codex"}}}"#
+              .utf8)) == .spawn)
+
+      var piped = DeferredSession(base: base, cache: warmCache())
+      var buffer = LineBuffer()
+      let steps = buffer.append(initLine + nl + notified + nl + listLine(token: 9) + nl).map {
+        piped.client($0)
+      }
+      check(
+        "a pipelined chunk is answered in order",
+        steps == [.answer(iAnswer + nl), .hold, .answer(lAnswer + nl)])
+
+      var served = warmSpawn(warmCache()).filter()
+      check("filter drops what the host served", served.server(iAnswer) == .drop)
+
+      let skewCache = warmCache()
+      var skew = warmSpawn(skewCache).filter()
+      check(
+        "filter catches a skewed replay, and still drops it",
+        skew.server(lOther) == .mismatch(method: "tools/list", forward: false))
+      check("a skewed replay disables the surface", skewCache.isDisabled(surface: "mail"))
+
+      let liveSkewCache = HandshakeCache()
+      _ = liveSkewCache.record(keys().l, frame: lAnswer, id: Data("2".utf8))
+      var liveSkewSession = DeferredSession(base: base, cache: liveSkewCache)
+      _ = liveSkewSession.client(initLine)
+      var liveSkew = liveSkewSession.filter()
+      liveSkew.client(.parse(listLine(token: 3)))
+      check(
+        "a live answer that differs from the held one is forwarded",
+        liveSkew.server(lOther) == .mismatch(method: "tools/list", forward: true)
+          && liveSkewCache.isDisabled(surface: "mail"))
+
+      let liveCache = HandshakeCache()
+      var live = DeferredSession(base: base, cache: liveCache)
+      _ = live.client(initLine)
+      var recorder = live.filter()
+      recorder.client(.parse(notified))
+      recorder.client(.parse(listLine(token: 3)))
+      check("filter passes a live initialize", recorder.server(iAnswer + nl) == .pass)
+      check("filter records a live miss", recorder.server(lAnswer) == .pass)
+      var next = DeferredSession(base: base, cache: liveCache)
+      check(
+        "a new session is answered from what was recorded",
+        next.client(initLine) == .answer(iAnswer + nl) && next.client(notified) == .hold
+          && next.client(listLine(token: 5)) == .answer(lAnswer + nl))
+
+      let errorCache = HandshakeCache()
+      var erring = DeferredSession(base: base, cache: errorCache)
+      _ = erring.client(initLine)
+      var errors = erring.filter()
+      errors.client(.parse(callLine))
+      check(
+        "a live error is passed",
+        errors.server(Data(#"{"jsonrpc":"2.0","id":1,"error":{"code":-32603}}"#.utf8)) == .pass)
+      check(
+        "and not recorded, and forgotten",
+        errorCache.reply(for: keys().i) == nil && errors.isRetired
+          && errors.server(iAnswer) == .pass && errorCache.reply(for: keys().i) == nil)
+      let servedErrorCache = warmCache()
+      var servedErrors = warmSpawn(servedErrorCache).filter()
+      check(
+        "an error to a host-served id is dropped, and the surface stays on",
+        servedErrors.server(Data(#"{"jsonrpc":"2.0","id":1,"error":{"code":-1}}"#.utf8)) == .drop
+          && !servedErrorCache.isDisabled(surface: "mail")
+          && servedErrorCache.reply(for: keys().i) != nil)
+
+      var passing = warmSpawn(warmCache()).filter()
+      check(
+        "filter passes notifications and garbage",
+        passing.server(Data(#"{"jsonrpc":"2.0","method":"notifications/message"}"#.utf8)) == .pass
+          && passing.server(Data("not json".utf8)) == .pass)
+      check(
+        "filter passes the call's answer",
+        passing.server(Data(#"{"jsonrpc":"2.0","id":3,"result":{}}"#.utf8)) == .pass)
+
+      var opening = DeferredSession(base: base, cache: HandshakeCache())
+      _ = opening.client(initLine)
+      var phase = opening.filter()
+      check("not retired while the connect phase is open", !phase.isRetired)
+      phase.client(.parse(listLine(token: 1)))
+      _ = phase.server(iAnswer)
+      _ = phase.server(lAnswer)
+      check("not retired with every id seen and the phase open", !phase.isRetired)
+      phase.client(.parse(callLine))
+      check("retired once a call closes the phase", phase.isRetired)
+      var pending = warmSpawn(warmCache()).filter()
+      check("a call trigger opens no phase, but served ids are pending", !pending.isRetired)
+      _ = pending.server(iAnswer)
+      check("not retired with an id pending", !pending.isRetired)
+      _ = pending.server(lAnswer)
+      check("retired once every served id is seen", pending.isRetired)
+
+      // The handshake's method is part of it: the SDK picks its era from which
+      // of the two the client sent, so the same params under each are two
+      // different sessions.
+      var viaInitialize = SessionKeys(base: base)
+      var viaDiscover = SessionKeys(base: base)
+      _ = viaInitialize.key(for: .parse(initLine))
+      _ = viaDiscover.key(
+        for: .parse(
+          Data(
+            #"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"clientInfo":{"name":"cc"}}}"#
+              .utf8)))
+      check(
+        "an initialize and a server/discover with the same params are different handshakes",
+        viaInitialize.key(for: .parse(listLine(token: 1)))
+          != viaDiscover.key(for: .parse(listLine(token: 1))))
+
+      let pingCache = HandshakeCache()
+      var pinged = DeferredSession(base: base, cache: pingCache)
+      _ = pinged.client(initLine)
+      var afterPing = pinged.filter()
+      afterPing.client(.parse(Data(#"{"jsonrpc":"2.0","id":8,"method":"ping"}"#.utf8)))
+      afterPing.client(.parse(listLine(token: 1)))
+      _ = afterPing.server(iAnswer)
+      check("a ping after the spawn leaves the connect phase open", !afterPing.isRetired)
+      _ = afterPing.server(lAnswer)
+      check(
+        "and the list after it is still recorded", pingCache.reply(for: keys().l) != nil)
+
+      // A client reusing an id while the host still waits on the first: the
+      // first entry stands, tainted, so the first response under that id is
+      // dropped because it is what the host served, and the second reaches
+      // the client.
+      let reuseCache = HandshakeCache()
+      _ = reuseCache.record(keys().i, frame: iAnswer, id: Data("1".utf8))
+      var reusing = DeferredSession(base: base, cache: reuseCache)
+      _ = reusing.client(initLine)
+      _ = reusing.client(listLine(token: 1))
+      var reused = reusing.filter()
+      reused.client(
+        .parse(Data(#"{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}"#.utf8)))
+      check("a reused id keeps the host-served entry", reused.server(iAnswer) == .drop)
+      check(
+        "and the second response under it reaches the client",
+        reused.server(Data(#"{"result":{"prompts":[]},"jsonrpc":"2.0","id":1}"#.utf8)) == .pass)
+
+      var twice = DeferredSession(base: base, cache: warmCache())
+      _ = twice.client(initLine)
+      check(
+        "a hit under an id the host already answered starts the server instead",
+        twice.client(listLine(token: 1, id: 1)) == .spawn)
+      var twiceFilter = twice.filter()
+      check(
+        "and the replayed first answer under it is dropped, the second passed",
+        twiceFilter.server(iAnswer) == .drop
+          && twiceFilter.server(Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":1}"#.utf8))
+            == .pass
+      )
+
+      // A request cancelled, then its id reused. The SDK answers a cancelled
+      // request with nothing, so the one response under that id is the new
+      // request's: it must reach the client, and be neither recorded under
+      // the old request's key nor compared with what the host served for it.
+      let cancelSeven = Data(
+        #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}"#.utf8)
+      let callSeven = Data(
+        #"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"x"}}"#.utf8)
+      let callSevenAnswer = Data(#"{"result":{"content":[]},"jsonrpc":"2.0","id":7}"#.utf8)
+
+      let liveTaintCache = HandshakeCache()
+      _ = liveTaintCache.record(keys().i, frame: iAnswer, id: Data("1".utf8))
+      let liveTaintBytes = liveTaintCache.byteCount
+      var liveTaint = DeferredSession(base: base, cache: liveTaintCache)
+      _ = liveTaint.client(initLine)
+      _ = liveTaint.client(notified)
+      check(
+        "a live list under id 7 starts the server",
+        liveTaint.client(listLine(token: 1, id: 7)) == .spawn)
+      var liveTaintFilter = liveTaint.filter()
+      liveTaintFilter.client(.parse(cancelSeven))
+      liveTaintFilter.client(.parse(callSeven))
+      _ = liveTaintFilter.server(iAnswer)
+      check(
+        "a call reusing the cancelled live list's id gets its answer",
+        liveTaintFilter.server(callSevenAnswer) == .pass)
+      check(
+        "and the answer is not recorded as the list's, and nothing is disabled",
+        liveTaintCache.reply(for: keys().l) == nil && liveTaintCache.byteCount == liveTaintBytes
+          && !liveTaintCache.isDisabled(surface: "mail"))
+
+      let servedTaintCache = warmCache()
+      let servedTaintBytes = servedTaintCache.byteCount
+      var servedTaint = DeferredSession(base: base, cache: servedTaintCache)
+      _ = servedTaint.client(initLine)
+      _ = servedTaint.client(notified)
+      check(
+        "a list under id 7 is served by the host",
+        servedTaint.client(listLine(token: 1, id: 7))
+          == .answer(Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":7}"#.utf8) + nl))
+      _ = servedTaint.client(cancelSeven)
+      check("a call reusing id 7 starts the server", servedTaint.client(callSeven) == .spawn)
+      var servedTaintFilter = servedTaint.filter()
+      _ = servedTaintFilter.server(iAnswer)
+      check(
+        "the call gets its answer, though the host served a list under its id",
+        servedTaintFilter.server(callSevenAnswer) == .pass)
+      check(
+        "and the cache is untouched, and nothing is disabled",
+        !servedTaintCache.isDisabled(surface: "mail")
+          && servedTaintCache.byteCount == servedTaintBytes
+          && servedTaintCache.reply(for: keys().l)
+            == CachedReply(frame: lAnswer, id: Data("2".utf8))
+      )
+      check("and the filter retires", servedTaintFilter.isRetired)
+
+      // The transcript is bounded: past `transcriptLimit` the line that
+      // crosses it starts the server, even one the cache could answer.
+      let limit = DeferredSpawn.transcriptLimit
+      let filler = Data(
+        (#"{"jsonrpc":"2.0","method":"notifications/x","params":{"pad":""#
+          + String(repeating: "a", count: 1000) + #""}}"#).utf8)
+      var chatty = DeferredSession(base: base, cache: warmCache())
+      _ = chatty.client(initLine)
+      var held = 0
+      var lastStep = DeferredSession.Step.hold
+      while lastStep == .hold, held < 2 * limit / filler.count {
+        lastStep = chatty.client(filler)
+        held += 1
+      }
+      check(
+        "notifications past the transcript limit start the server",
+        lastStep == .spawn && chatty.overflowed && chatty.replay().count > limit
+          && chatty.replay().count - filler.count - 1 <= limit)
+      /// A notification whose line, newline included, is exactly `bytes` long.
+      func notification(bytes: Int) -> Data {
+        let head = #"{"method":"p","params":""#
+        let tail = #""}"#
+        return Data(
+          (head + String(repeating: "a", count: bytes - 1 - head.count - tail.count) + tail).utf8)
+      }
+      let list = listLine(token: 1)
+      let room = limit - (initLine.count + 1) - (list.count + 1)
+      var brim = DeferredSession(base: base, cache: warmCache())
+      _ = brim.client(initLine)
+      _ = brim.client(notification(bytes: room))
+      check(
+        "a list that brings the transcript to the limit exactly is answered",
+        brim.client(list) == .answer(lAnswer + nl) && brim.replay().count == limit)
+      check(
+        "and the next line, past it, starts the server",
+        brim.client(notified) == .spawn && brim.overflowed)
+      var over = DeferredSession(base: base, cache: warmCache())
+      _ = over.client(initLine)
+      _ = over.client(notification(bytes: room + 1))
+      check(
+        "a list the cache holds is not answered once it would take the transcript past the limit",
+        over.client(list) == .spawn && over.overflowed && over.replay().count == limit + 1)
+
+      var spent = DeferredSession(base: base, cache: warmCache())
+      _ = spent.client(callLine)
+      let spentReplay = spent.replay()
+      check(
+        "a session that said spawn says it again and keeps its transcript",
+        spent.client(initLine) == .spawn && spent.replay() == spentReplay
+          && spent.trigger?.method == "tools/call")
     }
 
     print("\n\(checks - failures)/\(checks) passed")
