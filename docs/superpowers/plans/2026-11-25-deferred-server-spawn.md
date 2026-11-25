@@ -38,6 +38,7 @@
 Ships first, on its own, so Checkpoint A can measure real clients.
 
 **Files:**
+
 - Create: `apps/apple/Cupertino/McpFrame.swift`
 - Create: `apps/apple/Cupertino/DeferredSpawn.swift`
 - Modify: `apps/apple/Cupertino/RequestObserver.swift` (`init`, `note` at ~176, new `closed()`)
@@ -46,6 +47,7 @@ Ships first, on its own, so Checkpoint A can measure real clients.
 - Test: `scripts/unit-check.swift`
 
 **Interfaces:**
+
 - Produces:
   - `nonisolated struct McpFrame { enum Kind { case request, notification, response, unparsed }; let kind: Kind; let id: Data?; let method: String?; let params: Any?; let isError: Bool; static func parse(_ line: Data) -> McpFrame }`. `id` is the id re-serialised with `JSONSerialization` (`.fragmentsAllowed`), so `7` → `7`, `"a"` → `"a"` with quotes.
   - `McpFrame.canonical(_ value: Any?, droppingMeta: Set<String>) -> Data`: `.sortedKeys` + `.withoutEscapingSlashes`, `nil` → `null`, removes the named keys from a top-level `_meta` dict and drops `_meta` if it ends up empty.
@@ -85,28 +87,30 @@ check("said once", ct.saw(.parse(Data(#"{"id":4,"method":"tools/call"}"#.utf8)))
 
 - [ ] **Step 2: Run** `make unit`. Expected: compile failure, `cannot find 'McpFrame' in scope`.
 
-- [ ] **Step 3: Implement** `McpFrame.swift` and `DeferredSpawn.swift` per the Interfaces block. `ConnectTraffic` line format, exactly: `connect: <methods, comma-space> | meta: <sorted union of _meta keys seen on answerable requests, or none> | handshake: <first 8 hex of SHA-256 of the canonical handshake params, or none> | first: <method>`; `atClose()` returns the same with `| first: none (closed)` if `saw` never ended the phase. `ping` counts as part of the phase.
+- [ ] **Step 3: Implement** `McpFrame.swift` and `DeferredSpawn.swift` per the Interfaces block. `ConnectTraffic` line format, exactly: `connect: <methods, comma-space> | meta: <sorted union of _meta keys seen on answerable requests, or none> | handshake: <first 8 hex of SHA-256 of the canonical handshake params, or none> | first: <method> | params: <method>=<first 8 hex of SHA-256 of its canonical params, volatileMeta dropped>, … (each pair once, in the order seen), or none`; `atClose()` returns the same with `| first: none (closed)` if `saw` never ended the phase. `ping` counts as part of the phase. The line holds method names, `_meta` key names and hashes only, never a param's value or `clientInfo`.
 
 - [ ] **Step 4: Run** `make unit`. Expected: all `ok`, exit 0.
 
-- [ ] **Step 5: Wire the log.** `RequestObserver.init(surface:session:wiredClient:)` holds a `ConnectTraffic` under its existing request lock; `note(_:)` feeds each parsed line and logs a returned line as `hostLog(surface.id, .info, "\(line) (client \(wiredClient ?? "unknown"))")`; `closed()` logs `atClose()`. `run` passes `wiredClient` and calls `observer.closed()` after `group.wait()`. Run `make unit host-check format-swift-check`. Expected: all pass.
+- [ ] **Step 5: Wire the log.** `RequestObserver.init(surface:session:wiredClient:)` holds a `ConnectTraffic` under its existing request lock; `note(_:)` feeds each parsed line and logs a returned line as `hostLog(surface.id, .info, "\(line) (client \(wiredClient ?? "unknown"))")`, and to the unified log too (`Logger(subsystem: "io.mgcrea.cupertino", category: "connect")`, `.notice`, `.public`: the Activity log keeps 1000 rows and the stderr mirror goes nowhere for an app started with `open`); `closed()` logs `atClose()`. `run` passes `wiredClient` and calls `observer.closed()` after `group.wait()`. Run `make unit host-check format-swift-check`. Expected: all pass.
 
 - [ ] **Step 6: Commit** `feat(host): log what each session sends before its first call`.
 
 ### Checkpoint A: measure real clients (blocks merging Task 4, not writing it)
 
 - [ ] Build and install the Debug app the way the `use-the-dev-build` skill describes. Use Claude Code, Codex and Claude Desktop normally for a day.
-- [ ] Read the `connect:` lines from Cupertino's log in the Activity window. For each client, record which methods it sends before its first call, whether the handshake fingerprint is stable across its sessions, and which `_meta` keys appear.
+- [ ] Read the day's `connect:` lines from the unified log, not the Activity window (it keeps the last 1000 rows): `log show --style compact --last 1d --predicate 'subsystem == "io.mgcrea.cupertino" AND category == "connect" AND process == "Cupertino"'`. The process term leaves out what `make host-check` logs under the same subsystem. For each client, record which methods it sends before its first call, whether the handshake fingerprint is stable across its sessions, which `_meta` keys appear, and whether each method's `params:` fingerprint is stable across its sessions: one that differs between sessions whose handshake is the same names a request carrying a value that changes, and the `meta:` keys say which to look at.
 - [ ] Update the spec's "What clients send" section with the findings, and add any `_meta` key whose value varies between sessions to `DeferredSpawn.volatileMeta`. A client whose connect traffic includes a non-answerable method needs no code: it just spawns at connect. Commit `docs(host): connect traffic measured`.
 
 ### Task 2: The cache
 
 **Files:**
+
 - Create: `apps/apple/Cupertino/HandshakeCache.swift`
 - Modify: `Makefile` (`unit`, `host-check` lists)
 - Test: `scripts/unit-check.swift`
 
 **Interfaces:**
+
 - Consumes: `McpFrame.canonical`, `ServerBinaries` (`ServerResolution.swift`).
 - Produces:
   - `nonisolated struct HandshakeBase: Hashable { let surface: String; let build: String; let node: String; let script: String; let env: [String: String] }`
@@ -157,10 +161,12 @@ check("kill switch", !HandshakeCache.isOn(ServerBinaries(node: URL(fileURLWithPa
 ### Task 3: The session state machine and the reply filter
 
 **Files:**
+
 - Modify: `apps/apple/Cupertino/DeferredSpawn.swift`
 - Test: `scripts/unit-check.swift`
 
 **Interfaces:**
+
 - Consumes: `McpFrame`, `HandshakeCache`, `HandshakeKey`, `HandshakeBase`.
 - Produces:
   - `nonisolated struct SessionKeys { init(base: HandshakeBase); mutating func key(for frame: McpFrame) -> HandshakeKey? }`. Returns `nil` unless the frame is a request whose method is in `answerable`. The first handshake-method request sets `handshake` to its canonical params, and that handshake is included in every later key.
@@ -168,13 +174,17 @@ check("kill switch", !HandshakeCache.isOn(ServerBinaries(node: URL(fileURLWithPa
   - `nonisolated struct ReplyFilter { enum Verdict: Equatable { case pass, drop, mismatch(String) }; mutating func client(_ frame: McpFrame); mutating func server(_ line: Data) -> Verdict; var isRetired: Bool }`
 
 Rules `DeferredSession.client` follows:
+
 - `ping` follows the answerable-request rules below: a hit is answered with node's recorded bytes, a miss spawns.
 - Notification → transcript, `.hold`.
 - Answerable request that hits the cache (cache not disabled for the surface) → transcript, remember `(id, key, drop: true)`, `.answer(frame + "\n")`.
 - Anything else → transcript, `trigger` set, `.spawn`. A trigger that is an answerable miss is remembered as `(id, key, drop: false)` so its live answer is recorded.
 - `replay()` is the transcript lines joined with `\n`, plus a trailing `\n`.
+- The transcript is capped at `DeferredSpawn.transcriptLimit` (1 MB): the line that would take `replay()` past it spawns, whatever it is, even a hit.
+- A request under an id still remembered (a trigger before the spawn, or any request the filter sees after it) taints that entry: it is never recorded, and no difference disables anything. A live one passes whatever comes; a host-served one drops only the response byte for byte what the host served, and passes anything else. An SDK sends no response to a cancelled request, so without this a `tools/call` reusing a cancelled `tools/list` id was recorded as that tool list.
 
 `ReplyFilter` (built by `filter()`, carrying the remembered ids and `SessionKeys`):
+
 - `client(_:)` is called for every client frame after the spawn and before it is forwarded. While the connect phase is open, an answerable request is remembered as `(id, key, drop: false)`. The first request that isn't answerable closes the phase. The phase also starts closed if the trigger wasn't answerable.
 - `server(_:)` handles a response whose id is remembered by calling `cache.record`, giving `.mismatch(method)` on `.mismatch`. Otherwise it gives `.drop` when the entry was host-served and `.pass` when it wasn't. When an entry is both host-served and mismatched, the frame is still dropped. Everything else gives `.pass`.
 - `isRetired` is true when nothing is remembered and the phase is closed.
@@ -198,12 +208,14 @@ Rules `DeferredSession.client` follows:
 ### Task 4: Defer the spawn in `ServerHost`
 
 **Files:**
+
 - Create: `scripts/fixtures/stub-mcp-server.mjs`
 - Modify: `apps/apple/Cupertino/ServerHost.swift` (`serve` ~870, `run` ~1300, `pump` ~1508)
 - Modify: `Makefile` (`host-check`: pass `HOST_CHECK_NODE=$$(command -v node)` and the stub path)
 - Test: `scripts/host-check.swift`
 
 **Interfaces:**
+
 - Consumes: Tasks 1–3.
 - Produces:
   - `static var locateOverride: ((Surface) throws -> ServerBinaries)?` on `ServerHost`, read by `serve` in place of `ServerLocator.locate` when set. host-check only.
@@ -212,6 +224,7 @@ Rules `DeferredSession.client` follows:
   - The stub: `node stub-mcp-server.mjs` answers `initialize`, the four lists and `tools/call` with fixed results, written as `{"result":…,"jsonrpc":"2.0","id":…}`. It appends `<pid> <line>` for every line it receives to `$STUB_LOG`. When `$STUB_SKEW` names a method it answers that method differently. It exits on stdin EOF.
 
 How `run` works after the change. The environment is computed once with `spawnEnvironment`. If `HandshakeCache.isOn(binaries)` is false, `startServer` runs at once with an empty preamble and no filter, which is today's behaviour. Otherwise:
+
 1. Log `session open, server deferred`.
 2. Read the client socket into a `LineBuffer` and feed each line to `observer.saw` and `DeferredSession.client`. Write `.answer` bytes with `writeAll`.
 3. On `.spawn`, call `startServer` with `preamble = replay() + buffer.takePending()` and `filter = session.filter()`, and log `first <trigger method>, starting server (pid N)`.
@@ -219,13 +232,15 @@ How `run` works after the change. The environment is computed once with `spawnEn
 5. If the client hangs up while deferred, close and log; no process is ever started.
 
 The `HandshakeBase` holds:
+
 - `build`: `Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "unknown"`
 - `node` and `script`: `binaries.node.path` and `binaries.script.path`
 - `env`: the frozen environment
 
 Pumps while a filter is active:
-- **client→server:** parse each line and call `filter.client` *before* writing it to the child.
-- **server→client:** split into lines, apply `server(_:)`, and write the lines that pass, each followed by `\n`. On `.mismatch(m)`, log `.error` with `handshake cache: \(m) answered differently on replay; a key input is missing, the client already has the cached answer; cache off for \(surface.id) until restart` and call `assertionFailure` (Debug only).
+
+- **client→server:** parse each line and call `filter.client` _before_ writing it to the child.
+- **server→client:** split into lines, apply `server(_:)`, and write the lines that pass, each followed by `\n`. On `.mismatch(m)`, log `.error` with `handshake cache: \(m) answered differently on replay; a key input is missing, the client already has the cached answer; cache off for \(surface.id) until restart` and call `assertionFailure` (Debug only, and not on development binaries: `DeferredSpawn.assertsOnMismatch`. A rebuild under the dev opt-in changes answers without changing the key, and trapping would take the whole app down).
 - **Retirement:** once `isRetired`, write `takePending()` and copy raw, as today. The filter is shared by the two pump threads behind one `OSAllocatedUnfairLock`.
 
 - [ ] **Step 1: Write the failing host-check cases.** Set `ServerHost.locateOverride` to the stub and connect over the real socket with the existing `handshake` helper, as `cupertino/1 mail client=claude-code`:
@@ -244,12 +259,14 @@ Pumps while a filter is active:
 ### Task 5: Settings, trial and switching off reach deferred sessions; the Activity window
 
 **Files:**
+
 - Modify: `apps/apple/Cupertino/ServerHost.swift` (`settingsChanged` ~1001, `stopSessions` ~970, `endTrialSessions` ~929, the deferred phase from Task 4)
 - Modify: `apps/apple/Cupertino/Sessions.swift` (`Session.pid: Int32?`, `opened(id:surface:pid: Int32?)`, new `started(id: UUID, pid: Int32)`)
 - Modify: `apps/apple/Cupertino/MainWindow.swift:609`, `apps/apple/Cupertino/SurfaceDetail.swift:648`
 - Test: `scripts/host-check.swift`
 
 **Interfaces:**
+
 - Produces: `private let deferredSessions = OSAllocatedUnfairLock<[UUID: DeferredEntry]>`, where `struct DeferredEntry { let fd: Int32; let surface: String; let config: SpawnConfig; let onTrial: Bool }`.
 
 - [ ] **Step 1: Write the failing host-check cases** (stub as in Task 4, `UserDefaults.standard` of the check binary):
@@ -261,7 +278,7 @@ Pumps while a filter is active:
 - [ ] **Step 2: Run** `make host-check`. Expected: the new cases FAIL.
 - [ ] **Step 3: Implement.**
   - The deferred phase registers its `DeferredEntry` at start and removes it under the lock before `startServer` puts the pid in `serverPIDs`. `startServer`'s existing `settingsChanged()` re-check then covers the gap.
-  - `settingsChanged`, `stopSessions` and `endTrialSessions` each pick deferred entries by the same rule they use for pids, and remove them and `shutdown(fd, SHUT_RDWR)` *under the lock*, for the reason `endTrialSessions` already gives.
+  - `settingsChanged`, `stopSessions` and `endTrialSessions` each pick deferred entries by the same rule they use for pids, and remove them and `shutdown(fd, SHUT_RDWR)` _under the lock_, for the reason `endTrialSessions` already gives.
   - `Sessions.opened` takes `pid: nil` for a deferred session. `started` fills it in.
   - Both views show `not started` where they show `pid N` today.
 - [ ] **Step 4: Run** `make unit host-check format-swift-check` and build the app (`make build` or the Xcode scheme the repo uses). Expected: all pass, no warnings added.
@@ -270,24 +287,28 @@ Pumps while a filter is active:
 ### Task 6: The under-keying check against the real servers
 
 **Files:**
+
 - Create: `scripts/handshake-equivalence.mjs`
 - Modify: `Makefile` (new `handshake-check` target, after `host-check`; depends on the servers being built, as `smoke` does)
 
 **Interfaces:**
+
 - Consumes: `packages/<surface>/dist/cli.js` for the nine node surfaces, and each surface's `envPrefix` from `surfaces.json`.
 
 What it does. For each node surface, with writes off and with writes on (`<envPrefix>ALLOW_WRITES=1`), and for each era, it spawns fresh servers with `env = {PATH: "/usr/bin:/bin", HOME}`. The eras are:
+
 - legacy: `initialize` with `protocolVersion: "2025-06-18"`, then `notifications/initialized`, then the lists;
 - modern: the lists, each carrying `_meta` = the `ENVELOPE` from `packages/core/test/event-handlers.test.ts:85`.
 
 Each run is one variant. The variants differ only in what the key leaves out:
+
 - numeric versus string ids;
 - the list calls in two different orders, with `tools/list` sent twice;
 - different `_meta.progressToken` values.
 
 For every answerable method, it asserts that the response frames are byte-identical across variants once the id is normalised. It prints `ok <surface> <writes> <era> <method>` per assertion, and exits non-zero with a diff on the first difference.
 
-One sensitivity case must *differ*: `mail` `tools/list` with writes on versus off. This proves the check can see a difference at all.
+One sensitivity case must _differ_: `mail` `tools/list` with writes on versus off. This proves the check can see a difference at all.
 
 - [ ] **Step 1: Write the script**, including the sensitivity case, and the Makefile target. The target is portable: no GNU flags, and `$$` escapes for make 3.81.
 - [ ] **Step 2: Run** `pnpm -r build && make handshake-check`. Expected: every line `ok`, and the sensitivity case reported as `differs (expected)`.
@@ -297,7 +318,7 @@ One sensitivity case must *differ*: `mail` `tools/list` with writes on versus of
 
 - [ ] **Step 1: Run the gates.** Run `make unit host-check handshake-check format-swift-check smoke`. Expected: all pass. If `smoke` exits 144, see the memory note on orphaned screenshot instances.
 - [ ] **Step 2: Install the build.** Install the Debug build the way `use-the-dev-build` describes. Set `deferSpawnInDevelopment` to true in its preferences with `plutil` on `~/Library/Preferences` (not `defaults`: see the memory note on Cupertino's prefs), and relaunch it. Note the node count first: `ps -axo command | grep -c 'cli.js'`.
-- [ ] **Step 3: Check that an idle session starts nothing.** Open one new Claude Code session. Expected: 14 new `cupertino-bridge` processes, and no new node process.
+- [ ] **Step 3: Check that an idle session starts nothing.** The cache is empty after the relaunch, so the first session under each configuration misses and spawns all nine servers. Open one Claude Code session as a warm-up first, and let it finish connecting. Then note the node count again and open a second one, and measure on that. Expected for the second: 14 new `cupertino-bridge` processes, and no new node process.
 - [ ] **Step 4: Check that a call starts exactly one server.** In that session, call `apple_mail_list_accounts`. Expected: one new node process, for mail, and the same answer as before the change. In the log, `first tools/call, starting server (pid N)`.
 - [ ] **Step 5: Check settings still reach idle sessions.** Switch Mail's "Allow writes" off in Settings. Expected: sessions that hadn't started a Mail server reconnect, and their tool list no longer has the write tools.
-- [ ] **Step 6: Record the result.** After a day, record the node count against `bridges / 14 × 9` in the spec's Goal section, and commit `docs(host): deferred spawn measured`.
+- [ ] **Step 6: Record the result, including a restart.** After a day, record the node count against `bridges / 14 × 9` in the spec's Goal section. Then measure the cold-cache burst: with several sessions open, quit and relaunch the app (as an update does), let every client reconnect, and record how many node servers start and how many are still running an hour later. Every session that reconnects before a key's first answer is recorded spawns, and that server lives for the session, so expect up to one set per session, not one per configuration. Record both numbers in the spec beside the single-flight follow-up, and commit `docs(host): deferred spawn measured`.

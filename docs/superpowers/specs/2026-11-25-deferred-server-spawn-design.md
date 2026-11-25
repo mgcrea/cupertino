@@ -35,8 +35,14 @@ mail/calendar/safari, same day).
   (the transcript replay below is exactly what a re-spawn needs), and stays out of this one.
 - **The in-process Swift surfaces** (desktop, simulator, screen, sound, shell). They cost no process
   per session already.
-- **Persisting the cache.** It is in memory and rebuilt after an app restart: the first connection
-  under each configuration pays one spawn.
+- **Persisting the cache.** It is in memory and rebuilt after an app restart. Until a key's first
+  answer is recorded, every session that asks under it misses and spawns, and that server then
+  lives as long as its session. So it is not "the first connection under each configuration pays
+  one spawn": every session arriving before that first record does. That is exactly what happens
+  after an app update or restart, when every wired client reconnects at once, and after a
+  narrowing that closes all of a surface's deferred sessions together.
+- **Single-flight on misses.** Not in this change, and the recommended next step (see the
+  follow-up below): it turns that cold-cache burst into one spawn per key.
 
 ## Anti-goals
 
@@ -74,7 +80,10 @@ and the whitelist below covers it.
 
 Codex and Claude Desktop are not measured. **Plan step 1** adds a log line per session listing the
 methods it sent before its first non-list request, per wired client, and runs it for a day before
-the deferral is switched on. A client whose connect traffic falls outside the whitelist simply
+the deferral is switched on. The line goes to the unified log as well as the Activity log, so a
+day of it can be read back, and ends with a short fingerprint of each answerable request's params
+as the key holds them, so a field whose value changes between sessions shows as fingerprints that
+differ. A client whose connect traffic falls outside the whitelist simply
 spawns at connect, as today: correct, just no saving for that client. Holding a listen or a
 subscribe open in the host until spawn is out of scope (it would need the host to understand them,
 against anti-goal 3).
@@ -96,7 +105,8 @@ against anti-goal 3).
   chunks and `@mgcrea/mcp-apple-core` from `node_modules`, so rebuilding `core` changes answers
   without changing anything the key sees. Release servers only change with an app update, which
   restarts the app and empties the cache. A hidden default turns the cache on in a dev build for
-  testing.
+  testing. Both defaults are read at connect, so flipping one applies to new connections; a
+  session already deferred keeps being answered until it calls or hangs up.
 - **Value**: the whole response frame of a success, as node wrote it; on a hit the host swaps in the
   client's `id` (number or string, verbatim) and leaves every other byte alone. Errors are never
   recorded.
@@ -107,8 +117,9 @@ against anti-goal 3).
   never recorded, so a modern-era ping starts the server, as it reached one before. A ping is
   part of the transcript and is replayed like any other line.
 - Bounded by bytes, not entries: a full listing is up to ~25 KB (Mail, writes on; ~106 KB across
-  eight surfaces, per `facade.ts`), so a cap of a few MB with LRU eviction. Never invalidated
-  otherwise.
+  eight surfaces, per `facade.ts`), so a cap of a few MB with LRU eviction. An entry counts its
+  key's params and handshake as well as the reply, since a client chooses those and can make them
+  as large. Never invalidated otherwise.
 
 ### Settings are frozen at connect
 
@@ -116,7 +127,7 @@ The environment is computed once, when the session connects, and used for the ca
 later, for the spawn: `run` takes that precomputed environment instead of reading
 `SpawnConfig.current` at spawn. So the server that starts is the one whose answers the client
 already holds. This matches a running server today, which also keeps its connect-time settings.
-That includes gate *values* such as Safari's cookie hosts, which `SpawnConfig` doesn't carry and
+That includes gate _values_ such as Safari's cookie hosts, which `SpawnConfig` doesn't carry and
 narrowing doesn't see, for deferred and running sessions alike. Changing that is a separate fix.
 
 ### The deferred phase (in `ServerHost.run`)
@@ -141,12 +152,23 @@ each to the `RequestObserver` as the pump does today, and appends it to the sess
      Once the set is empty the filter retires and the pump is byte-for-byte today's.
   4. Responses to whitelisted requests that missed are recorded into the cache as they pass.
 
+A client may send a request under an id the filter is still waiting on: after cancelling the
+first (an SDK sends no response to a cancelled request), or because the host already answered
+it. The one or two responses under that id can then be either request's, so that id's entry is
+never recorded, and no difference disables anything. A live one passes whatever comes; a host-served one drops only the
+response byte for byte what the host served, which is the replay's, and passes anything else.
+
+The transcript is bounded at 1 MB: the line that would take it past starts the server, whatever
+it is, even a request the cache could answer.
+
 Replaying the cached list calls too, not only `initialize`, keeps the child's state identical to a
 server that served the session from the start, and costs microseconds. It also makes **every
 spawn a check of the cache**: a replayed answer that differs from what the host served means the
 key is missing an input. The host then logs an error naming the surface and method, evicts that
-key, and turns the cache off for that surface until the app restarts. In a Debug build it asserts.
-The client has already received the stale answer, so the log says so too.
+key, and turns the cache off for that surface until the app restarts. In a Debug build it asserts,
+except on development binaries under the dev opt-in, where a rebuild of the servers is the
+expected cause and trapping would take every session down with the app. The client has already
+received the stale answer, so the log says so too.
 
 A client that hangs up during the deferred phase ends the session with no process ever started.
 
@@ -159,6 +181,8 @@ spawnEnv, onTrial)]`, the counterpart of `serverPIDs`:
   `shutdown(fd, SHUT_RDWR)` the ones that lost something. The client sees the EOF a killed server
   gives it today and reconnects under the new settings.
 - `endTrialSessions()` closes deferred trial sessions the way it closes `trialClients`.
+- `terminateChildren()`, for a quit or an update relaunch, closes every deferred session before its
+  sweep, so none starts a server during the grace.
 - The move from deferred to running takes the entry out of `deferredSessions` before the pid goes
   into `serverPIDs`, then calls `settingsChanged()` once more, the same close-the-window pattern
   `run` already uses after `process.run()`.
@@ -183,7 +207,7 @@ starting server (pid N)").
   the nine surfaces, writes on and off, both eras, the test holds the key fixed and varies what the
   key leaves out: client ids, the order and repetition of list calls, the volatile `_meta` fields,
   and `clientInfo` where the canonical handshake would not see it. A fresh server must give the same
-  answers every time. A test that varies an input that *is* in the key must get a miss.
+  answers every time. A test that varies an input that _is_ in the key must get a miss.
 - The runtime check above, exercised: a stub child that answers one replayed list differently must
   log the mismatch, evict the key and disable the cache for that surface.
 - Narrowing: switching writes off closes a deferred session; the reconnect lists the narrower tools.
@@ -198,6 +222,15 @@ starting server (pid N)").
 - The exact list of volatile `_meta` fields, from plan step 1's recordings.
 - The Activity window's presentation of a deferred session.
 - The name of the hidden default that enables the cache in a dev build.
+
+## Follow-up: single-flight on cache misses
+
+The recommended next step, before idle reaping (see Non-goals). A cold cache, after an app update
+or restart or a narrowing that closes a surface's deferred sessions, costs one server per session
+that connects before a key's first answer is recorded, and each of those servers then lives as
+long as its session. Holding the other misses on a key while one session's server is answering it,
+then serving them from the record, makes that one spawn per key. Plan Task 7 measures the burst
+first.
 
 ## Follow-up: an HTTP endpoint instead of bridges
 

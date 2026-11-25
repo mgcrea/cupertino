@@ -164,7 +164,8 @@ private nonisolated struct Remembered {
   /// remembered: after a cancel, or because the host had answered it.
   ///
   /// A response under the id may then be either request's, and an SDK sends
-  /// none at all for a cancelled one, so it is never recorded or compared:
+  /// none at all for a cancelled one, so it is never recorded, nor checked
+  /// for a mismatch:
   /// recording the reused request's answer under this key would serve, say, a
   /// `tools/call` result as every later session's tool list. One the host
   /// served drops only the response that is byte for byte what it served,
