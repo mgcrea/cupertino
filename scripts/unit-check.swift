@@ -2426,15 +2426,21 @@ struct UnitCheck {
         "a string token and an integer token stay apart",
         bare == [.dropped] && numeric == [.toStream(15, progress("7"))])
 
+      // Each release is proven by reusing the id on a new stream: a token
+      // left mapped to the old id would send a stray progress there.
       _ = router.fromChild(response(20))
+      _ = router.post(request(20), stream: 24)
       check(
         "a progress token is released with its response",
         router.fromChild(progress(#""p1""#)) == [.dropped])
+      router.closeStream(24)
       router.closeStream(15)
 
+      _ = router.post(request(21), stream: 25)
       check(
         "a closed stream releases its progress token",
         router.fromChild(progress("7")) == [.dropped])
+      router.closeStream(25)
 
       router.openGet(stream: 1)
       _ = router.post(request(22, "tools/call", token: "true"), stream: 16)
