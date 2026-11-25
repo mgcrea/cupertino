@@ -600,5 +600,26 @@ extension WiringCheck {
     _ = try? ClientWiringMerge.write(
       Data(text.utf8), to: codex, backupSuffix: "cupertino-backup", holdsToken: true)
     check("and so is a TOML one", mode(codex) == 0o600)
+
+    // `replaceItemAt` keeps the original's permissions, so an existing 0644
+    // config would hold the new token at 0644 between the swap and any chmod
+    // after it. It has to be 0600 already when the swap happens.
+    for (name, holdsToken) in [("cursor.json", true), ("plain.json", false)] {
+      let existing = scratchHome.appendingPathComponent(name)
+      place("{}", at: existing, mode: 0o644)
+      var atSwap: Int?
+      ClientWiringMerge.beforeSwap = { atSwap = mode($0) }
+      defer { ClientWiringMerge.beforeSwap = nil }
+      _ = try? ClientWiringMerge.write(
+        Data("{}".utf8), to: existing, backupSuffix: "cupertino-backup", holdsToken: holdsToken)
+      if holdsToken {
+        check("an existing 0644 config is already 0600 at the swap", atSwap == 0o600)
+        check("and after it", mode(existing) == 0o600)
+      } else {
+        check(
+          "one that holds no token keeps its own mode through the swap",
+          atSwap == 0o644 && mode(existing) == 0o644)
+      }
+    }
   }
 }

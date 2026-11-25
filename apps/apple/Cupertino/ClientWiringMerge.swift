@@ -767,8 +767,15 @@ nonisolated enum ClientWiringMerge {
     // machine slept is worse than one not written at all.
     let temp = try temporaryFile(holding: data, beside: url, holdsToken: holdsToken)
     do {
-      // The temp is 0600 from creation; the target is set again after the
-      // swap, since `replaceItemAt` may carry the original's mode over.
+      // The temp is 0600 from creation, and `replaceItemAt` gives the new file
+      // the ORIGINAL's permissions: a 0644 config would hold the token at 0644
+      // from the swap until a chmod after it, and keep it there if that chmod
+      // failed. So the live file is made 0600 first, failing closed before
+      // anything is swapped; the chmod after the swap stays as a backstop.
+      if holdsToken, existed {
+        try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+      }
+      beforeSwap?(url)
       _ = try fm.replaceItemAt(url, withItemAt: temp)
     } catch {
       // `replaceItemAt` consumes the temp on success only. A failure here would
@@ -783,6 +790,10 @@ nonisolated enum ClientWiringMerge {
     }
     return backup
   }
+
+  /// Called with the target just before the swap. `make wiring-check` only,
+  /// to see what mode the live config has at that moment.
+  nonisolated(unsafe) static var beforeSwap: ((URL) -> Void)?
 
   /// The file a write is staged in, beside its target so the swap is a rename.
   ///
@@ -816,11 +827,14 @@ nonisolated enum ClientWiringMerge {
         if errno == EINTR { continue }
         throw fail(errno)
       }
+      // No progress on a non-empty write is a failure, not a reason to spin.
+      if written == 0 { throw fail(EIO) }
       offset += written
     }
     guard close(fd) == 0 else {
+      let code = errno
       unlink(temp.path)
-      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+      throw POSIXError(POSIXErrorCode(rawValue: code) ?? .EIO)
     }
     return temp
   }
