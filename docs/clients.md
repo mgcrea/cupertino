@@ -7,15 +7,22 @@ tell you about a file it does not own.
 
 ## The seven clients
 
-| Client             | Config                                                            | Root key      | Format |
-| ------------------ | ----------------------------------------------------------------- | ------------- | ------ |
-| Claude Code        | `~/.claude.json`                                                  | `mcpServers`  | JSON   |
-| Claude Desktop     | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers`  | JSON   |
-| Cursor             | `~/.cursor/mcp.json`                                              | `mcpServers`  | JSON   |
-| LM Studio          | `~/.lmstudio/mcp.json`                                            | `mcpServers`  | JSON   |
-| Windsurf           | `~/.codeium/windsurf/mcp_config.json`                             | `mcpServers`  | JSON   |
-| Visual Studio Code | `~/Library/Application Support/Code/User/mcp.json`                | `servers`     | JSON   |
-| ChatGPT & Codex    | `~/.codex/config.toml`                                            | `mcp_servers` | TOML   |
+| Client             | Config                                                            | Root key      | Format | Transport |
+| ------------------ | ----------------------------------------------------------------- | ------------- | ------ | --------- |
+| Claude Code        | `~/.claude.json`                                                  | `mcpServers`  | JSON   | HTTP      |
+| Claude Desktop     | `~/Library/Application Support/Claude/claude_desktop_config.json` | `mcpServers`  | JSON   | bridge    |
+| Cursor             | `~/.cursor/mcp.json`                                              | `mcpServers`  | JSON   | HTTP      |
+| LM Studio          | `~/.lmstudio/mcp.json`                                            | `mcpServers`  | JSON   | bridge    |
+| Windsurf           | `~/.codeium/windsurf/mcp_config.json`                             | `mcpServers`  | JSON   | bridge    |
+| Visual Studio Code | `~/Library/Application Support/Code/User/mcp.json`                | `servers`     | JSON   | HTTP      |
+| ChatGPT & Codex    | `~/.codex/config.toml`                                            | `mcp_servers` | TOML   | HTTP      |
+
+**Transport** is what a fresh wire writes and what _Switch to HTTP_ moves a client to. A bridge
+client is wired with a `command` that starts `cupertino-bridge`, which reaches the app over its unix
+socket and launches it when it is not running. An HTTP client is wired with a `url` on Cupertino's
+loopback listener and needs the app running; see [HTTP entries](#http-entries).
+`ClientWiring.Client.transport` holds the column, and a client already wired keeps the transport
+its entries are in until somebody presses the button.
 
 Every one of them is written by the app. Three disagreements shape the design and none is
 Cupertino's to fix: clients disagree about **where servers live** in the file — `mcpServers` here,
@@ -126,6 +133,8 @@ clobbered.
 
 ## What goes in the file, and what never does
 
+A bridge entry:
+
 ```json
 {
   "cupertino-mail": {
@@ -135,8 +144,8 @@ clobbered.
 }
 ```
 
-A path and a surface name. **No credential, no token, no permission and no `env` block.** The
-grants are the app's, held once by a notarized binary and revocable in System Settings, which is the
+A path and a surface name. **No credential, no token, no permission and no `env` block.** An HTTP
+entry adds exactly one thing to that, a token naming the client (below). The grants are the app's, held once by a notarized binary and revocable in System Settings, which is the
 whole argument of `docs/distribution.md` stated in one entry. Writes used to be a client-side
 environment variable and are now the app's own toggle, so a client cannot carry a stale copy of a
 decision made somewhere else.
@@ -152,14 +161,80 @@ already use, which is why a config written before the rename is migrated rather 
 npm packages deliberately did **not** follow: they are MIT, they run standalone with no app at all,
 and naming them after the app would misdescribe them.
 
+## HTTP entries
+
+Cupertino also serves every surface at `http://127.0.0.1:<port>/s/<surface>`, as Streamable HTTP.
+Claude Code, Cursor and VS Code take it in their JSON shape:
+
+```json
+{
+  "cupertino-mail": {
+    "type": "http",
+    "url": "http://127.0.0.1:8830/s/mail",
+    "headers": { "Authorization": "Bearer <token>" }
+  }
+}
+```
+
+Codex spells it without a `type`, since a `url` is what makes an entry streamable HTTP there, and
+with `http_headers`:
+
+```toml
+[mcp_servers.cupertino-mail]
+url = "http://127.0.0.1:8830/s/mail"
+http_headers = { Authorization = "Bearer <token>" }
+```
+
+**The port** is 8830 for a release build and 8831 for a Debug one, so the two never take each
+other's. It is set in Settings › General › HTTP endpoint, from 1024 to 65535. Applying a new one
+stops the listener and starts it on that port, ending the HTTP sessions open at that moment; a port
+another process holds is refused, the old one goes on being served and stays stored, and the field
+says why. Only `127.0.0.1` is bound, never a name or another interface, so nothing off this Mac can
+connect.
+
+**Tokens.** Each HTTP client has one token, minted the first time it is wired over HTTP and kept in
+Cupertino's Keychain. It says which client is asking, which the bridge's `--client=` only claimed,
+and it reaches nothing a bridge entry does not. Because the token is a literal in the file, **every
+file holding one is 0600**: created that way, a 0644 file made 0600 before the swap rather than
+after, and the `.cupertino-backup` beside it too. A file with no token keeps the mode it had.
+
+**Reset token** in an HTTP client's pane signs that client out and back in at once: the token is
+revoked, and the entries are rewritten with a fresh one through the same write _Switch to HTTP_
+makes, Claude Code's folder blocks included, since they carry the same token. The pane then says "A
+new token is written; the old one no longer works." It is a reset rather than a revoke because the
+automatic rewire finds an entry with a revoked token stale and mints the client a new one, so a
+bare revoke would be undone without a word. _Remove Cupertino's entries_ is what signs a client out
+for good: it revokes the token once the entries are out, unless a Claude Code folder still carries
+it. The button shows only for a client whose entries are HTTP; one still on the bridge has no token.
+
+**Launch at login.** An HTTP entry reaches nobody while Cupertino is not running, and unlike the
+bridge it cannot start the app. So wiring a client over HTTP turns on launch at login, from a copy
+in an Applications folder, and the pane says HTTP clients need Cupertino running. A refusal is
+logged and the write stands.
+
+**Migration: nothing silent.** A client wired with bridge entries where HTTP is its transport reads
+_Wired the old way_, with a _Switch to HTTP_ button beside Update. Update keeps the bridge, for
+somebody who wants a new surface without the new transport. The automatic rewire never switches a
+client either way: bridge entries are kept bridge entries and HTTP entries HTTP ones. An HTTP entry
+naming a port Cupertino has moved off, or a token that is not the client's, reads _stale_, and
+Update rewrites it. Changing the port therefore leaves every HTTP client stale until each one's
+Update is pressed.
+
+**Folders.** A repository's `.mcp.json` (`project` scope) stays on the bridge: that file is meant to
+be committed and must never carry a token. A folder's block in `~/.claude.json` (`local` scope) is
+written over HTTP with Claude Code's token, since it lives in the same 0600 file as the client row.
+
 ## Recognising Cupertino's own entries
 
 `ClientWiringMerge.isOurs` is the load-bearing predicate. It decides what _Remove Cupertino's
 entries_ takes out, what a surface being switched off prunes, and what the app refuses to touch. It
-is one test: a `command` ending in `/Contents/Helpers/cupertino-bridge`.
+is two tests: a `command` ending in `/Contents/Helpers/cupertino-bridge`, or a `url` that is exactly
+`http://127.0.0.1:<port>/s/<surface>` for a surface Cupertino serves, on any port. Nothing looser:
+Bastion's `http://127.0.0.1:8720/s/prod/stripe` has two segments after `/s/`, and `localhost`,
+https and every other host are somebody else's.
 
-Deliberately **not** compared against the current bridge path. An entry left by a copy of the app
-that has since moved is still ours, and it is also the entry most worth cleaning up — refusing to
+Deliberately **not** compared against the current bridge path or port. An entry left by a copy of
+the app that has since moved, or on a port it has moved off, is still ours, and it is also the entry most worth cleaning up — refusing to
 recognise it would leave a dead entry in somebody's config forever. One accepted consequence,
 asserted in `wiring-check` since before this could delete anything: an entry pointing at a
 _different_ copy of Cupertino, a beta in `~/Downloads` say, counts as ours and will be rewritten or
@@ -199,19 +274,23 @@ of a session and writes it back on its own schedule, and `claude mcp add` takes 
 is a narrower window, not a closed one — which is why the audit that _notices_ a clobbered write
 matters more than the stamp does.
 
-A config we create is 0600; one we replace keeps its own mode. A repo's `.mcp.json` is the exception
-and is created with the default mode, because it is an ordinary project file the user may well
-commit.
+A config we create is 0600; one we replace keeps its own mode, unless it now holds a token, which
+makes it 0600 (see [HTTP entries](#http-entries)). A repo's `.mcp.json` is the exception and is
+created with the default mode, because it is an ordinary project file the user may well commit, and
+it never holds a token.
 
 ## The three writes, and why they cannot do each other's job
 
-- **Configure** — `merged`. Upserts an entry per switched-on surface, migrates a legacy `apple-*`
+- **Configure** — `merged`. In the transport the client's entries are already in (HTTP for one
+  with nothing of ours yet), upserts an entry per switched-on surface, migrates a legacy `apple-*`
   key that is ours, and prunes the key of a surface that has been switched off. Removal is gated
   twice: never a key just written, and never one `isOurs` disclaims.
 - **Remove Cupertino's entries** — `unmerged`. Takes out every entry `isOurs` claims and nothing
   else. User scope only: the per-folder blocks are a different scope with a different button, and a
   Remove on a client row that silently emptied ninety-eight folders would be doing far more than it
   says.
+- **Switch to HTTP** and **Reset token** are Configure's write over HTTP: the first moves a
+  bridge-wired HTTP client across, the second re-mints its token first.
 - **Remove…** on one foreign entry — `removing`. Takes out exactly one key, and **refuses a key
   `isOurs` claims**. This is the last step of moving a hand-configured server over: it is running
   through Cupertino now, and the entry that starts its own copy is still there.
@@ -292,6 +371,9 @@ value is used for its answer; the status is always computed from the file.
 | `not in allowlist` | Claude Code only: correct, and refused by its `allowedMcpServers` |
 | `denied`           | Claude Code only: correct, and named by its `deniedMcpServers`    |
 
+For an HTTP entry, `configured` also means its port is the one Cupertino listens on and its token
+is the client's; either one wrong reads `points elsewhere`, and Update fixes it.
+
 Plus one line no badge covers, on Codex only: `enabled = false`, which the client honours and no
 JSON client has.
 
@@ -310,7 +392,12 @@ Claude Code's rules: the scopes merge into one list, an unset list allows everyt
 nothing, `allowManagedMcpServersOnly` drops the user's allowlist but not its denylist, a stdio
 server passes on a `serverCommand` equal to its command and args in order (`env` ignored), a
 `serverName` counts only while the merged list holds no `serverCommand`, and a denylist match
-wins. The entry is judged as written in the file, so a list built for another copy of the app
+wins. An HTTP entry is a remote server to Claude Code and is judged by its `url` the same way: once
+the merged list holds any `serverUrl`, it passes only on a pattern its URL matches (`*` matches any
+run of characters, the rest only itself) and its `serverName` no longer counts; without one, it is
+matched by name. A `serverCommand` never admits an HTTP entry, and a `serverUrl` never admits a
+bridge one, so a list written for the bridge refuses a client switched to HTTP until it gains the
+URLs. The entry is judged as written in the file, so a list built for another copy of the app
 refuses it too.
 
 Only `configured` entries are judged: a `taken` key is somebody else's server, and a rule for a
@@ -320,14 +407,18 @@ wildcard, the card points at Bastion's _Update_. If managed settings set
 `allowManagedMcpServersOnly`, or a managed denylist names the surface, it says only whoever manages
 the Mac can change it. Otherwise it gives the entries to add, ready to paste into the existing array,
 in the kind the list already uses: `serverCommand` if it holds one, `serverName` if not, because the
-first `serverCommand` added to a list of names stops every stdio server it allows by name. A
+first `serverCommand` added to a list of names stops every stdio server it allows by name. An HTTP
+entry gets its exact URL under a list that matches by URL, never a `/s/*` wildcard, which would
+read as Bastion's. A
 repository's own settings merge into the same lists, so inside one the verdict can differ; the card
 says so.
 
 ### The whole file
 
-`configured`, `not configured`, `stale`, `incomplete` (wired before a surface shipped), `extra`
-(still wired for a surface since switched off) and `unreadable`. There used to be an `unknown`, for
+`configured`, `not configured`, `stale` (pointing at another copy, or for HTTP a port Cupertino has
+moved off or a token that is not the client's), `incomplete` (wired before a surface shipped),
+`extra` (still wired for a surface since switched off), `old transport` (an HTTP client still wired
+with the bridge: nothing is broken, and _Switch to HTTP_ finishes it) and `unreadable`. There used to be an `unknown`, for
 the clients whose config the app would only paste a line for; there are none. `extra` is amber rather than green: nothing is broken, and the
 entry only costs an assistant definitions it will never use — but it is a state a button can finish,
 and grey would file it with "nothing to do here".
@@ -356,7 +447,9 @@ Two files, one merge, and the choice is per folder rather than a setting:
 
 - **`local`** writes `projects[<dir>].mcpServers` inside `~/.claude.json` — the same file the client
   row writes, a different key inside it, and where `claude mcp add --scope local` would have put it.
+  Over HTTP, with Claude Code's token.
 - **`project`** writes `<dir>/.mcp.json`, which any Claude Code session opened there picks up.
+  Always bridge entries, never a token.
 
 The scope is a radio beside the button, not a preference, and `project` scope is why: it writes a
 file into somebody's git working tree, and a preference set once and applied silently months later
