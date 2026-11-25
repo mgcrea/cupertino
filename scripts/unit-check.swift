@@ -2179,16 +2179,31 @@ struct UnitCheck {
         "a query string is not part of the path",
         gate.check(head(path: "/s/mail?x=1")) == .admit(surface: "mail", client: "claude-code"))
 
-      let refusals = [
-        gate.check(head(host: "localhost:8830", authorization: "Bearer secret-token-text")),
-        gate.check(head(origin: "http://evil", authorization: "Bearer secret-token-text")),
-        gate.check(head(authorization: "Bearer secret-token-text")),
-        gate.check(head(path: "/s/nope", authorization: "Bearer t1")),
+      // Each step of the order is pinned by a request that fails two checks:
+      // only the earlier one may answer.
+      check(
+        "Host is checked before Origin",
+        status(gate.check(head(host: "localhost:8830", origin: "http://evil"))) == 400)
+      check(
+        "Origin is checked before the token",
+        status(gate.check(head(origin: "http://evil", authorization: "Bearer nope"))) == 403
+          && status(gate.check(head(origin: "http://evil", authorization: nil))) == 403)
+      check(
+        "the token is checked before the path, so no caller without one can list surfaces",
+        status(gate.check(head(path: "/s/nope", authorization: "Bearer nope"))) == 401
+          && status(gate.check(head(path: "/mcp", authorization: nil))) == 401)
+
+      let refusals: [(GateVerdict, Int)] = [
+        (gate.check(head(host: "localhost:8830", authorization: "Bearer secret-token-text")), 400),
+        (gate.check(head(origin: "http://evil", authorization: "Bearer secret-token-text")), 403),
+        (gate.check(head(authorization: "Bearer secret-token-text")), 401),
+        (gate.check(head(path: "/s/nope", authorization: "Bearer t1")), 404),
       ]
       check(
         "reason never carries the token",
-        refusals.allSatisfy { v in
-          status(v) != nil && !reason(v).contains("secret-token-text") && !reason(v).contains("t1")
+        refusals.allSatisfy { v, expected in
+          status(v) == expected && !reason(v).contains("secret-token-text")
+            && !reason(v).contains("t1")
         })
       check("the discover refusal is 404 until a client is measured", DiscoverRefusal.status == 404)
     }
