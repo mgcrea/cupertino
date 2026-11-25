@@ -125,8 +125,20 @@ nonisolated struct SessionKeys {
 /// A request whose response the reply filter is waiting for.
 private nonisolated struct Remembered {
   let key: HandshakeKey
-  /// The host already answered it: the server's response is a check, then dropped.
-  let servedByHost: Bool
+  /// What the host already answered it with, if it did: the server's response
+  /// is then a check, and dropped. Nil when the server's response is the
+  /// client's, and recorded.
+  let served: CachedReply?
+  /// The client sent another request under the same id while this one was
+  /// remembered: after a cancel, or because the host had answered it.
+  ///
+  /// A response under the id may then be either request's, and an SDK sends
+  /// none at all for a cancelled one, so it is never recorded or compared:
+  /// recording the reused request's answer under this key would serve, say, a
+  /// `tools/call` result as every later session's tool list. One the host
+  /// served drops only the response that is byte for byte what it served,
+  /// which is the replay's; anything else is the client's and passes.
+  var tainted = false
 }
 
 /// One session before its server starts: what to answer, and what to hand the
@@ -139,9 +151,8 @@ private nonisolated struct Remembered {
 /// first byte.
 ///
 /// An id is remembered once: a client reusing one the host is still waiting
-/// on gets no answer from the cache for it, but starts the server, so the
-/// first response under that id is the one compared and dropped and the
-/// second reaches the client.
+/// on gets no answer from the cache for it, but starts the server, and the
+/// entry under that id is tainted (see `Remembered.tainted`).
 nonisolated struct DeferredSession {
   enum Step: Equatable {
     /// Write this to the client, newline included.
@@ -173,14 +184,15 @@ nonisolated struct DeferredSession {
     let key = keys.key(for: frame)
     let fresh = frame.id.map { remembered[$0] == nil } ?? false
     if fresh, let key, let id = frame.id, let reply = cache.reply(for: key) {
-      remembered[id] = Remembered(key: key, servedByHost: true)
+      remembered[id] = Remembered(key: key, served: reply)
       return .answer(reply.frame(id: id) + Self.newline)
     }
     if fresh, let key, let id = frame.id {
       // A miss: its live answer is recorded for the next session.
-      remembered[id] = Remembered(key: key, servedByHost: false)
+      remembered[id] = Remembered(key: key, served: nil)
       triggerIsAnswerable = true
     }
+    if !fresh, frame.kind == .request, let id = frame.id { remembered[id]?.tainted = true }
     trigger = frame
     return .spawn
   }
@@ -238,16 +250,19 @@ nonisolated struct ReplyFilter {
   /// Called with every client frame after the spawn, before it is forwarded.
   ///
   /// A `ping` does not end the connect phase: it is answerable, so it is
-  /// remembered and its answer recorded like a list's. An id still remembered
-  /// keeps its first entry, so a reused one never turns a host-served answer
-  /// into a live one.
+  /// remembered and its answer recorded like a list's. A request under an id
+  /// still remembered, in the connect phase or after it, taints that entry
+  /// and does not replace it, so a reused id never turns a host-served answer
+  /// into a live one, nor gets its answer recorded under another request's key.
   mutating func client(_ frame: McpFrame) {
-    guard connectPhase, frame.kind == .request else { return }
+    guard frame.kind == .request else { return }
+    if let id = frame.id, remembered[id] != nil { remembered[id]?.tainted = true }
+    guard connectPhase else { return }
     guard let key = keys.key(for: frame), let id = frame.id else {
       connectPhase = false
       return
     }
-    if remembered[id] == nil { remembered[id] = Remembered(key: key, servedByHost: false) }
+    if remembered[id] == nil { remembered[id] = Remembered(key: key, served: nil) }
   }
 
   /// What to do with one line of the server's output.
@@ -256,11 +271,17 @@ nonisolated struct ReplyFilter {
     let frame = McpFrame.parse(line)
     guard frame.kind == .response, let id = frame.id, let entry = remembered.removeValue(forKey: id)
     else { return .pass }
-    let fallback: Verdict = entry.servedByHost ? .drop : .pass
+    if entry.tainted {
+      // Only to tell the replay from the client's own answer: nothing is
+      // recorded, and a difference disables nothing.
+      guard let served = entry.served else { return .pass }
+      return CachedReply(frame: line, id: id) == served ? .drop : .pass
+    }
+    let fallback: Verdict = entry.served == nil ? .pass : .drop
     // An error is never recorded, nor compared: it says nothing about the answer.
     guard !frame.isError else { return fallback }
     if cache.record(entry.key, frame: line, id: id) == .mismatch {
-      return .mismatch(method: entry.key.method, forward: !entry.servedByHost)
+      return .mismatch(method: entry.key.method, forward: entry.served == nil)
     }
     return fallback
   }

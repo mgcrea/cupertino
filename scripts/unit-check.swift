@@ -1909,8 +1909,9 @@ struct UnitCheck {
         "and the list after it is still recorded", pingCache.reply(for: keys().l) != nil)
 
       // A client reusing an id while the host still waits on the first: the
-      // first entry stands, so the first response under that id is the one
-      // compared and dropped, and the second reaches the client.
+      // first entry stands, tainted, so the first response under that id is
+      // dropped because it is what the host served, and the second reaches
+      // the client.
       let reuseCache = HandshakeCache()
       _ = reuseCache.record(keys().i, frame: iAnswer, id: Data("1".utf8))
       var reusing = DeferredSession(base: base, cache: reuseCache)
@@ -1936,6 +1937,62 @@ struct UnitCheck {
           && twiceFilter.server(Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":1}"#.utf8))
             == .pass
       )
+
+      // A request cancelled, then its id reused. The SDK answers a cancelled
+      // request with nothing, so the one response under that id is the new
+      // request's: it must reach the client, and be neither recorded under
+      // the old request's key nor compared with what the host served for it.
+      let cancelSeven = Data(
+        #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":7}}"#.utf8)
+      let callSeven = Data(
+        #"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"x"}}"#.utf8)
+      let callSevenAnswer = Data(#"{"result":{"content":[]},"jsonrpc":"2.0","id":7}"#.utf8)
+
+      let liveTaintCache = HandshakeCache()
+      _ = liveTaintCache.record(keys().i, frame: iAnswer, id: Data("1".utf8))
+      let liveTaintBytes = liveTaintCache.byteCount
+      var liveTaint = DeferredSession(base: base, cache: liveTaintCache)
+      _ = liveTaint.client(initLine)
+      _ = liveTaint.client(notified)
+      check(
+        "a live list under id 7 starts the server",
+        liveTaint.client(listLine(token: 1, id: 7)) == .spawn)
+      var liveTaintFilter = liveTaint.filter()
+      liveTaintFilter.client(.parse(cancelSeven))
+      liveTaintFilter.client(.parse(callSeven))
+      _ = liveTaintFilter.server(iAnswer)
+      check(
+        "a call reusing the cancelled live list's id gets its answer",
+        liveTaintFilter.server(callSevenAnswer) == .pass)
+      check(
+        "and the answer is not recorded as the list's, and nothing is disabled",
+        liveTaintCache.reply(for: keys().l) == nil && liveTaintCache.byteCount == liveTaintBytes
+          && !liveTaintCache.isDisabled(surface: "mail"))
+
+      let servedTaintCache = warmCache()
+      let servedTaintBytes = servedTaintCache.byteCount
+      var servedTaint = DeferredSession(base: base, cache: servedTaintCache)
+      _ = servedTaint.client(initLine)
+      _ = servedTaint.client(notified)
+      check(
+        "a list under id 7 is served by the host",
+        servedTaint.client(listLine(token: 1, id: 7))
+          == .answer(Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":7}"#.utf8) + nl))
+      _ = servedTaint.client(cancelSeven)
+      check("a call reusing id 7 starts the server", servedTaint.client(callSeven) == .spawn)
+      var servedTaintFilter = servedTaint.filter()
+      _ = servedTaintFilter.server(iAnswer)
+      check(
+        "the call gets its answer, though the host served a list under its id",
+        servedTaintFilter.server(callSevenAnswer) == .pass)
+      check(
+        "and the cache is untouched, and nothing is disabled",
+        !servedTaintCache.isDisabled(surface: "mail")
+          && servedTaintCache.byteCount == servedTaintBytes
+          && servedTaintCache.reply(for: keys().l)
+            == CachedReply(frame: lAnswer, id: Data("2".utf8))
+      )
+      check("and the filter retires", servedTaintFilter.isRetired)
 
       var spent = DeferredSession(base: base, cache: warmCache())
       _ = spent.client(callLine)
