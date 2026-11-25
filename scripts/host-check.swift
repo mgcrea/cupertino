@@ -1845,6 +1845,22 @@ struct HostCheck {
       check("HTTP: a reset ends its client's sessions (could not open them)", false)
     }
 
+    // A GET that declares a body has its body left unread, so the connection
+    // cannot carry another request: the stream says it closes, and does.
+    if let session = HTTPMCP(port: httpPort), session.initialize() != nil,
+      let get = HTTPProbe(port: httpPort)
+    {
+      get.request("GET", "/s/mail", headers: session.headers, body: Data("hello".utf8))
+      let status = get.head(within: 5)
+      let says = get.headers["connection"]?.lowercased()
+      _ = session.delete()
+      check(
+        "HTTP: a GET with a body is answered Connection: close, and closed when it ends",
+        status == 200 && says == "close" && get.closed(within: 5))
+    } else {
+      check("HTTP: a GET with a body (could not open a session)", false)
+    }
+
     // MCP-Protocol-Version: the 2025-06-18 transport says a server SHOULD
     // assume 2025-03-26 when it is absent, so only a version nobody ships is
     // refused, and logged.

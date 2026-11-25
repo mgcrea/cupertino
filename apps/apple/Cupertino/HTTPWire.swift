@@ -12,14 +12,17 @@ import Foundation
 /// - lines end in CRLF and the head ends at the first empty line;
 /// - the request line is split on spaces, the method uppercased, and the
 ///   target's query string dropped;
-/// - header names are trimmed and lowercased, values trimmed;
+/// - header names are lowercased, values trimmed;
 /// - a field sent more than once is joined with a bare `,`, in the order sent,
 ///   so a second `Host` or `Authorization` never quietly replaces the first.
 ///
-/// Two refusals the kit does not make: a head over `maxHeadBytes` (431), and
-/// a line still holding a CR, an LF or a NUL after the split, or a header with
-/// an empty name (400). A bare LF inside a value would otherwise ride into a
-/// header the gate reads.
+/// Refusals the kit does not make: a head over `maxHeadBytes` (431), and
+/// (400) a line still holding a CR, an LF or a NUL after the split, a header
+/// with an empty name, whitespace between a name and its colon, and a line
+/// folded onto the one before it (obs-fold, a line opening with a space or a
+/// tab). A bare LF inside a value would otherwise ride into a header the gate
+/// reads, and RFC 9112 has a server reject the other two rather than guess
+/// which header a folded or spaced line belongs to.
 nonisolated enum HTTPHeadParser {
   /// The largest head accepted, request line and headers and the blank line.
   static let maxHeadBytes = 16 * 1024
@@ -59,11 +62,18 @@ nonisolated enum HTTPHeadParser {
 
     var fields: [String: String] = [:]
     for line in lines where !line.isEmpty {
+      if line.first == " " || line.first == "\t" {
+        return .malformed("a header line folded onto the one before it")
+      }
       guard let colon = line.firstIndex(of: ":") else {
         return .malformed("malformed header line")
       }
-      let name = String(line[..<colon]).trimmingCharacters(in: .whitespaces).lowercased()
-      guard !name.isEmpty else { return .malformed("a header with no name") }
+      let raw = line[..<colon]
+      guard !raw.isEmpty else { return .malformed("a header with no name") }
+      guard raw.last != " ", raw.last != "\t" else {
+        return .malformed("whitespace between a header name and its colon")
+      }
+      let name = String(raw).lowercased()
       let value = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
       fields[name] = fields[name].map { "\($0),\(value)" } ?? value
     }

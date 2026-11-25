@@ -625,7 +625,7 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     let id = nextStreamID()
     switch session.post(
       body, stream: id, fd: exchange.fd,
-      head: HTTPWire.streamHead(sessionID: carriesID ? session.id : nil, close: exchange.closeAfter)
+      head: HTTPWire.streamHead(sessionID: carriesID ? session.id : nil, close: exchange.closes)
     )
     {
     case .gone:
@@ -649,14 +649,15 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     guard
       let stream = session.openGet(
         stream: id, fd: exchange.fd,
-        head: HTTPWire.streamHead(sessionID: nil, close: exchange.closeAfter))
+        head: HTTPWire.streamHead(sessionID: nil, close: exchange.closes))
     else { return exchange.refuse(404, "the session ended") }
     return hold(stream, id: id, of: session, exchange, &buffer)
   }
 
   /// Holds the connection while its stream is open, then gives the session
   /// the end of it. Bytes the client sent meanwhile are kept for the next
-  /// request.
+  /// request, unless the connection closes: a body still unread (a GET that
+  /// declared one) would be read as the next request's head.
   private func hold(
     _ stream: SSEStream, id: Int, of session: HTTPSession, _ exchange: Exchange,
     _ buffer: inout [UInt8]
@@ -665,7 +666,7 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     let end = stream.wait(early: &early)
     buffer += early
     session.streamEnded(id)
-    return end == .finished && !exchange.closeAfter
+    return end == .finished && !exchange.closes
   }
 }
 

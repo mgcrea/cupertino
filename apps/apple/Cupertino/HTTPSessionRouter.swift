@@ -32,9 +32,8 @@ nonisolated enum Delivery: Equatable {
 /// id `2` pending without either seeing the other's response.
 ///
 /// A response whose id is not pending (late, duplicated, or for a POST whose
-/// stream has closed) is not a response to anything on a POST stream, so it
-/// goes where every unrouted line goes: the GET stream, or nowhere. It is
-/// never delivered to a stream that has closed.
+/// stream has closed) is dropped: Streamable HTTP says a server MUST NOT send
+/// a response on the GET stream, and it answers nothing still open.
 nonisolated struct HTTPSessionRouter {
   let id: String
 
@@ -94,7 +93,8 @@ nonisolated struct HTTPSessionRouter {
   /// Where one line from the child goes, and whether a POST stream is done.
   mutating func fromChild(_ line: Data) -> [Delivery] {
     let frame = McpFrame.parse(line)
-    if frame.kind == .response, let id = frame.id, let stream = pending[id] {
+    if frame.kind == .response {
+      guard let id = frame.id, let stream = pending[id] else { return [.dropped] }
       forget(id)
       var deliveries: [Delivery] = [.toStream(stream, line)]
       waiting[stream]?.remove(id)

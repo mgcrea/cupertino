@@ -2293,10 +2293,19 @@ struct UnitCheck {
         HTTPHeadParser.parse(bytes("POST /s/mail HTTP/1.1\r\nHost: 1")) == .incomplete
           && HTTPHeadParser.parse([]) == .incomplete)
       check(
-        "names are lowercased, names and values trimmed, the method uppercased",
-        parsed("post /s/mail HTTP/1.1\r\n  X-Thing  :  a b  \r\n\r\n").map {
+        "names are lowercased, values trimmed, the method uppercased",
+        parsed("post /s/mail HTTP/1.1\r\nX-Thing:  a b  \r\n\r\n").map {
           $0.head.method == "POST" && $0.head.headers == ["x-thing": "a b"]
         } == true)
+      check(
+        "whitespace between a header's name and its colon is refused",
+        malformed("GET /s/mail HTTP/1.1\r\nHost : 127.0.0.1:8830\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nHost\t: 127.0.0.1:8830\r\n\r\n"))
+      check(
+        "a line folded onto the one before it (obs-fold) is refused",
+        malformed("GET /s/mail HTTP/1.1\r\nX-Thing: a\r\n b\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nX-Thing: a\r\n\tb\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\n  X-Thing: a\r\n\r\n"))
       let twice = parsed(
         "GET /s/mail HTTP/1.1\r\nHost: 127.0.0.1:8830\r\nhost: evil:80\r\n"
           + "Authorization: Bearer a\r\nAUTHORIZATION: Bearer b\r\n\r\n")
@@ -2694,9 +2703,17 @@ struct UnitCheck {
       closing.closeStream(7)
       let lateToGet = closing.fromChild(response(2))
       check(
-        "closing a stream forgets its ids",
-        closing.openPosts.isEmpty && lateDropped == [.dropped]
-          && lateToGet == [.toStream(1, response(2))])
+        "closing a stream forgets its ids, and a late response is dropped, GET or not",
+        closing.openPosts.isEmpty && lateDropped == [.dropped] && lateToGet == [.dropped])
+
+      var twice = HTTPSessionRouter(id: SessionID.mint())
+      twice.openGet(stream: 1)
+      _ = twice.post(request(50), stream: 7)
+      let firstAnswer = twice.fromChild(response(50))
+      check(
+        "a duplicate response is dropped, never sent on the GET stream",
+        firstAnswer == [.toStream(7, response(50)), .closeStream(7)]
+          && twice.fromChild(response(50)) == [.dropped])
 
       let minted = SessionID.mint()
       let hex = Set("0123456789abcdef")
