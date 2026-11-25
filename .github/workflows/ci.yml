@@ -157,6 +157,12 @@ jobs:
       # comes first without naming it here.
       - name: Build 📦
         run: pnpm run build
+      # The anti-goal guard of the deferred server spawn: the nine servers just
+      # built, in variants that differ only in what HandshakeCache's key leaves
+      # out, must answer the handshake, the lists and ping byte for byte alike.
+      # Here, after Build, because it checks packages/*/dist and builds nothing.
+      - name: Handshake answers 🤝
+        run: make handshake-check
       # The suite is entirely offline: osascript is faked, the Envelope Index is
       # a fixture built with node:sqlite, and .emlx files are written to a temp
       # dir. APPLE_MAIL_INTEGRATION is deliberately never set here — a runner

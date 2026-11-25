@@ -21,6 +21,10 @@ nonisolated enum DeferredSpawn {
 
   /// `_meta` keys whose values change from one session to the next without
   /// changing the answer.
+  ///
+  /// scripts/handshake-equivalence.mjs (`make handshake-check`) reads this
+  /// declaration from this file and varies every key it names, so keep it on
+  /// one line, as a literal: reshaped, the check fails rather than guess.
   static let volatileMeta: Set<String> = ["progressToken"]
 
   /// Bytes held without a newline past which the server is started and they

@@ -8,8 +8,8 @@
 // `HandshakeCache` (apps/apple/Cupertino/HandshakeCache.swift) instead of
 // starting a node server. A key holds the surface, the app build, the node and
 // script paths, the whole spawn environment, the session's handshake (method
-// plus params, keys sorted, `_meta.progressToken` dropped), the method and the
-// request's params (canonicalised the same way). The value is node's whole
+// plus params, keys sorted, the volatile `_meta` keys dropped), the method and
+// the request's params (canonicalised the same way). The value is node's whole
 // response frame, with only the id swapped in.
 //
 // The design's one way to be wrong is under-keying: an answer that depends on
@@ -20,7 +20,9 @@
 // - the request ids: small numbers, strings, large numbers;
 // - the order of the list calls and `ping`, with `tools/list` sent twice in
 //   some;
-// - the `_meta.progressToken` values;
+// - the values of the volatile `_meta` keys, which this script reads from
+//   `DeferredSpawn.volatileMeta` in apps/apple/Cupertino/DeferredSpawn.swift
+//   rather than keeping a copy, so a key added there is varied here too;
 // - the order of keys inside every params object.
 //
 // Everything the key does hold is the same across variants: the same script,
@@ -61,6 +63,33 @@ const ENVELOPE = {
   "io.modelcontextprotocol/clientInfo": { name: "test", version: "0.0.0" },
   "io.modelcontextprotocol/clientCapabilities": {},
 };
+
+// Set by `main` from the Swift source: see `readVolatileMeta`.
+let VOLATILE_META = [];
+
+// The `_meta` keys the cache key drops, from the one line of Swift that
+// declares them. The pattern is strict on purpose: if the declaration is
+// reshaped so it no longer matches, the check fails rather than varying
+// nothing.
+const readVolatileMeta = () => {
+  const path = join(ROOT, "apps/apple/Cupertino/DeferredSpawn.swift");
+  const source = readFileSync(path, "utf8");
+  const match = source.match(
+    /^ *static let volatileMeta: Set<String> = \[((?: *"[^"\\]+",?)+) *\]$/m,
+  );
+  const keys = match ? [...match[1].matchAll(/"([^"\\]+)"/g)].map((m) => m[1]) : [];
+  if (keys.length === 0) {
+    throw new CheckFailure(
+      `FAIL could not read DeferredSpawn.volatileMeta from ${path}: expected one line like ` +
+        `\`static let volatileMeta: Set<String> = ["progressToken"]\``,
+    );
+  }
+  return keys;
+};
+
+// One variant's values for every volatile `_meta` key.
+const volatileMeta = (variant) =>
+  Object.fromEntries(VOLATILE_META.map((key) => [key, variant.token]));
 
 const LISTS = ["tools/list", "prompts/list", "resources/list", "resources/templates/list"];
 // `ping` is answerable too: the host learns its answer like a list's, so it
@@ -124,7 +153,7 @@ const stepsFor = (variant, era) => {
       {
         method: "initialize",
         params: {
-          _meta: { progressToken: variant.token },
+          _meta: volatileMeta(variant),
           protocolVersion: "2025-06-18",
           capabilities: {},
           clientInfo: { name: "handshake-check", version: "0" },
@@ -133,7 +162,7 @@ const stepsFor = (variant, era) => {
       { notification: "notifications/initialized" },
       ...variant.order.map((method) => ({
         method,
-        params: { _meta: { progressToken: variant.token } },
+        params: { _meta: volatileMeta(variant) },
       })),
     ];
   }
@@ -141,7 +170,7 @@ const stepsFor = (variant, era) => {
   methods.splice(Math.min(variant.discoverAt, methods.length), 0, "server/discover");
   return methods.map((method) => ({
     method,
-    params: { _meta: { ...ENVELOPE, progressToken: variant.token } },
+    params: { _meta: { ...ENVELOPE, ...volatileMeta(variant) } },
   }));
 };
 
@@ -333,6 +362,8 @@ const checkCombination = async (surface, script, writes, era) => {
 
 const main = async () => {
   if (!HOME) throw new CheckFailure("FAIL HOME is not set");
+  VOLATILE_META = readVolatileMeta();
+  console.log(`volatile _meta keys varied: ${VOLATILE_META.join(", ")}`);
   let count = 0;
   let uncacheable = 0;
   const mailToolsList = {};
