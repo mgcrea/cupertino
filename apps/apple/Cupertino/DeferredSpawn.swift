@@ -27,6 +27,22 @@ nonisolated enum DeferredSpawn {
   /// are forwarded raw: no list call is this big, so whatever it is, it is not
   /// one the host can answer.
   static let oversized = 64 << 10
+
+  /// The most a session's transcript holds before its server is started
+  /// anyway: a client that keeps sending answerable requests or notifications
+  /// must not grow what the host keeps for it without bound.
+  static let transcriptLimit = 1 << 20
+
+  /// Whether a replay answered other than the cache holds traps a Debug build.
+  ///
+  /// Not on development binaries: under the dev opt-in, rebuilding a server
+  /// changes its answers without changing anything the key sees, so a
+  /// mismatch there is the rebuild, not a missing key input, and trapping
+  /// would take the whole app down with every session in it. The error is
+  /// still logged, and the surface still evicted and disabled.
+  static func assertsOnMismatch(_ binaries: ServerBinaries) -> Bool {
+    !binaries.isDevelopment
+  }
 }
 
 /// What a session sent before its first request a server has to answer.
@@ -177,9 +193,14 @@ nonisolated struct DeferredSession {
   private let cache: HandshakeCache
   private var keys: SessionKeys
   private var transcript: [Data] = []
+  /// What `replay()` would return, counted as lines are added.
+  private var transcriptBytes = 0
   private var remembered: [Data: Remembered] = [:]
   /// The request that started the server, once one has.
   private(set) var trigger: McpFrame?
+  /// The server was started because the transcript passed
+  /// `DeferredSpawn.transcriptLimit`, whatever `trigger` was.
+  private(set) var overflowed = false
   private var triggerIsAnswerable = false
 
   init(base: HandshakeBase, cache: HandshakeCache) {
@@ -191,10 +212,13 @@ nonisolated struct DeferredSession {
     guard trigger == nil else { return .spawn }
     let frame = McpFrame.parse(line)
     transcript.append(line)
-    if frame.kind == .notification { return .hold }
+    transcriptBytes += line.count + Self.newline.count
+    // Past the limit this line starts the server, whatever it is.
+    overflowed = transcriptBytes > DeferredSpawn.transcriptLimit
+    if frame.kind == .notification, !overflowed { return .hold }
     let key = keys.key(for: frame)
     let fresh = frame.id.map { remembered[$0] == nil } ?? false
-    if fresh, let key, let id = frame.id, let reply = cache.reply(for: key) {
+    if !overflowed, fresh, let key, let id = frame.id, let reply = cache.reply(for: key) {
       remembered[id] = Remembered(key: key, served: reply)
       return .answer(reply.frame(id: id) + Self.newline)
     }

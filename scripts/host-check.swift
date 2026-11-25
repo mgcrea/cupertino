@@ -1219,6 +1219,18 @@ struct HostCheck {
       check("narrowed while starting, it still ends (could not open one)", false)
     }
 
+    // A quit or an update relaunch: the sweep closes a session still deferred,
+    // which could otherwise start a server at its first call during the grace.
+    if let (client, booted) = deferredSession() {
+      ServerHost.shared.terminateChildren()
+      check("terminating every child closes a deferred session", client.closed(within: 1))
+      check(
+        "and nothing was started for the closed one", Stub.started().subtracting(booted).isEmpty)
+      client.hangUp()
+    } else {
+      check("terminating every child closes a deferred session (could not open one)", false)
+    }
+
     // Last: it stops every server admitted on the trial, which is all of these.
     if let (client, booted) = deferredSession() {
       ServerHost.shared.endTrialSessions()

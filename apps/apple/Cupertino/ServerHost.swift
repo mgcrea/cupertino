@@ -443,6 +443,12 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// Blocks for at most the grace and a second; see `ChildTermination`.
   ///
   /// Call `stop` first, so no new connection spawns a server after the sweep.
+  /// A session already connected and still deferred would spawn one at its
+  /// first call, during the grace below, so those are closed here first, as a
+  /// narrowing closes them: the client sees the end of stream and reconnects
+  /// to whichever copy comes next. One between the two maps, starting its
+  /// server at this instant, can still land after the snapshot; that server
+  /// exits on the end of its stdin when this process does.
   ///
   /// From the host's own table, never from `Sessions`. That list is observation
   /// for the Activity window, and an in-process session is filed there under the
@@ -451,6 +457,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// a number somebody made up, which is worse. In-process sessions need no
   /// signal: they are threads of this process and end with it.
   func terminateChildren() {
+    for (_, surface) in closeDeferred({ _, _ in true }) {
+      hostLog(surface, .info, "session closed before its server started, for the quit")
+    }
     let me = getpid()
     let processes = serverProcesses.withLock { Array($0.values) }
       .filter { $0.processIdentifier != me }
@@ -1477,11 +1486,14 @@ nonisolated final class ServerHost: @unchecked Sendable {
             behind += later + newline
           }
           let partial = lines.takePending()
+          let reason =
+            deferred.overflowed
+            ? "a transcript over \(DeferredSpawn.transcriptLimit >> 10) KB before any call"
+            : "first \(deferred.trigger?.method ?? "frame that is not a request")"
           start(
             Handoff(
               preamble: deferred.replay() + behind + partial, partial: partial, filter: filter,
-              unobserved: line + newline + behind + partial,
-              reason: "first \(deferred.trigger?.method ?? "frame that is not a request")"))
+              unobserved: line + newline + behind + partial, reason: reason))
           return
         }
       }
@@ -1500,8 +1512,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
 
     // Hung up, or unwritable, before anything needed a server. `serve` closes
-    // the socket; there is no process to stop. `closed` also drops the client
-    // name `RequestObserver` noted when it saw `initialize`.
+    // the socket; there is no process to stop. `closed` logs the connect line,
+    // since no call ever ended the connect phase.
     observer.closed()
     Task(priority: Sessions.priority) { @MainActor in Sessions.shared.closed(id: session) }
     hostLog(surface.id, .info, "session closed, no server was started")
@@ -1661,7 +1673,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // already an optional parameter and simply unused on this call; what is new
     // is that two threads now feed one observer, which is what the lock inside
     // it is for. It sees what reaches the client, not what the filter dropped.
-    let responses = filter.map { ServerRelay(filter: $0, surface: surface.id) }
+    let traps = DeferredSpawn.assertsOnMismatch(binaries)
+    let responses = filter.map { ServerRelay(filter: $0, surface: surface.id, traps: traps) }
     pump(
       from: fromChild.fileHandleForReading.fileDescriptor, to: client, group: group,
       transform: responses.map { relay in { @Sendable chunk in relay.relay(chunk) } },
@@ -1895,17 +1908,26 @@ nonisolated private final class ClientRelay: @unchecked Sendable {
 /// passed, dropped or logged as a mismatch, until the filter retires; then
 /// what is held and everything after goes through as it comes.
 ///
+/// While the filter is active the output is re-framed, not copied: an empty
+/// line is dropped, a `\r` before a newline is stripped, and an unterminated
+/// last line is lost if the server exits before finishing it (`LineBuffer`).
+/// None of that changes what a client sees from node, whose stdout transport
+/// writes one JSON frame per line, each ended by a bare `\n`, and nothing else.
+///
 /// `@unchecked` for the reason `ClientRelay` gives.
 nonisolated private final class ServerRelay: @unchecked Sendable {
   private let filter: SharedFilter
   private let surface: String
+  /// Whether a mismatch traps a Debug build; see `DeferredSpawn.assertsOnMismatch`.
+  private let traps: Bool
   private var framing = LineBuffer()
   private var retired = false
   private static let newline = Data("\n".utf8)
 
-  init(filter: SharedFilter, surface: String) {
+  init(filter: SharedFilter, surface: String, traps: Bool) {
     self.filter = filter
     self.surface = surface
+    self.traps = traps
   }
 
   func relay(_ chunk: Data) -> Data {
@@ -1929,7 +1951,9 @@ nonisolated private final class ServerRelay: @unchecked Sendable {
         hostLog(
           surface, .error,
           "handshake cache: \(method) \(what); cache off for \(surface) until restart")
-        assertionFailure("handshake cache: \(surface) \(method) answered differently on replay")
+        if traps {
+          assertionFailure("handshake cache: \(surface) \(method) answered differently on replay")
+        }
         if forward { out += line + Self.newline }
       }
     }

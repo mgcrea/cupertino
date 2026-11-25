@@ -66,8 +66,8 @@ nonisolated enum RecordOutcome: Equatable {
 /// Replies recorded from real servers, served to later sessions so a server is
 /// started only when a session makes a call the cache cannot answer.
 ///
-/// In memory only, bounded by `byteCap` with the least recently used entry
-/// evicted first. A surface whose server ever answers the same key two ways
+/// In memory only, bounded by `byteCap`, keys and replies both counted, with
+/// the least recently used entry evicted first. A surface whose server ever answers the same key two ways
 /// is disabled for the life of the process: its replies are not stable enough
 /// to serve.
 nonisolated final class HandshakeCache: @unchecked Sendable {
@@ -87,7 +87,7 @@ nonisolated final class HandshakeCache: @unchecked Sendable {
 
     mutating func remove(_ key: HandshakeKey) {
       guard let reply = entries.removeValue(forKey: key) else { return }
-      byteCount -= reply.byteCount
+      byteCount -= HandshakeCache.cost(key, reply)
       if let index = order.firstIndex(of: key) { order.remove(at: index) }
     }
   }
@@ -126,10 +126,10 @@ nonisolated final class HandshakeCache: @unchecked Sendable {
         state.bump(key)
         return .matched
       }
-      guard let reply, reply.byteCount <= byteCap else { return .uncacheable }
+      guard let reply, Self.cost(key, reply) <= byteCap else { return .uncacheable }
       state.entries[key] = reply
       state.order.append(key)
-      state.byteCount += reply.byteCount
+      state.byteCount += Self.cost(key, reply)
       while state.byteCount > byteCap, let oldest = state.order.first {
         state.remove(oldest)
       }
@@ -160,10 +160,21 @@ nonisolated final class HandshakeCache: @unchecked Sendable {
   /// `deferServerSpawn` set to false turns it off everywhere. Otherwise it is
   /// on, except for development binaries, which change under it: those take
   /// `deferSpawnInDevelopment` set to true.
+  ///
+  /// Read once per session, at connect, so flipping either applies to new
+  /// connections only. A session already deferred goes on being answered from
+  /// the cache until it makes a call or hangs up; neither default closes it
+  /// or starts its server.
   static func isOn(_ binaries: ServerBinaries, defaults: UserDefaults = .standard) -> Bool {
     if defaults.object(forKey: "deferServerSpawn") as? Bool == false { return false }
     if binaries.isDevelopment { return defaults.bool(forKey: "deferSpawnInDevelopment") }
     return true
+  }
+
+  /// What an entry counts against the cap: the reply, and the key's own
+  /// params and handshake, which a client chooses and can make as large.
+  fileprivate static func cost(_ key: HandshakeKey, _ reply: CachedReply) -> Int {
+    reply.byteCount + key.params.count + (key.handshake?.count ?? 0)
   }
 
   private static func disable(_ surface: String, in state: inout State) {

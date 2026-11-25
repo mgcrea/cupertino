@@ -1690,6 +1690,20 @@ struct UnitCheck {
       _ = small.record(k1, frame: big, id: Data("1".utf8))
       _ = small.record(k2, frame: big, id: Data("1".utf8))
       check("byte cap evicts oldest", small.reply(for: k1) == nil && small.reply(for: k2) != nil)
+      let tiny = Data(#"{"result":{},"jsonrpc":"2.0","id":1}"#.utf8)
+      let tinyBytes = CachedReply(frame: tiny, id: Data("1".utf8))!.byteCount
+      let keyed = HandshakeCache(byteCap: 100)
+      let heavy = HandshakeKey(
+        base: base, handshake: Data(repeating: UInt8(ascii: "h"), count: 40), method: "tools/list",
+        params: Data(repeating: UInt8(ascii: "p"), count: 40))
+      check(
+        "a key's own bytes count toward the cap",
+        tinyBytes < 100 && keyed.record(heavy, frame: tiny, id: Data("1".utf8)) == .uncacheable
+          && keyed.byteCount == 0)
+      _ = keyed.record(k1, frame: tiny, id: Data("1".utf8))
+      check("and toward the bytes held", keyed.byteCount == tinyBytes + k1.params.count)
+      keyed.disable(surface: "mail")
+      check("and leave with the entry", keyed.byteCount == 0)
       let d = UserDefaults(suiteName: "unit-check-\(UUID())")!
       check(
         "off for dev builds",
@@ -1704,6 +1718,17 @@ struct UnitCheck {
           ServerBinaries(
             node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
             isDevelopment: true), defaults: d))
+      check(
+        "a mismatch traps a Debug build on release binaries only",
+        DeferredSpawn.assertsOnMismatch(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: false))
+          && !DeferredSpawn.assertsOnMismatch(
+            ServerBinaries(
+              node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+              isDevelopment: true))
+      )
       d.set(false, forKey: "deferServerSpawn")
       check(
         "kill switch",
@@ -2038,6 +2063,49 @@ struct UnitCheck {
             == CachedReply(frame: lAnswer, id: Data("2".utf8))
       )
       check("and the filter retires", servedTaintFilter.isRetired)
+
+      // The transcript is bounded: past `transcriptLimit` the line that
+      // crosses it starts the server, even one the cache could answer.
+      let limit = DeferredSpawn.transcriptLimit
+      let filler = Data(
+        (#"{"jsonrpc":"2.0","method":"notifications/x","params":{"pad":""#
+          + String(repeating: "a", count: 1000) + #""}}"#).utf8)
+      var chatty = DeferredSession(base: base, cache: warmCache())
+      _ = chatty.client(initLine)
+      var held = 0
+      var lastStep = DeferredSession.Step.hold
+      while lastStep == .hold, held < 2 * limit / filler.count {
+        lastStep = chatty.client(filler)
+        held += 1
+      }
+      check(
+        "notifications past the transcript limit start the server",
+        lastStep == .spawn && chatty.overflowed && chatty.replay().count > limit
+          && chatty.replay().count - filler.count - 1 <= limit)
+      /// A notification whose line, newline included, is exactly `bytes` long.
+      func notification(bytes: Int) -> Data {
+        let head = #"{"method":"p","params":""#
+        let tail = #""}"#
+        return Data(
+          (head + String(repeating: "a", count: bytes - 1 - head.count - tail.count) + tail).utf8)
+      }
+      let list = listLine(token: 1)
+      let room = limit - (initLine.count + 1) - (list.count + 1)
+      var brim = DeferredSession(base: base, cache: warmCache())
+      _ = brim.client(initLine)
+      _ = brim.client(notification(bytes: room))
+      check(
+        "a list that brings the transcript to the limit exactly is answered",
+        brim.client(list) == .answer(lAnswer + nl) && brim.replay().count == limit)
+      check(
+        "and the next line, past it, starts the server",
+        brim.client(notified) == .spawn && brim.overflowed)
+      var over = DeferredSession(base: base, cache: warmCache())
+      _ = over.client(initLine)
+      _ = over.client(notification(bytes: room + 1))
+      check(
+        "a list the cache holds is not answered once it would take the transcript past the limit",
+        over.client(list) == .spawn && over.overflowed && over.replay().count == limit + 1)
 
       var spent = DeferredSession(base: base, cache: warmCache())
       _ = spent.client(callLine)
