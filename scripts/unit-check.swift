@@ -1677,9 +1677,9 @@ struct UnitCheck {
         #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"cc"}}}"#
           .utf8)
       let notified = Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8)
-      func listLine(token: Int) -> Data {
+      func listLine(token: Int, id: Int = 2) -> Data {
         Data(
-          #"{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"progressToken":\#(token)}}}"#
+          #"{"jsonrpc":"2.0","id":\#(id),"method":"tools/list","params":{"_meta":{"progressToken":\#(token)}}}"#
             .utf8)
       }
       let callLine = Data(
@@ -1850,6 +1850,71 @@ struct UnitCheck {
       check("not retired with an id pending", !pending.isRetired)
       _ = pending.server(lAnswer)
       check("retired once every served id is seen", pending.isRetired)
+
+      // The handshake's method is part of it: the SDK picks its era from which
+      // of the two the client sent, so the same params under each are two
+      // different sessions.
+      var viaInitialize = SessionKeys(base: base)
+      var viaDiscover = SessionKeys(base: base)
+      _ = viaInitialize.key(for: .parse(initLine))
+      _ = viaDiscover.key(
+        for: .parse(
+          Data(
+            #"{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"clientInfo":{"name":"cc"}}}"#
+              .utf8)))
+      check(
+        "an initialize and a server/discover with the same params are different handshakes",
+        viaInitialize.key(for: .parse(listLine(token: 1)))
+          != viaDiscover.key(for: .parse(listLine(token: 1))))
+
+      let pingCache = HandshakeCache()
+      var pinged = DeferredSession(base: base, cache: pingCache)
+      _ = pinged.client(initLine)
+      var afterPing = pinged.filter()
+      afterPing.client(.parse(Data(#"{"jsonrpc":"2.0","id":8,"method":"ping"}"#.utf8)))
+      afterPing.client(.parse(listLine(token: 1)))
+      _ = afterPing.server(iAnswer)
+      check("a ping after the spawn leaves the connect phase open", !afterPing.isRetired)
+      _ = afterPing.server(lAnswer)
+      check(
+        "and the list after it is still recorded", pingCache.reply(for: keys().l) != nil)
+
+      // A client reusing an id while the host still waits on the first: the
+      // first entry stands, so the first response under that id is the one
+      // compared and dropped, and the second reaches the client.
+      let reuseCache = HandshakeCache()
+      _ = reuseCache.record(keys().i, frame: iAnswer, id: Data("1".utf8))
+      var reusing = DeferredSession(base: base, cache: reuseCache)
+      _ = reusing.client(initLine)
+      _ = reusing.client(listLine(token: 1))
+      var reused = reusing.filter()
+      reused.client(
+        .parse(Data(#"{"jsonrpc":"2.0","id":1,"method":"prompts/list","params":{}}"#.utf8)))
+      check("a reused id keeps the host-served entry", reused.server(iAnswer) == .drop)
+      check(
+        "and the second response under it reaches the client",
+        reused.server(Data(#"{"result":{"prompts":[]},"jsonrpc":"2.0","id":1}"#.utf8)) == .pass)
+
+      var twice = DeferredSession(base: base, cache: warmCache())
+      _ = twice.client(initLine)
+      check(
+        "a hit under an id the host already answered starts the server instead",
+        twice.client(listLine(token: 1, id: 1)) == .spawn)
+      var twiceFilter = twice.filter()
+      check(
+        "and the replayed first answer under it is dropped, the second passed",
+        twiceFilter.server(iAnswer) == .drop
+          && twiceFilter.server(Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":1}"#.utf8))
+            == .pass
+      )
+
+      var spent = DeferredSession(base: base, cache: warmCache())
+      _ = spent.client(callLine)
+      let spentReplay = spent.replay()
+      check(
+        "a session that said spawn says it again and keeps its transcript",
+        spent.client(initLine) == .spawn && spent.replay() == spentReplay
+          && spent.trigger?.method == "tools/call")
     }
 
     print("\n\(checks - failures)/\(checks) passed")

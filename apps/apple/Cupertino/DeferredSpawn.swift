@@ -91,9 +91,11 @@ nonisolated struct ConnectTraffic {
 
 /// The cache keys of one session's requests.
 ///
-/// A key carries the session's handshake: the canonical params of its first
-/// `initialize` or `server/discover`, so a list is only served to a client
-/// that introduced itself the same way as the one it was recorded for.
+/// A key carries the session's handshake: the method and canonical params of
+/// its first `initialize` or `server/discover`, so a list is only served to a
+/// client that introduced itself the same way as the one it was recorded for.
+/// The method is part of it because the SDK picks its era from which of the
+/// two arrived: the same params under each are two different sessions.
 nonisolated struct SessionKeys {
   private let base: HandshakeBase
   private var handshake: Data?
@@ -104,14 +106,17 @@ nonisolated struct SessionKeys {
 
   /// The key `frame` is cached under, nil unless it is a request the host
   /// could answer. The first handshake request is keyed without a handshake,
-  /// and its params are the handshake of every later key.
+  /// and its method and params are the handshake of every later key.
   mutating func key(for frame: McpFrame) -> HandshakeKey? {
     guard frame.kind == .request, let method = frame.method,
       DeferredSpawn.answerable.contains(method)
     else { return nil }
     let params = McpFrame.canonical(frame.params, droppingMeta: DeferredSpawn.volatileMeta)
     let key = HandshakeKey(base: base, handshake: handshake, method: method, params: params)
-    if handshake == nil, DeferredSpawn.handshakes.contains(method) { handshake = params }
+    if handshake == nil, DeferredSpawn.handshakes.contains(method) {
+      // A NUL cannot appear in a method name, so the two halves cannot run together.
+      handshake = Data(method.utf8) + Data([0]) + params
+    }
     return key
   }
 }
@@ -126,10 +131,16 @@ private nonisolated struct Remembered {
 /// One session before its server starts: what to answer, and what to hand the
 /// server when it does.
 ///
-/// Fed every client line until `client` says `.spawn`. The transcript is
-/// every line but pings, in the order they came, the trigger included, so
-/// the server that starts sees the session as if it had been there from the
-/// first byte.
+/// Fed every client line until `client` says `.spawn`; past that it keeps
+/// saying `.spawn` and records nothing, since what follows is the relay's. The
+/// transcript is every line but pings, in the order they came, the trigger
+/// included, so the server that starts sees the session as if it had been
+/// there from the first byte.
+///
+/// An id is remembered once: a client reusing one the host is still waiting
+/// on gets no answer from the cache for it, but starts the server, so the
+/// first response under that id is the one compared and dropped and the
+/// second reaches the client.
 nonisolated struct DeferredSession {
   enum Step: Equatable {
     /// Write this to the client, newline included.
@@ -154,6 +165,7 @@ nonisolated struct DeferredSession {
   }
 
   mutating func client(_ line: Data) -> Step {
+    guard trigger == nil else { return .spawn }
     let frame = McpFrame.parse(line)
     if frame.kind == .request, frame.method == "ping", let id = frame.id {
       return .answer(
@@ -162,11 +174,12 @@ nonisolated struct DeferredSession {
     transcript.append(line)
     if frame.kind == .notification { return .hold }
     let key = keys.key(for: frame)
-    if let key, let id = frame.id, let reply = cache.reply(for: key) {
+    let fresh = frame.id.map { remembered[$0] == nil } ?? false
+    if fresh, let key, let id = frame.id, let reply = cache.reply(for: key) {
       remembered[id] = Remembered(key: key, servedByHost: true)
       return .answer(reply.frame(id: id) + Self.newline)
     }
-    if let key, let id = frame.id {
+    if fresh, let key, let id = frame.id {
       // A miss: its live answer is recorded for the next session.
       remembered[id] = Remembered(key: key, servedByHost: false)
       triggerIsAnswerable = true
@@ -226,13 +239,17 @@ nonisolated struct ReplyFilter {
   var isRetired: Bool { remembered.isEmpty && !connectPhase }
 
   /// Called with every client frame after the spawn, before it is forwarded.
+  ///
+  /// A `ping` is neutral, as it is everywhere else: it neither ends the
+  /// connect phase nor is recorded. An id still remembered keeps its first
+  /// entry, so a reused one never turns a host-served answer into a live one.
   mutating func client(_ frame: McpFrame) {
-    guard connectPhase, frame.kind == .request else { return }
+    guard connectPhase, frame.kind == .request, frame.method != "ping" else { return }
     guard let key = keys.key(for: frame), let id = frame.id else {
       connectPhase = false
       return
     }
-    remembered[id] = Remembered(key: key, servedByHost: false)
+    if remembered[id] == nil { remembered[id] = Remembered(key: key, servedByHost: false) }
   }
 
   /// What to do with one line of the server's output.
