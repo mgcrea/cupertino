@@ -600,7 +600,7 @@ nonisolated enum Changelog {
             ordinal: 1,
             headline: "The port and each client's token are in Settings.",
             body: [
-              "Settings › General › HTTP endpoint sets the port, from 1024 to 65535. A port another app holds is refused and the old one kept; after a change, HTTP clients read as out of date until you press Update in each one's pane. An HTTP client's pane has Reset token, which issues a new token and rewrites its entries with it: \"A new token is written; the old one no longer works.\" Remove Cupertino's entries still signs a client out for good.",
+              "Settings › General › HTTP endpoint sets the port, from 1024 to 65535. A port another app holds is refused and the old one kept. After a change, HTTP clients are rewritten to the new port at Cupertino's next launch or the next time a surface is switched, or at once by Update in each one's pane. An HTTP client's pane has Reset token, which issues a new token and rewrites its entries with it: \"A new token is written; the old one no longer works.\" Remove Cupertino's entries still signs a client out for good.",
             ]),
           Entry(
             ordinal: 2,

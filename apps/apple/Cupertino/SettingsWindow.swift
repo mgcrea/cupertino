@@ -399,8 +399,9 @@ struct GeneralPane: View {
         } else {
           Text(
             "Changing it restarts the listener and ends the HTTP sessions open now. Clients "
-              + "wired over HTTP then read as out of date until you press Update in each one's "
-              + "pane; nothing is rewritten for you."
+              + "wired over HTTP read as out of date until their entries name the new port: "
+              + "Update in each one's pane rewrites them at once, and Cupertino does it itself "
+              + "at its next launch or the next time a surface is switched."
           )
         }
       }

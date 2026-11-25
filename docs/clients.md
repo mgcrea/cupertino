@@ -216,9 +216,11 @@ logged and the write stands.
 _Wired the old way_, with a _Switch to HTTP_ button beside Update. Update keeps the bridge, for
 somebody who wants a new surface without the new transport. The automatic rewire never switches a
 client either way: bridge entries are kept bridge entries and HTTP entries HTTP ones. An HTTP entry
-naming a port Cupertino has moved off, or a token that is not the client's, reads _stale_, and
-Update rewrites it. Changing the port therefore leaves every HTTP client stale until each one's
-Update is pressed.
+naming a port Cupertino has moved off, or a token that is not the client's, reads _stale_. Update
+rewrites it, and so does the automatic rewire (see [Keeping configs current](#keeping-configs-current)),
+at the next launch or the next time a surface is switched: a client somebody already switched is
+kept working on the new port with its own token, and its transport never changes. Changing the port
+therefore leaves HTTP clients stale until then, or until each one's Update is pressed.
 
 **Folders.** A repository's `.mcp.json` (`project` scope) stays on the bridge: that file is meant to
 be committed and must never carry a token. A folder's block in `~/.claude.json` (`local` scope) is
@@ -396,8 +398,10 @@ wins. An HTTP entry is a remote server to Claude Code and is judged by its `url`
 the merged list holds any `serverUrl`, it passes only on a pattern its URL matches (`*` matches any
 run of characters, the rest only itself) and its `serverName` no longer counts; without one, it is
 matched by name. A `serverCommand` never admits an HTTP entry, and a `serverUrl` never admits a
-bridge one, so a list written for the bridge refuses a client switched to HTTP until it gains the
-URLs. The entry is judged as written in the file, so a list built for another copy of the app
+bridge one. So a list that matches by `serverCommand` refuses a client switched to HTTP until it
+gains the URLs (or, with no `serverUrl` in it, the names), and one that matches by `serverUrl`
+refuses it until its patterns cover the new URLs. A list of `serverName` rules alone admits the HTTP
+entry by name, as it did the bridge one. The entry is judged as written in the file, so a list built for another copy of the app
 refuses it too.
 
 Only `configured` entries are judged: a `taken` key is somebody else's server, and a rule for a
