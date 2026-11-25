@@ -249,6 +249,285 @@ final class Client {
   }
 }
 
+/// A raw HTTP/1.1 client on a loopback TCP socket, with no `URLSession`, so the
+/// bytes the listener writes are exactly the bytes read here.
+///
+/// One request at a time, over one connection that stays open between them,
+/// which is what keep-alive is for. An SSE body is read as it comes, one event
+/// at a time, out of its chunks.
+final class HTTPProbe {
+  enum Event: Equatable {
+    case message(String)
+    /// The body ended: the last chunk, or the connection closed.
+    case ended
+    case timedOut
+  }
+
+  private(set) var fd: Int32
+  private var raw: [UInt8] = []
+  private var decoded: [UInt8] = []
+  private var chunked = false
+  private var bodyEnded = false
+  private var peerClosed = false
+  private(set) var status = 0
+  private(set) var headers: [String: String] = [:]
+
+  init?(port: Int) {
+    fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return nil }
+    var one: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = in_port_t(UInt16(port).bigEndian)
+    address.sin_addr.s_addr = inet_addr("127.0.0.1")
+    let connected = withUnsafePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+      }
+    }
+    guard connected == 0 else {
+      close(fd)
+      return nil
+    }
+  }
+
+  deinit { hangUp() }
+
+  func hangUp() {
+    guard fd >= 0 else { return }
+    close(fd)
+    fd = -1
+  }
+
+  @discardableResult
+  func send(_ text: String) -> Bool { send(Data(text.utf8)) }
+
+  @discardableResult
+  func send(_ data: Data) -> Bool {
+    data.withUnsafeBytes { raw in
+      var offset = 0
+      while offset < raw.count {
+        let n = write(fd, raw.baseAddress! + offset, raw.count - offset)
+        if n < 0, errno == EINTR { continue }
+        guard n > 0 else { return false }
+        offset += n
+      }
+      return true
+    }
+  }
+
+  /// One request, written whole.
+  @discardableResult
+  func request(_ method: String, _ path: String, headers: [(String, String)], body: Data? = nil)
+    -> Bool
+  {
+    var text = "\(method) \(path) HTTP/1.1\r\n"
+    for (name, value) in headers { text += "\(name): \(value)\r\n" }
+    if let body { text += "Content-Length: \(body.count)\r\n" }
+    text += "\r\n"
+    return send(Data(text.utf8) + (body ?? Data()))
+  }
+
+  /// At least one more byte into `raw`, by `deadline`.
+  private func fill(_ deadline: Date) -> Bool {
+    guard !peerClosed else { return false }
+    while true {
+      let left = deadline.timeIntervalSinceNow
+      guard left > 0 else { return false }
+      var poller = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+      let ready = poll(&poller, 1, Int32(max(1, left * 1000)))
+      if ready < 0, errno == EINTR { continue }
+      guard ready > 0 else { return false }
+      var chunk = [UInt8](repeating: 0, count: 256 * 1024)
+      let n = read(fd, &chunk, chunk.count)
+      if n < 0, errno == EINTR { continue }
+      if n <= 0 {
+        peerClosed = true
+        return false
+      }
+      raw.append(contentsOf: chunk[0..<n])
+      return true
+    }
+  }
+
+  private func line(_ deadline: Date) -> String? {
+    while true {
+      if let end = (0..<max(0, raw.count - 1)).first(where: { raw[$0] == 13 && raw[$0 + 1] == 10 })
+      {
+        let text = String(decoding: raw[..<end], as: UTF8.self)
+        raw.removeFirst(end + 2)
+        return text
+      }
+      guard fill(deadline) else { return nil }
+    }
+  }
+
+  private func take(_ count: Int, _ deadline: Date) -> [UInt8]? {
+    while raw.count < count { guard fill(deadline) else { return nil } }
+    defer { raw.removeFirst(count) }
+    return Array(raw[..<count])
+  }
+
+  /// The status line and headers of the next response, within `seconds`.
+  func head(within seconds: Double) -> Int? {
+    let deadline = Date().addingTimeInterval(seconds)
+    guard let first = line(deadline) else { return nil }
+    let parts = first.split(separator: " ")
+    guard parts.count >= 2, let code = Int(parts[1]) else { return nil }
+    var fields: [String: String] = [:]
+    while let field = line(deadline), !field.isEmpty {
+      guard let colon = field.firstIndex(of: ":") else { continue }
+      fields[field[..<colon].lowercased()] = field[field.index(after: colon)...]
+        .trimmingCharacters(in: .whitespaces)
+    }
+    status = code
+    headers = fields
+    chunked = fields["transfer-encoding"]?.lowercased() == "chunked"
+    bodyEnded = false
+    decoded = []
+    return code
+  }
+
+  /// A body of `Content-Length`, or a whole chunked one.
+  func body(within seconds: Double) -> Data? {
+    let deadline = Date().addingTimeInterval(seconds)
+    if chunked {
+      while !bodyEnded { guard nextChunk(deadline) else { return nil } }
+      defer { decoded = [] }
+      return Data(decoded)
+    }
+    return take(Int(headers["content-length"] ?? "0") ?? 0, deadline).map { Data($0) }
+  }
+
+  private func nextChunk(_ deadline: Date) -> Bool {
+    guard let size = line(deadline), let count = Int(size, radix: 16) else { return false }
+    if count == 0 {
+      _ = line(deadline)
+      bodyEnded = true
+      return true
+    }
+    guard let payload = take(count, deadline), take(2, deadline) != nil else { return false }
+    decoded += payload
+    return true
+  }
+
+  /// The next SSE message's data, or why there is none within `seconds`.
+  func event(within seconds: Double) -> Event {
+    let deadline = Date().addingTimeInterval(seconds)
+    while true {
+      if let end = (0..<max(0, decoded.count - 1)).first(where: {
+        decoded[$0] == 10 && decoded[$0 + 1] == 10
+      }) {
+        let block = String(decoding: decoded[..<end], as: UTF8.self)
+        decoded.removeFirst(end + 2)
+        let data = block.split(separator: "\n").filter { $0.hasPrefix("data: ") }
+          .map { String($0.dropFirst(6)) }.joined(separator: "\n")
+        return .message(data)
+      }
+      if bodyEnded || peerClosed { return .ended }
+      if !nextChunk(deadline) { return peerClosed ? .ended : .timedOut }
+    }
+  }
+
+  /// Every SSE message until the stream ends, waited for up to `seconds`.
+  func messages(within seconds: Double) -> [String] {
+    let deadline = Date().addingTimeInterval(seconds)
+    var out: [String] = []
+    while case .message(let data) = event(within: deadline.timeIntervalSinceNow) {
+      out.append(data)
+    }
+    return out
+  }
+
+  /// Whether the server closes this connection within `seconds`.
+  func closed(within seconds: Double) -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while fill(deadline) {}
+    return peerClosed
+  }
+}
+
+/// One MCP session over HTTP, as a client speaking Streamable HTTP holds it.
+final class HTTPMCP {
+  let port: Int
+  let surface: String
+  let token: String
+  var id: String?
+  let probe: HTTPProbe
+
+  init?(port: Int, surface: String = "mail", token: String = "t1") {
+    guard let probe = HTTPProbe(port: port) else { return nil }
+    self.port = port
+    self.surface = surface
+    self.token = token
+    self.probe = probe
+  }
+
+  var headers: [(String, String)] {
+    var fields = [
+      ("Host", "127.0.0.1:\(port)"), ("Authorization", "Bearer \(token)"),
+      ("Accept", "application/json, text/event-stream"), ("Content-Type", "application/json"),
+    ]
+    if let id {
+      fields.append(("Mcp-Session-Id", id))
+      fields.append(("MCP-Protocol-Version", "2025-06-18"))
+    }
+    return fields
+  }
+
+  /// POSTs `body`, and the status with every message of its stream, or the
+  /// plain body's text for an answer that is not a stream.
+  func post(_ body: String, within seconds: Double = 5) -> (status: Int?, messages: [String]) {
+    probe.request("POST", "/s/\(surface)", headers: headers, body: Data(body.utf8))
+    guard let status = probe.head(within: seconds) else { return (nil, []) }
+    if probe.headers["content-type"] == "text/event-stream" {
+      return (status, probe.messages(within: seconds))
+    }
+    let text = probe.body(within: seconds).map { String(decoding: $0, as: UTF8.self) } ?? ""
+    return (status, text.isEmpty ? [] : [text])
+  }
+
+  /// `initialize`, keeping the session id it was answered with: the whole
+  /// answer, a result or an error.
+  func initialize() -> [String: Any]? {
+    let (status, messages) = post(Frames.initialize)
+    guard status == 200, let session = probe.headers["mcp-session-id"] else { return nil }
+    id = session
+    return messages.first.flatMap {
+      (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+    }
+  }
+
+  /// The whole opening a client makes: initialize, initialized, tools/list.
+  func open(token progress: Int = 900) -> Bool {
+    guard initialize() != nil else { return false }
+    guard post(Frames.initialized).status == 202 else { return false }
+    return post(Frames.list(token: progress)).messages.count == 1
+  }
+
+  func result(_ line: String) -> [String: Any]? {
+    let message = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any]
+    return message?["result"] as? [String: Any]
+  }
+
+  /// Opens the session's GET stream on a connection of its own, which is
+  /// returned once its head has arrived.
+  func openGet() -> HTTPProbe? {
+    guard let get = HTTPProbe(port: port) else { return nil }
+    get.request("GET", "/s/\(surface)", headers: headers)
+    return get.head(within: 5) == 200 ? get : nil
+  }
+
+  func delete() -> Int? {
+    probe.request("DELETE", "/s/\(surface)", headers: headers)
+    let status = probe.head(within: 5)
+    _ = probe.body(within: 5)
+    return status
+  }
+}
+
 /// A `TokenVault` in memory: host-check never reads or writes the Keychain.
 final class MemoryTokenVault: TokenVault, @unchecked Sendable {
   private let lock = NSLock()
@@ -1253,6 +1532,272 @@ struct HostCheck {
     } else {
       check("terminating every child closes a deferred session (could not open one)", false)
     }
+
+    // ─── HTTP: the loopback listener ────────────────────────────────────────
+    //
+    // Each HTTP session is a socketpair into `serve`, so everything above holds
+    // for it unchanged; these drive it through a raw socket, with the stub and
+    // the trial the deferred cases use. The cases below wait with deadlines that
+    // return as soon as their answer arrives, never a fixed sleep over a node start.
+    let http = ServerHost.shared.httpListener
+    check(
+      "HTTP: binds 127.0.0.1 only",
+      http?.boundAddress == "127.0.0.1:\(httpPort)" && ServerHost.shared.httpStartupError == nil)
+
+    mark = hostLogMark()
+    if let probe = HTTPProbe(port: httpPort) {
+      let started = Date()
+      probe.send(
+        "POST /s/mail HTTP/1.1\r\nHost: localhost:\(httpPort)\r\nAuthorization: Bearer t1\r\n"
+          + "Content-Type: application/json\r\nContent-Length: 10000000\r\n\r\n")
+      let status = probe.head(within: 1)
+      let refusal = hostLogLines(since: mark) {
+        $0.contains { $0.contains("Host is not 127.0.0.1") }
+      }
+      check(
+        "HTTP: refused before the body, within 1 s, and the Host refusal logged",
+        status == 400 && Date().timeIntervalSince(started) < 1
+          && refusal.contains { $0.contains("Host is not 127.0.0.1") })
+    } else {
+      check("HTTP: refused before the body (could not connect)", false)
+    }
+
+    mark = hostLogMark()
+    if let probe = HTTPProbe(port: httpPort) {
+      let fields = [("Host", "127.0.0.1:\(httpPort)"), ("Content-Type", "application/json")]
+      probe.request(
+        "POST", "/s/mail",
+        headers: fields + [("Origin", "http://evil.example"), ("Authorization", "Bearer t1")],
+        body: Data(Frames.initialize.utf8))
+      let origin = probe.head(within: 2)
+      let wrong = HTTPProbe(port: httpPort)
+      wrong?.request(
+        "POST", "/s/mail", headers: fields + [("Authorization", "Bearer not-the-token-417")],
+        body: Data(Frames.initialize.utf8))
+      let token = wrong?.head(within: 2)
+      let log = hostLogLines(since: mark) {
+        $0.contains { $0.contains("Origin present") }
+          && $0.contains { $0.contains("token not recognised") }
+      }
+      check(
+        "HTTP: foreign origin and bad token refused, logged without the token",
+        origin == 403 && token == 401 && log.contains { $0.contains("Origin present") }
+          && log.contains { $0.contains("token not recognised") }
+          && !log.contains { $0.contains("not-the-token-417") })
+    } else {
+      check("HTTP: foreign origin and bad token refused (could not connect)", false)
+    }
+
+    if let session = HTTPMCP(port: httpPort) {
+      session.id = SessionID.mint()
+      let first = session.delete()
+      let second = session.delete()
+      check(
+        "HTTP: a kept-alive connection answers each request once",
+        first == 404 && second == 404 && session.probe.head(within: 0.3) == nil)
+      session.id = nil
+      session.probe.request(
+        "POST", "/s/mail",
+        headers: session.headers + [("Content-Length", String(HTTPListener.maxBodyBytes + 1))])
+      check(
+        "HTTP: a body over 64 MB is refused 413 before it is read",
+        session.probe.head(within: 1) == 413)
+    } else {
+      check("HTTP: a kept-alive connection answers each request once (could not connect)", false)
+    }
+
+    // The same stub, warm, answered over the socket and over HTTP.
+    HandshakeCache.shared.reset()
+    warm()
+    var bridged: [[String: Any]] = []
+    if let client = Client(handshake: wired) {
+      client.send(Frames.initialize)
+      bridged += client.result(for: 1, within: 5).map { [$0] } ?? []
+      client.send(Frames.initialized)
+      client.send(Frames.list(token: 900))
+      bridged += client.result(for: 2, within: 5).map { [$0] } ?? []
+      client.send(Frames.call())
+      bridged += client.result(for: 3, within: 5).map { [$0] } ?? []
+      client.hangUp()
+    }
+    if let session = HTTPMCP(port: httpPort) {
+      var answers: [[String: Any]] = []
+      answers += (session.initialize()?["result"] as? [String: Any]).map { [$0] } ?? []
+      let accepted = session.post(Frames.initialized).status
+      answers += session.post(Frames.list(token: 900)).messages.compactMap(session.result)
+      answers += session.post(Frames.call()).messages.compactMap(session.result)
+      check(
+        "HTTP: a session answers as the bridge does",
+        bridged.count == 3 && answers.count == 3 && accepted == 202
+          && zip(bridged, answers).allSatisfy {
+            NSDictionary(dictionary: $0) == NSDictionary(dictionary: $1)
+          })
+    } else {
+      check("HTTP: a session answers as the bridge does (could not connect)", false)
+    }
+
+    mark = hostLogMark()
+    if let session = HTTPMCP(port: httpPort) {
+      let booted = Stub.started()
+      let known = Stub.pids()
+      let opened = session.open()
+      check(
+        "HTTP: no child before a call",
+        opened && Stub.started().subtracting(booted).isEmpty && Stub.pids() == known
+          && !hostLogLines(since: mark).contains(where: isServerStart))
+    } else {
+      check("HTTP: no child before a call (could not connect)", false)
+    }
+
+    /// An open session whose child has started, and that child's pid.
+    func started(_ session: HTTPMCP) -> String? {
+      let known = Stub.pids()
+      guard session.open(), session.post(Frames.call()).messages.count == 1 else { return nil }
+      return Stub.newPid(besides: known, within: 5)
+    }
+
+    if let first = HTTPMCP(port: httpPort), let second = HTTPMCP(port: httpPort) {
+      let one = started(first)
+      let two = started(second)
+      check(
+        "HTTP: two sessions get two children",
+        one != nil && two != nil && one != two && first.id != second.id)
+    } else {
+      check("HTTP: two sessions get two children (could not connect)", false)
+    }
+
+    if let session = HTTPMCP(port: httpPort) {
+      session.id = SessionID.mint()
+      let status = session.post(request(5, "ping")).status
+      check("HTTP: unknown session is 404", status == 404)
+    } else {
+      check("HTTP: unknown session is 404 (could not connect)", false)
+    }
+
+    if let session = HTTPMCP(port: httpPort), session.open() {
+      http?.stop()
+      var restarted = false
+      do {
+        try http?.start()
+        restarted = true
+      } catch {}
+      let again = HTTPMCP(port: httpPort)
+      again?.id = session.id
+      let stale = again?.post(request(6, "ping")).status
+      let fresh = HTTPMCP(port: httpPort)
+      check(
+        "HTTP: restart gives 404 then a fresh session works",
+        restarted && stale == 404 && fresh?.open() == true && fresh?.id != session.id)
+    } else {
+      check("HTTP: restart gives 404 then a fresh session works (could not open one)", false)
+    }
+
+    if let session = HTTPMCP(port: httpPort), let pid = started(session) {
+      let status = session.delete()
+      let after = HTTPMCP(port: httpPort)
+      after?.id = session.id
+      check(
+        "HTTP: DELETE ends the child",
+        status == 200 && Stub.exited(pid, within: 3)
+          && after?.post(request(7, "ping")).status == 404)
+    } else {
+      check("HTTP: DELETE ends the child (could not start one)", false)
+    }
+
+    HTTPListener.getCloseGrace = 0.5
+    if let session = HTTPMCP(port: httpPort), let pid = started(session),
+      let get = session.openGet()
+    {
+      let held = !Stub.exited(pid, within: 0.8)
+      get.hangUp()
+      check("HTTP: GET close ends after grace", held && Stub.exited(pid, within: 3))
+    } else {
+      check("HTTP: GET close ends after grace (could not open one)", false)
+    }
+    HTTPListener.getCloseGrace = 30
+
+    HTTPListener.idleLimit = 1
+    if let session = HTTPMCP(port: httpPort), let pid = started(session) {
+      let gone = Stub.exited(pid, within: 3)
+      check(
+        "HTTP: idle session ends",
+        gone && session.post(request(8, "ping")).status == 404)
+    } else {
+      check("HTTP: idle session ends (could not start one)", false)
+    }
+    HTTPListener.idleLimit = 1800
+
+    if let session = HTTPMCP(port: httpPort), session.open() {
+      let known = Stub.pids()
+      let big = Frames.call(9, text: String(repeating: "y", count: 4 * 1024 * 1024))
+      let answered = session.post(big, within: 10).messages.count == 1
+      let pid = Stub.newPid(besides: known, within: 5)
+      check(
+        "HTTP: large POST body arrives whole",
+        answered && pid.map { Stub.lines(of: $0, count: 4, within: 5).last } == big)
+    } else {
+      check("HTTP: large POST body arrives whole (could not open one)", false)
+    }
+
+    writes(true)
+    if let session = HTTPMCP(port: httpPort), session.open() {
+      let known = Stub.pids()
+      let slow =
+        #"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"stub_echo","arguments":{"delayMs":20000}}}"#
+      session.probe.request("POST", "/s/mail", headers: session.headers, body: Data(slow.utf8))
+      let streaming = session.probe.head(within: 5) == 200
+      let pid = Stub.newPid(besides: known, within: 5)
+      let read = pid.map { Stub.lines(of: $0, count: 4, within: 5).last } == slow
+      writes(false)
+      ServerHost.shared.settingsChanged()
+      let ended = session.probe.event(within: 2) == .ended
+      check(
+        "HTTP: narrowed setting ends open POST streams",
+        streaming && read && ended)
+      writes(true)
+    } else {
+      check("HTTP: narrowed setting ends open POST streams (could not open one)", false)
+    }
+
+    HTTPListener.getCloseGrace = 1
+    mark = hostLogMark()
+    if let session = HTTPMCP(port: httpPort, surface: "screen"), session.initialize() != nil,
+      session.post(request(11, "ping")).messages.count == 1, let get = session.openGet()
+    {
+      get.hangUp()
+      let early = hostLogLines(since: mark).contains("server stopped")
+      let log = hostLogLines(since: mark, within: 2) { $0.contains("server stopped") }
+      check(
+        "HTTP: in-process surface session tears down after its GET closes",
+        !early && log.contains("server stopped"))
+    } else {
+      check("HTTP: in-process surface session tears down (could not open one)", false)
+    }
+    HTTPListener.getCloseGrace = 30
+
+    if let session = HTTPMCP(port: httpPort) {
+      let (status, body) = session.post(request(12, "server/discover"))
+      let error =
+        body.first.flatMap {
+          (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+        }?["error"] as? [String: Any]
+      check(
+        "HTTP: discover without a session",
+        status == DiscoverRefusal.status && error?["code"] as? Int == -32601)
+    } else {
+      check("HTTP: discover without a session (could not connect)", false)
+    }
+
+    let sources = ProcessInfo.processInfo.environment["HOST_CHECK_SOURCES"] ?? ""
+    let binders = (FileManager.default.enumerator(atPath: sources)?.allObjects as? [String] ?? [])
+      .filter { $0.hasSuffix(".swift") }
+      .filter { name in
+        let text = (try? String(contentsOfFile: "\(sources)/\(name)", encoding: .utf8)) ?? ""
+        return text.contains("AF_INET") && text.contains("bind(")
+      }
+    check(
+      "HTTP: one listener — only HTTPListener.swift binds an AF_INET socket",
+      binders == ["HTTPListener.swift"])
 
     // Last: it stops every server admitted on the trial, which is all of these.
     if let (client, booted) = deferredSession() {
