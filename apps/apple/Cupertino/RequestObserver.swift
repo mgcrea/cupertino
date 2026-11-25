@@ -198,9 +198,23 @@ nonisolated final class RequestObserver: @unchecked Sendable {
     if let line { logConnect(line) }
   }
 
+  /// To the Activity log, and to the unified log, which keeps a day of them
+  /// where the Activity log keeps its last thousand rows and the stderr mirror
+  /// goes nowhere for an app started with `open`. Read them back with
+  /// `log show --style compact --last 1d --predicate 'subsystem == "io.mgcrea.cupertino"
+  /// AND category == "connect" AND process == "Cupertino"'`; the process term leaves out
+  /// what `make host-check` logs under the same subsystem.
+  ///
+  /// Public, because the line holds method names, `_meta` key names, hashes
+  /// and the wired client's id only, never a param's value or `clientInfo`
+  /// (see `ConnectTraffic`). Notice, not info: info is not kept on disk.
   private func logConnect(_ line: String) {
-    hostLog(surface.id, .info, "\(line) (client \(wiredClient ?? "unknown"))")
+    let text = "\(line) (client \(wiredClient ?? "unknown"))"
+    hostLog(surface.id, .info, text)
+    Self.connectLog.notice("\(self.surface.id, privacy: .public): \(text, privacy: .public)")
   }
+
+  private static let connectLog = Logger(subsystem: "io.mgcrea.cupertino", category: "connect")
 
   /// Feed the connect phase, while it is open.
   private func trace(_ line: Data) {

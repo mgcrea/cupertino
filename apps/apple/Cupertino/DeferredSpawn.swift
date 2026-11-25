@@ -34,12 +34,19 @@ nonisolated enum DeferredSpawn {
 /// Fed every client frame; says one line, once, when that request arrives, or
 /// at close if it never did. The line is what the deferral is measured with:
 /// which methods each client opens with, whether its handshake is the same
-/// from one session to the next, and which `_meta` keys ride on the requests
-/// the host would answer.
+/// from one session to the next, which `_meta` keys ride on the requests the
+/// host would answer, and a fingerprint of each such request's params as its
+/// key would hold them, so a field that changes from one session to the next
+/// shows as fingerprints that differ.
+///
+/// The line holds method names, `_meta` key names and hashes only: never a
+/// value from the params, nor the `clientInfo` a handshake carries.
 nonisolated struct ConnectTraffic {
   private var methods: [String] = []
   private var meta: Set<String> = []
   private var handshake: Data?
+  /// `method=fingerprint`, in the order first seen, each pair once.
+  private var params: [String] = []
   private var said = false
 
   mutating func saw(_ frame: McpFrame) -> String? {
@@ -53,11 +60,12 @@ nonisolated struct ConnectTraffic {
       let method = frame.method ?? "?"
       guard DeferredSpawn.answerable.contains(method) else { break }
       methods.append(method)
-      let params = frame.params as? [String: Any]
-      if let keys = (params?["_meta"] as? [String: Any])?.keys { meta.formUnion(keys) }
-      if handshake == nil, DeferredSpawn.handshakes.contains(method) {
-        handshake = McpFrame.canonical(frame.params, droppingMeta: DeferredSpawn.volatileMeta)
-      }
+      let object = frame.params as? [String: Any]
+      if let keys = (object?["_meta"] as? [String: Any])?.keys { meta.formUnion(keys) }
+      let canonical = McpFrame.canonical(frame.params, droppingMeta: DeferredSpawn.volatileMeta)
+      let entry = "\(method)=\(Self.fingerprint(canonical))"
+      if !params.contains(entry) { params.append(entry) }
+      if handshake == nil, DeferredSpawn.handshakes.contains(method) { handshake = canonical }
       return nil
     case .response, .unparsed:
       break
@@ -72,13 +80,16 @@ nonisolated struct ConnectTraffic {
   }
 
   private func line(first: String) -> String {
-    let fingerprint = handshake.map {
-      SHA256.hash(data: $0).prefix(4).map { String(format: "%02x", $0) }.joined()
-    }
-    return "connect: \(methods.isEmpty ? "none" : methods.joined(separator: ", "))"
+    "connect: \(methods.isEmpty ? "none" : methods.joined(separator: ", "))"
       + " | meta: \(meta.isEmpty ? "none" : meta.sorted().joined(separator: ", "))"
-      + " | handshake: \(fingerprint ?? "none")"
+      + " | handshake: \(handshake.map(Self.fingerprint) ?? "none")"
       + " | first: \(first)"
+      + " | params: \(params.isEmpty ? "none" : params.joined(separator: ", "))"
+  }
+
+  /// The first 8 hex digits of the SHA-256 of `bytes`.
+  static func fingerprint(_ bytes: Data) -> String {
+    SHA256.hash(data: bytes).prefix(4).map { String(format: "%02x", $0) }.joined()
   }
 
   private static func label(_ frame: McpFrame) -> String {

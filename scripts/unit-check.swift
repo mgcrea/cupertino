@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Asserts what `CallCapture` records and — more to the point — what it does
@@ -1576,15 +1577,59 @@ struct UnitCheck {
         .parse(Data(#"{"id":2,"method":"tools/list","params":{"_meta":{"progressToken":5}}}"#.utf8))
       )
       let line = ct.saw(.parse(Data(#"{"id":3,"method":"tools/call","params":{}}"#.utf8)))
+      /// The first 8 hex of the SHA-256 of `text`, worked out here rather than by the code checked.
+      func fp(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).prefix(4).map { String(format: "%02x", $0) }.joined()
+      }
+      let hello = fp(#"{"clientInfo":{"name":"x"}}"#)
       check(
-        "connect line lists methods",
-        line?.hasPrefix(
-          "connect: initialize, notifications/initialized, tools/list | meta: progressToken | handshake: "
-        ) == true)
-      check("connect line names the first call", line?.hasSuffix(" | first: tools/call") == true)
+        "connect line lists methods, meta keys, the handshake, the first call and each params",
+        line
+          == "connect: initialize, notifications/initialized, tools/list | meta: progressToken"
+          + " | handshake: \(hello) | first: tools/call"
+          + " | params: initialize=\(hello), tools/list=\(fp("{}"))")
       check(
         "said once",
         ct.saw(.parse(Data(#"{"id":4,"method":"tools/call"}"#.utf8))) == nil && ct.atClose() == nil)
+
+      var closing = ConnectTraffic()
+      _ = closing.saw(
+        .parse(Data(#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"x"}}}"#.utf8)))
+      check(
+        "a session that never called says so at close",
+        closing.atClose()
+          == "connect: initialize | meta: none | handshake: \(hello) | first: none (closed)"
+          + " | params: initialize=\(hello)")
+      check(
+        "a session that sent nothing says so too",
+        ConnectTraffic().atClose()
+          == "connect: none | meta: none | handshake: none | first: none (closed) | params: none")
+
+      var pinging = ConnectTraffic()
+      let pingSaid = pinging.saw(.parse(Data(#"{"id":1,"method":"ping"}"#.utf8)))
+      let listSaid = pinging.saw(.parse(Data(#"{"id":2,"method":"tools/list"}"#.utf8)))
+      let callSaid = pinging.saw(.parse(Data(#"{"id":3,"method":"tools/call"}"#.utf8)))
+      check(
+        "a ping keeps the connect phase open",
+        pingSaid == nil && listSaid == nil
+          && callSaid?.hasPrefix("connect: ping, tools/list | ") == true
+          && callSaid?.hasSuffix(" | params: ping=\(fp("null")), tools/list=\(fp("null"))") == true)
+
+      /// The connect line of a session listing tools with these `_meta` values, then calling.
+      func listed(_ meta: String) -> String? {
+        var traffic = ConnectTraffic()
+        _ = traffic.saw(
+          .parse(Data(#"{"id":2,"method":"tools/list","params":{"_meta":\#(meta)}}"#.utf8)))
+        return traffic.saw(.parse(Data(#"{"id":3,"method":"tools/call"}"#.utf8)))
+      }
+      check(
+        "a fingerprint does not move with the progress token",
+        listed(#"{"progressToken":5}"#) == listed(#"{"progressToken":"other"}"#)
+          && listed(#"{"progressToken":5}"#)?.hasSuffix(" | params: tools/list=\(fp("{}"))") == true
+      )
+      check(
+        "but does with any other _meta value, which is what it is there to show",
+        listed(#"{"x":1}"#) != listed(#"{"x":2}"#))
     }
 
     // ─── HandshakeCache ───
