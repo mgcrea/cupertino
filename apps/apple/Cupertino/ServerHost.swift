@@ -471,7 +471,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// nil, so the stored port always names the one being served.
   ///
   /// It never touches a client config. Entries naming the old port read as
-  /// stale, and the client pane's Update rewrites them.
+  /// stale, and the client pane's Update rewrites them; so does the automatic
+  /// rewire at the next launch or surface switch, where it runs
+  /// (`ClientWiring.rewiresAutomatically`).
   func moveHTTP(to port: Int) -> String? {
     let previous = http.withLock { $0.port } ?? HTTPListener.configuredPort
     stopHTTP()

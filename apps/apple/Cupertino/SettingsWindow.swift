@@ -398,10 +398,16 @@ struct GeneralPane: View {
             .fixedSize(horizontal: false, vertical: true)
         } else {
           Text(
-            "Changing it restarts the listener and ends the HTTP sessions open now. Clients "
-              + "wired over HTTP read as out of date until their entries name the new port: "
-              + "Update in each one's pane rewrites them at once, and Cupertino does it itself "
-              + "at its next launch or the next time a surface is switched."
+            "Changing it restarts the listener and ends the HTTP sessions open now. "
+              // The promise only where it is kept: a Debug build, a copy
+              // outside Applications, a capture and `autoWireClients NO` never
+              // rewrite on their own.
+              + (ClientWiring.rewiresAutomatically
+                ? "Clients wired over HTTP read as out of date until their entries name the "
+                  + "new port: Update in each one's pane rewrites them at once, and Cupertino "
+                  + "does it itself at its next launch or the next time a surface is switched."
+                : "Clients wired over HTTP then read as out of date until you press Update in "
+                  + "each one's pane; nothing is rewritten for you.")
           )
         }
       }
