@@ -457,6 +457,13 @@ nonisolated final class ServerHost: @unchecked Sendable {
     }
   }
 
+  /// Ends every HTTP session `client`'s token opened, as a hang-up would,
+  /// for Reset token. The revoke already refuses its next request; this is
+  /// what closes a GET stream that would otherwise go on delivering.
+  func endHTTPSessions(of client: String) {
+    httpListener?.endSessions(where: { $0.client == client })
+  }
+
   /// Moves the HTTP listener to `port`, for the Settings field: stops it, then
   /// starts it there. Every HTTP session ends on the way, as a restart ends
   /// them. A port that cannot be bound puts the listener back on the one it

@@ -434,8 +434,12 @@ extension WiringCheck {
     let old = token("cursor")
     try? FileManager.default.setAttributes(
       [.posixPermissions: 0o644], ofItemAtPath: cursor.wiring.path.path)
+    var ended: [String] = []
+    ClientWiring.endSessions = { ended.append($0) }
+    defer { ClientWiring.endSessions = { _ in } }
     let outcome = try? ClientWiring.resetToken(cursor)
     let new = token("cursor")
+    check("its live HTTP sessions are ended", ended == ["cursor"])
     check("Reset token writes", outcome?.backup != nil)
     check("the old token maps to nobody", ClientWiring.tokens.client(for: old) == nil)
     check("a new one is minted", !new.isEmpty && new != old)
@@ -488,6 +492,7 @@ extension WiringCheck {
       (try? ClientWiring.resetToken(cursor)) == nil)
     check("and stays on the bridge", allBridge(servers(of: cursor)))
     check("with no token minted", vault.holders.isEmpty)
+    check("and no session is ended for it", ended == ["cursor", "codex", "claude-code"])
   }
 
   static func projectScopeNeverGetsAToken() {

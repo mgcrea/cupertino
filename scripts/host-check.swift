@@ -1816,6 +1816,26 @@ struct HostCheck {
       "HTTP: one listener — only HTTPListener.swift binds an AF_INET socket",
       binders == ["HTTPListener.swift"])
 
+    // Reset token revokes the client's token, which refuses its next request,
+    // and then ends its sessions here, which closes a GET stream that would
+    // otherwise go on delivering. The revoke is wiring-check's; "t1" is kept
+    // for the checks below. Another client's session is left alone.
+    let otherToken = (try? httpTokens.token(for: "cursor")) ?? ""
+    if let mine = HTTPMCP(port: httpPort), mine.open(), let get = mine.openGet(),
+      let theirs = HTTPMCP(port: httpPort, token: otherToken), theirs.open()
+    {
+      ServerHost.shared.endHTTPSessions(of: "claude-code")
+      check(
+        "HTTP: a reset ends its client's sessions, the GET stream included",
+        get.event(within: 2) == .ended && mine.post(request(13, "ping")).status == 404)
+      check(
+        "HTTP: and another client's session keeps working",
+        theirs.post(request(14, "ping")).messages.count == 1)
+      _ = theirs.delete()
+    } else {
+      check("HTTP: a reset ends its client's sessions (could not open them)", false)
+    }
+
     // The Settings field moves the listener: a free port rebinds, and a taken
     // one is refused with the old port still served and no window warning.
     let moved = httpPort + 1

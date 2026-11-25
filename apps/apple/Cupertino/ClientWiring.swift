@@ -337,6 +337,12 @@ enum ClientWiring {
   /// Keychain.
   nonisolated(unsafe) static var tokens: HTTPTokens = .shared
 
+  /// Ends a client's live HTTP sessions once its token is revoked: the app
+  /// points it at `ServerHost.endHTTPSessions(of:)` at launch. A closure
+  /// because `make wiring-check` compiles this file without the host, and
+  /// records the call instead.
+  nonisolated(unsafe) static var endSessions: (String) -> Void = { _ in }
+
   /// The port HTTP entries name. A closure so `make wiring-check` can move it
   /// without writing a preference. A capture shows the release port whatever
   /// build took it.
@@ -756,6 +762,9 @@ enum ClientWiring {
       throw WriteError.collision(client: client.displayName, keys: taken)
     }
     try tokens.revoke(client.id)
+    // Before the rewrite, so a stream opened with the old token is closed
+    // even when the write below fails.
+    endSessions(client.id)
     let outcome: ClientWiringMerge.WriteOutcome
     if hasLocalScope(client), case .json(let path, let rootKey) = client.wiring {
       let wanted = try entries(for: client, over: .http)
