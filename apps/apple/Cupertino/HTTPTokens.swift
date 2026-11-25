@@ -7,21 +7,32 @@ import os
 /// A protocol so the checks can hold tokens in memory: a check that wrote to
 /// the login Keychain would leave items behind in the real one.
 nonisolated protocol TokenVault: Sendable {
-  func read(_ client: String) -> String?
+  /// The client's token, nil only when it has none. Every other failure
+  /// throws, so a token that could not be read is never taken for one that
+  /// is not there.
+  func read(_ client: String) throws -> String?
   func write(_ client: String, _ token: String) throws
   func delete(_ client: String) throws
-  /// Every stored token, keyed by client id.
-  func all() -> [String: String]
+  /// Every stored token, keyed by client id. Throws when they could not be
+  /// listed, which is not the same as there being none.
+  func all() throws -> [String: String]
 }
 
 /// The tokens in the Keychain: generic-password items, the service fixed, the
 /// account the client id.
 ///
+/// The service is keyed by the build's identifier, as `KeyStore`'s is: release
+/// keeps `io.mgcrea.cupertino.http-token` and Debug gets its own. Both builds
+/// wire the same client configs, and each caches its own map, so one shared
+/// item would be re-minted and revoked under the other; on the file-based
+/// Keychain the item also trusts only the build that made it, so the other's
+/// read would prompt.
+///
 /// This device only and after first unlock: a request can arrive while the
 /// screen is locked, and a token that synced to iCloud Keychain would sign a
 /// client in on another Mac, where nothing listens for it.
 nonisolated struct KeychainTokenVault: TokenVault {
-  static let service = "io.mgcrea.cupertino.http-token"
+  static let service = "\(BridgeProtocol.appIdentifier).http-token"
 
   enum VaultError: LocalizedError {
     case keychain(OSStatus)
@@ -35,15 +46,18 @@ nonisolated struct KeychainTokenVault: TokenVault {
     }
   }
 
-  func read(_ client: String) -> String? {
+  func read(_ client: String) throws -> String? {
     var query = Self.base(client)
     query[kSecReturnData as String] = true
     query[kSecMatchLimit as String] = kSecMatchLimitOne
     var item: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-      let data = item as? Data
-    else { return nil }
-    return String(data: data, encoding: .utf8)
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    if status == errSecItemNotFound { return nil }
+    guard status == errSecSuccess else { throw VaultError.keychain(status) }
+    guard let data = item as? Data, let token = String(data: data, encoding: .utf8) else {
+      throw VaultError.keychain(errSecDecode)
+    }
+    return token
   }
 
   func write(_ client: String, _ token: String) throws {
@@ -69,26 +83,26 @@ nonisolated struct KeychainTokenVault: TokenVault {
     }
   }
 
-  func all() -> [String: String] {
+  /// The accounts first, then each one's token. The file-based Keychain
+  /// refuses `kSecReturnData` with `kSecMatchLimitAll` (errSecParam), so a
+  /// single listing query cannot return the tokens themselves.
+  func all() throws -> [String: String] {
     let query: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: Self.service,
       kSecAttrSynchronizable as String: false,
       kSecMatchLimit as String: kSecMatchLimitAll,
       kSecReturnAttributes as String: true,
-      kSecReturnData as String: true,
     ]
     var items: CFTypeRef?
-    guard SecItemCopyMatching(query as CFDictionary, &items) == errSecSuccess,
-      let rows = items as? [[String: Any]]
-    else { return [:] }
+    let status = SecItemCopyMatching(query as CFDictionary, &items)
+    if status == errSecItemNotFound { return [:] }
+    guard status == errSecSuccess else { throw VaultError.keychain(status) }
+    guard let rows = items as? [[String: Any]] else { throw VaultError.keychain(errSecDecode) }
     var tokens: [String: String] = [:]
     for row in rows {
-      guard let client = row[kSecAttrAccount as String] as? String,
-        let data = row[kSecValueData as String] as? Data,
-        let token = String(data: data, encoding: .utf8)
-      else { continue }
-      tokens[client] = token
+      guard let client = row[kSecAttrAccount as String] as? String else { continue }
+      if let token = try read(client) { tokens[client] = token }
     }
     return tokens
   }
@@ -139,13 +153,14 @@ nonisolated final class HTTPTokens: @unchecked Sendable {
   /// The client's token, minted and stored on its first call.
   ///
   /// A client missing from the map is looked up in the vault by its own id
-  /// before one is minted, so a token the vault holds is never replaced by a
-  /// load that came back short.
+  /// before one is minted, and a token is minted only when that read says
+  /// there is none: a read that failed throws, rather than minting over a
+  /// token the vault may still hold.
   func token(for client: String) throws -> String {
     try state.withLock { state in
       load(&state)
       if let token = state.tokens[client] { return token }
-      if let stored = vault.read(client) {
+      if let stored = try vault.read(client) {
         state.tokens[client] = stored
         return stored
       }
@@ -182,9 +197,13 @@ nonisolated final class HTTPTokens: @unchecked Sendable {
     }
   }
 
+  /// Reads the vault until a listing succeeds. A failed one leaves the map
+  /// unloaded, so the next call tries again rather than refusing every
+  /// token until the app is relaunched. Tokens minted or read meanwhile stay
+  /// in the map, and the listing is merged under them.
   private func load(_ state: inout State) {
-    guard !state.loaded else { return }
-    state.tokens = vault.all()
+    guard !state.loaded, let listed = try? vault.all() else { return }
+    state.tokens.merge(listed) { cached, _ in cached }
     state.loaded = true
   }
 

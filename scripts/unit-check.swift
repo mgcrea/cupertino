@@ -16,14 +16,33 @@ import Foundation
 ///
 /// Run with `make unit`.
 /// A `TokenVault` in memory, so the token checks never touch the login Keychain.
+///
+/// `allFailures` makes the next that many `all()` calls throw, as the
+/// Keychain's does when it refuses a listing; `readFails` makes `read` throw.
 final class MemoryTokenVault: TokenVault, @unchecked Sendable {
+  struct Refused: Error {}
   private let lock = NSLock()
   private var items: [String: String] = [:]
+  var allFailures = 0
+  var readFails = false
 
-  func read(_ client: String) -> String? { lock.withLock { items[client] } }
+  func read(_ client: String) throws -> String? {
+    try lock.withLock {
+      if readFails { throw Refused() }
+      return items[client]
+    }
+  }
   func write(_ client: String, _ token: String) throws { lock.withLock { items[client] = token } }
   func delete(_ client: String) throws { _ = lock.withLock { items.removeValue(forKey: client) } }
-  func all() -> [String: String] { lock.withLock { items } }
+  func all() throws -> [String: String] {
+    try lock.withLock {
+      if allFailures > 0 {
+        allFailures -= 1
+        throw Refused()
+      }
+      return items
+    }
+  }
 }
 
 @main
@@ -2252,6 +2271,31 @@ struct UnitCheck {
         "a token already in the vault is found without minting",
         loaded.client(for: String(repeating: "a", count: 64)) == "vscode"
           && (try? loaded.token(for: "vscode")) == String(repeating: "a", count: 64))
+
+      let stored = String(repeating: "b", count: 64)
+      let flaky = MemoryTokenVault()
+      try flaky.write("codex", stored)
+      flaky.allFailures = 1
+      let relaunched = HTTPTokens(vault: flaky)
+      let refused = relaunched.client(for: stored)
+      check(
+        "a listing that failed is tried again, so a relaunch still knows every token",
+        refused == nil && relaunched.client(for: stored) == "codex")
+
+      let unreadable = MemoryTokenVault()
+      try unreadable.write("cursor", stored)
+      unreadable.readFails = true
+      unreadable.allFailures = 1
+      let guarded = HTTPTokens(vault: unreadable)
+      let minted = try? guarded.token(for: "cursor")
+      unreadable.readFails = false
+      check(
+        "a token that could not be read is not minted over",
+        minted == nil && (try? unreadable.read("cursor")) == stored)
+
+      check(
+        "each build keeps its own tokens",
+        KeychainTokenVault.service == "\(BridgeProtocol.appIdentifier).http-token")
     } catch {
       check("HTTPTokens threw: \(error)", false)
     }
