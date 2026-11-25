@@ -779,6 +779,21 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@HOST_CHECK_NODE="$$(command -v node)" HOST_CHECK_STUB="$(CURDIR)/scripts/fixtures/stub-mcp-server.mjs" \
 		apps/apple/.build/host-check
 
+handshake-check: ## Prove cached handshake answers do not depend on what the cache key leaves out
+	@# Spawns the nine real node servers (packages/*/dist/cli.js) under the
+	@# app's default environment, in variants that differ only in what
+	@# HandshakeCache's key leaves out (ids, call order, progress tokens, key
+	@# order), and fails on any answer that differs. Build them first, as
+	@# `smoke` needs them: this target does not build, so a stale dist/ is
+	@# exactly what it would check. HANDSHAKE_SERVERS_DIR=$(STAGED)/servers
+	@# checks the bundled servers `make servers` stages instead.
+	@if [ -z "$$HANDSHAKE_SERVERS_DIR" ] && [ ! -f packages/mail/dist/cli.js ]; then \
+		echo "  FAIL handshake-check: packages/mail/dist/cli.js is missing (run pnpm -r build first)" >&2; \
+		exit 1; \
+	fi
+	@command -v node >/dev/null 2>&1 || { echo "  FAIL handshake-check needs node on PATH" >&2; exit 1; }
+	@node scripts/handshake-equivalence.mjs
+
 audit-log-check: ## Assert a write the audit log cannot make leaves the chain intact, not broken
 	@# `BridgeProtocol` is STUBBED by the check rather than compiled in, and that
 	@# is what keeps this off the real log: every path the audit log uses is
@@ -1610,7 +1625,7 @@ clean: ## Remove the app build output
 	simulator-spike dispatch-check unit store-lane-check chat-check chat-check-real audit-check license-check audit \
 	revocations servers node bundle sign notarize surfaces surfaces-check changelog \
 	changelog-check version version-check format-swift format-swift-check swift-format-version \
-	blame-setup icon clean smoke-swift audit-log-check host-check bridge-protocol-check \
+	blame-setup icon clean smoke-swift audit-log-check host-check handshake-check bridge-protocol-check \
 	wiring-check-real server-deps verify-servers verify-extension sparkle sparkle-keys \
 	sparkle-key-shred appcast readme-check demo-gif extension-icons
 
