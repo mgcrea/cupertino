@@ -1564,6 +1564,71 @@ struct UnitCheck {
         ct.saw(.parse(Data(#"{"id":4,"method":"tools/call"}"#.utf8))) == nil && ct.atClose() == nil)
     }
 
+    // ─── HandshakeCache ───
+    print("\nHandshakeCache: replies recorded from an identical server")
+    do {
+      let base = HandshakeBase(
+        surface: "mail", build: "1", node: "/n", script: "/s", env: ["PATH": "/usr/bin:/bin"])
+      let k = HandshakeKey(
+        base: base, handshake: nil, method: "tools/list", params: Data("{}".utf8))
+      let frame = Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":7}"#.utf8)
+      check(
+        "reply swaps id",
+        CachedReply(frame: frame, id: Data("7".utf8))?.frame(id: Data(#""x""#.utf8))
+          == Data(#"{"result":{"tools":[]},"jsonrpc":"2.0","id":"x"}"#.utf8))
+      check(
+        "id not last is uncacheable",
+        CachedReply(frame: Data(#"{"jsonrpc":"2.0","id":7,"result":{}}"#.utf8), id: Data("7".utf8))
+          == nil)
+      let c = HandshakeCache(byteCap: 1 << 20)
+      check("stored", c.record(k, frame: frame, id: Data("7".utf8)) == .stored)
+      check("hit", c.reply(for: k) != nil)
+      check("same again matches", c.record(k, frame: frame, id: Data("7".utf8)) == .matched)
+      let envKey = HandshakeKey(
+        base: HandshakeBase(
+          surface: "mail", build: "1", node: "/n", script: "/s", env: ["PATH": "/x"]),
+        handshake: nil, method: "tools/list", params: Data("{}".utf8))
+      check("env is in the key", c.reply(for: envKey) == nil)
+      let other = Data(#"{"result":{"tools":[1]},"jsonrpc":"2.0","id":7}"#.utf8)
+      check(
+        "different answer is a mismatch", c.record(k, frame: other, id: Data("7".utf8)) == .mismatch
+      )
+      check(
+        "mismatch disables the surface", c.isDisabled(surface: "mail") && c.reply(for: k) == nil)
+      check("disabled refuses records", c.record(k, frame: frame, id: Data("7".utf8)) == .disabled)
+      let small = HandshakeCache(byteCap: 100)
+      let big = Data(
+        (#"{"result":""# + String(repeating: "a", count: 40) + #"","jsonrpc":"2.0","id":1}"#).utf8)
+      let k1 = HandshakeKey(
+        base: base, handshake: nil, method: "tools/list", params: Data("1".utf8))
+      let k2 = HandshakeKey(
+        base: base, handshake: nil, method: "tools/list", params: Data("2".utf8))
+      _ = small.record(k1, frame: big, id: Data("1".utf8))
+      _ = small.record(k2, frame: big, id: Data("1".utf8))
+      check("byte cap evicts oldest", small.reply(for: k1) == nil && small.reply(for: k2) != nil)
+      let d = UserDefaults(suiteName: "unit-check-\(UUID())")!
+      check(
+        "off for dev builds",
+        !HandshakeCache.isOn(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: true), defaults: d))
+      d.set(true, forKey: "deferSpawnInDevelopment")
+      check(
+        "dev opt-in",
+        HandshakeCache.isOn(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: true), defaults: d))
+      d.set(false, forKey: "deferServerSpawn")
+      check(
+        "kill switch",
+        !HandshakeCache.isOn(
+          ServerBinaries(
+            node: URL(fileURLWithPath: "/n"), script: URL(fileURLWithPath: "/s"),
+            isDevelopment: false), defaults: d))
+    }
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")
