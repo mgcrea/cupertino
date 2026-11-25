@@ -29,7 +29,8 @@ nonisolated struct HandshakeKey: Hashable {
 /// head before the id and the tail `}`. Any other shape is not cached, rather
 /// than rewritten.
 nonisolated struct CachedReply: Equatable {
-  private let head: Data
+  /// Internal so a check can see where its bytes live.
+  let head: Data
   private let tail: Data
 
   init?(frame: Data, id: Data) {
@@ -37,7 +38,9 @@ nonisolated struct CachedReply: Equatable {
     if frame.last == UInt8(ascii: "\n") { frame.removeLast() }
     let suffix = Data(#""id":"#.utf8) + id + Data("}".utf8)
     guard frame.count > suffix.count, frame.suffix(suffix.count) == suffix else { return nil }
-    head = frame.prefix(frame.count - id.count - 1)
+    // Its own bytes: a slice would keep the caller's whole buffer alive, and
+    // the cache's byte cap would count only part of what it holds.
+    head = LineBuffer.copy(frame.prefix(frame.count - id.count - 1))
     tail = Data("}".utf8)
   }
 
@@ -113,7 +116,8 @@ nonisolated final class HandshakeCache: @unchecked Sendable {
     let reply = CachedReply(frame: frame, id: id)
     return state.withLock { state in
       if state.disabled.contains(surface) { return .disabled }
-      guard let reply, reply.byteCount <= byteCap else { return .uncacheable }
+      // A held key is checked first: an answer of another shape, or too big
+      // to hold, is still a different answer.
       if let held = state.entries[key] {
         guard held == reply else {
           Self.disable(surface, in: &state)
@@ -122,6 +126,7 @@ nonisolated final class HandshakeCache: @unchecked Sendable {
         state.bump(key)
         return .matched
       }
+      guard let reply, reply.byteCount <= byteCap else { return .uncacheable }
       state.entries[key] = reply
       state.order.append(key)
       state.byteCount += reply.byteCount

@@ -1545,6 +1545,29 @@ struct UnitCheck {
         "line buffer splits", lb.append(Data("a\nb\nc".utf8)) == [Data("a".utf8), Data("b".utf8)])
       check(
         "line buffer keeps tail", lb.pendingCount == 1 && lb.takePending() == Data("c".utf8))
+      check(
+        "string id keeps its slashes",
+        McpFrame.parse(Data(#"{"id":"a/b","method":"ping"}"#.utf8)).id == Data(#""a/b""#.utf8))
+      var crlf = LineBuffer()
+      check(
+        "line buffer strips one carriage return and skips a bare one",
+        crlf.append(Data("a\r\n\r\nb".utf8)) == [Data("a".utf8)]
+          && crlf.append(Data("\r".utf8)).isEmpty
+          && crlf.append(Data("\n".utf8)) == [Data("b".utf8)] && crlf.pendingCount == 0)
+      var split = LineBuffer()
+      _ = split.append(Data("ab".utf8))
+      check(
+        "line buffer joins a line across chunks",
+        split.append(Data("c\nd".utf8)) == [Data("abc".utf8)] && split.pendingCount == 1)
+      var big = LineBuffer()
+      let piece = Data(repeating: UInt8(ascii: "x"), count: 1024)
+      let started = Date()
+      for _ in 0..<4096 { _ = big.append(piece) }
+      let tail = big.append(Data("\n".utf8))
+      let elapsed = Date().timeIntervalSince(started)
+      check(
+        "line buffer reads a 4 MB frame in 1 KB chunks without rescanning (\(Int(elapsed * 1000)) ms)",
+        tail.count == 1 && tail[0].count == 4 << 20 && elapsed < 1)
       var ct = ConnectTraffic()
       _ = ct.saw(
         .parse(Data(#"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"x"}}}"#.utf8)))
@@ -1580,6 +1603,22 @@ struct UnitCheck {
         "id not last is uncacheable",
         CachedReply(frame: Data(#"{"jsonrpc":"2.0","id":7,"result":{}}"#.utf8), id: Data("7".utf8))
           == nil)
+      let buffer = Data(repeating: UInt8(ascii: " "), count: 1 << 20) + frame
+      let sliced = CachedReply(frame: buffer.suffix(frame.count), id: Data("7".utf8))
+      let ownStorage = buffer.withUnsafeBytes { whole in
+        sliced?.head.withUnsafeBytes { head in
+          guard let h = head.baseAddress, let w = whole.baseAddress else { return false }
+          return h < w || h >= w + whole.count
+        } ?? false
+      }
+      check("a reply cut from a larger buffer holds its own bytes", ownStorage)
+      let held = HandshakeCache(byteCap: 1 << 20)
+      _ = held.record(k, frame: frame, id: Data("7".utf8))
+      check(
+        "an answer of another shape for a held key is a mismatch",
+        held.record(
+          k, frame: Data(#"{"jsonrpc":"2.0","id":7,"result":{}}"#.utf8), id: Data("7".utf8))
+          == .mismatch && held.isDisabled(surface: "mail"))
       let c = HandshakeCache(byteCap: 1 << 20)
       check("stored", c.record(k, frame: frame, id: Data("7".utf8)) == .stored)
       check("hit", c.reply(for: k) != nil)

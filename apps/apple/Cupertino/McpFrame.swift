@@ -22,7 +22,8 @@ nonisolated struct McpFrame {
       return McpFrame(kind: .unparsed, id: nil, method: nil, params: nil, isError: false)
     }
     let id = object["id"].flatMap {
-      try? JSONSerialization.data(withJSONObject: $0, options: .fragmentsAllowed)
+      try? JSONSerialization.data(
+        withJSONObject: $0, options: [.fragmentsAllowed, .withoutEscapingSlashes])
     }
     if let method = object["method"] as? String {
       return McpFrame(
@@ -64,14 +65,26 @@ nonisolated struct LineBuffer {
 
   var pendingCount: Int { pending.count }
 
-  /// Every line completed by `chunk`, without its newline. Empty lines are skipped.
+  /// Every line completed by `chunk`, without its newline or one `\r` before
+  /// it. Empty lines are skipped.
+  ///
+  /// Only `chunk` is searched for newlines: what was pending had none, and a
+  /// frame arriving in many chunks must not be rescanned for each.
   mutating func append(_ chunk: Data) -> [Data] {
+    var index = pending.endIndex
     pending.append(chunk)
-    guard let last = pending.lastIndex(of: UInt8(ascii: "\n")) else { return [] }
-    let complete = pending[pending.startIndex..<last]
-    let lines = complete.split(separator: UInt8(ascii: "\n"), omittingEmptySubsequences: true)
-      .map { Data($0) }
-    pending = Data(pending[pending.index(after: last)...])
+    var start = pending.startIndex
+    var lines: [Data] = []
+    while let newline = pending[index...].firstIndex(of: UInt8(ascii: "\n")) {
+      var end = newline
+      if end > start, pending[pending.index(before: end)] == UInt8(ascii: "\r") {
+        end = pending.index(before: end)
+      }
+      if end > start { lines.append(Self.copy(pending[start..<end])) }
+      start = pending.index(after: newline)
+      index = start
+    }
+    if start != pending.startIndex { pending = Self.copy(pending[start...]) }
     return lines
   }
 
@@ -79,5 +92,10 @@ nonisolated struct LineBuffer {
   mutating func takePending() -> Data {
     defer { pending = Data() }
     return pending
+  }
+
+  /// `bytes` in storage of their own, not a view that keeps the whole buffer.
+  static func copy(_ bytes: Data) -> Data {
+    bytes.withUnsafeBytes { Data($0) }
   }
 }
