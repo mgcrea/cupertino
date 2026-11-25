@@ -35,6 +35,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// and the socket goes on serving.
   private struct HTTPState {
     var listener: HTTPListener?
+    /// The port the listener was last started on, so a move that fails can
+    /// put it back.
+    var port: Int?
     var startupError: String?
   }
   private let http = OSAllocatedUnfairLock(uncheckedState: HTTPState())
@@ -424,17 +427,23 @@ nonisolated final class ServerHost: @unchecked Sendable {
     startSocketWatch()
   }
 
-  /// Starts the loopback HTTP listener. A port somebody else holds is logged
-  /// and kept in `httpStartupError`; the unix socket is unaffected.
-  private func startHTTP() {
-    let (port, tokens) = Self.httpOverride ?? (HTTPListener.configuredPort, HTTPTokens.shared)
+  /// Starts the loopback HTTP listener, on `port` or the configured one. A
+  /// port somebody else holds is logged and kept in `httpStartupError`, and
+  /// the bind's own reason is returned; the unix socket is unaffected.
+  @discardableResult
+  private func startHTTP(port: Int? = nil) -> String? {
+    let (configured, tokens) =
+      Self.httpOverride ?? (HTTPListener.configuredPort, HTTPTokens.shared)
+    let port = port ?? configured
     let listener = HTTPListener(port: port, tokens: tokens, host: self)
     do {
       try listener.start()
       http.withLock {
         $0.listener = listener
+        $0.port = port
         $0.startupError = nil
       }
+      return nil
     } catch {
       let detail =
         "HTTP endpoint not listening on 127.0.0.1:\(port): \(error.localizedDescription). "
@@ -444,7 +453,29 @@ nonisolated final class ServerHost: @unchecked Sendable {
         $0.listener = nil
         $0.startupError = detail
       }
+      return error.localizedDescription
     }
+  }
+
+  /// Moves the HTTP listener to `port`, for the Settings field: stops it, then
+  /// starts it there. Every HTTP session ends on the way, as a restart ends
+  /// them. A port that cannot be bound puts the listener back on the one it
+  /// had, and the reason is returned; the caller writes the setting only on
+  /// nil, so the stored port always names the one being served.
+  ///
+  /// It never touches a client config. Entries naming the old port read as
+  /// stale, and the client pane's Update rewrites them.
+  func moveHTTP(to port: Int) -> String? {
+    let previous = http.withLock { $0.port } ?? HTTPListener.configuredPort
+    stopHTTP()
+    guard let reason = startHTTP(port: port) else { return nil }
+    let refused = "Could not listen on 127.0.0.1:\(port): \(reason)."
+    // Back on the old port, the refusal is the pane's to show, not the
+    // window's: nothing is wrong with what is being served.
+    guard startHTTP(port: previous) != nil else {
+      return refused + " Nor on \(previous) again; see the main window."
+    }
+    return refused + " Cupertino is still on \(previous)."
   }
 
   /// Ends every HTTP session and stops listening, before the unix socket goes,

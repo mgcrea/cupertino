@@ -279,6 +279,12 @@ struct ClientDetail: View {
         // nothing.
         Button("Remove Cupertino's entries") { unwire() }
           .disabled(!snapshot.hasOurEntries)
+        // Reset rather than Revoke: the automatic rewire mints a token for a
+        // client that has none, so a bare revoke would be undone without a
+        // word. Remove is what signs a client out for good.
+        if snapshot.transport == .http, snapshot.hasOurEntries {
+          Button("Reset token") { resetToken() }
+        }
         Button("Reveal in Finder") { ClientWiring.reveal(client) }
         Spacer()
       }
@@ -786,6 +792,18 @@ struct ClientDetail: View {
       collision = keys
     } catch {
       result = "Could not write the config: \(error.localizedDescription)"
+    }
+  }
+
+  private func resetToken() {
+    do {
+      let outcome = try ClientWiring.resetToken(client)
+      result =
+        "A new token is written; the old one no longer works."
+        + (outcome.backup.map { " Previous version saved as \($0.lastPathComponent)." } ?? "")
+        + " Restart \(client.displayName) to pick it up."
+    } catch {
+      result = "Could not reset the token: \(error.localizedDescription)"
     }
   }
 

@@ -830,10 +830,12 @@ struct HostCheck {
 
     // The HTTP listener on a scratch port with its tokens in memory, set before
     // the host starts it. Never 8830 or 8831, which an installed copy may hold,
-    // and never the Keychain.
+    // and never the Keychain. The two ports above it are the port move's.
     let httpPort =
       ProcessInfo.processInfo.environment["HOST_CHECK_HTTP_PORT"].flatMap { Int($0) } ?? 18830
-    guard ![8830, 8831].contains(httpPort), (1024...65535).contains(httpPort) else {
+    guard (httpPort...httpPort + 2).allSatisfy({ ![8830, 8831].contains($0) }),
+      (1024...65533).contains(httpPort)
+    else {
       print("  FAIL HOST_CHECK_HTTP_PORT \(httpPort) is a real Cupertino port or out of range")
       exit(1)
     }
@@ -1813,6 +1815,25 @@ struct HostCheck {
     check(
       "HTTP: one listener — only HTTPListener.swift binds an AF_INET socket",
       binders == ["HTTPListener.swift"])
+
+    // The Settings field moves the listener: a free port rebinds, and a taken
+    // one is refused with the old port still served and no window warning.
+    let moved = httpPort + 1
+    let free = ServerHost.shared.moveHTTP(to: moved)
+    check(
+      "HTTP: moving the port rebinds on the new one",
+      free == nil && ServerHost.shared.httpListener?.boundAddress == "127.0.0.1:\(moved)"
+        && HTTPMCP(port: moved)?.open() == true)
+    let portHolder = HTTPListener(port: httpPort + 2, tokens: httpTokens, host: ServerHost.shared)
+    let squatting = (try? portHolder.start()) != nil
+    let taken = ServerHost.shared.moveHTTP(to: httpPort + 2)
+    check(
+      "HTTP: a taken port is refused, and the old one kept",
+      squatting && taken?.contains("127.0.0.1:\(httpPort + 2)") == true
+        && ServerHost.shared.httpListener?.boundAddress == "127.0.0.1:\(moved)"
+        && ServerHost.shared.httpStartupError == nil)
+    portHolder.stop()
+    _ = ServerHost.shared.moveHTTP(to: httpPort)
 
     // Last: it stops every server admitted on the trial, which is all of these.
     if let (client, booted) = deferredSession() {

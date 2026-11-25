@@ -138,6 +138,7 @@ extension WiringCheck {
     portChangeIsStale()
     tokenChangeIsStale()
     unwireRevokes()
+    resetTokenRewrites()
     projectScopeNeverGetsAToken()
     localScopeIsHTTP()
     autoRewireNeverSwitches()
@@ -420,6 +421,64 @@ extension WiringCheck {
     _ = try? ClientWiring.configure(desktop)
     _ = try? ClientWiring.unwire(desktop)
     check("unwiring a bridge client touches no token", vault.holders.isEmpty)
+  }
+
+  /// Reset token signs a client out and back in at once: a bare revoke would
+  /// be undone by the next automatic rewire, which mints a token for a client
+  /// that has none.
+  static func resetTokenRewrites() {
+    print("\nreset token rewrites")
+    reset()
+    let cursor = client("cursor")
+    _ = try? ClientWiring.switchToHTTP(cursor)
+    let old = token("cursor")
+    try? FileManager.default.setAttributes(
+      [.posixPermissions: 0o644], ofItemAtPath: cursor.wiring.path.path)
+    let outcome = try? ClientWiring.resetToken(cursor)
+    let new = token("cursor")
+    check("Reset token writes", outcome?.backup != nil)
+    check("the old token maps to nobody", ClientWiring.tokens.client(for: old) == nil)
+    check("a new one is minted", !new.isEmpty && new != old)
+    check("the config holds the new token", allHTTP(servers(of: cursor), token: new))
+    check("the file is 0600, though it was 0644", mode(cursor.wiring.path) == 0o600)
+    check("it reads back as configured", ClientWiring.status(of: cursor) == .configured)
+
+    // Codex's TOML takes the same rewrite.
+    reset()
+    let codex = client("codex")
+    _ = try? ClientWiring.switchToHTTP(codex)
+    let codexOld = token("codex")
+    _ = try? ClientWiring.resetToken(codex)
+    check(
+      "Codex's entries hold its new token",
+      token("codex") != codexOld && allHTTP(servers(of: codex), token: token("codex")))
+    check("and its file is 0600", mode(codex.wiring.path) == 0o600)
+
+    // Claude Code's folders carry the same token, so they are rewritten too,
+    // or Reset would sign them out with nothing to say so but a stale card.
+    reset()
+    let claude = client("claude-code")
+    let folder = scratchHome.appendingPathComponent("Projects/app")
+    _ = try? ClientWiring.switchToHTTP(claude)
+    _ = try? ClientWiring.configureLocal(folder)
+    let shared = token("claude-code")
+    _ = try? ClientWiring.resetToken(claude)
+    let root = (try? ClientWiringMerge.readJSON(ClientWiring.claudeCodeConfig)) ?? [:]
+    let local = ClientWiringMerge.localScopeServers(in: root, folder: folder.path) ?? [:]
+    check(
+      "Claude Code's folder carries the new token",
+      token("claude-code") != shared && allHTTP(local, token: token("claude-code"))
+        && allHTTP(servers(of: claude), token: token("claude-code")))
+
+    // Only a client whose entries are HTTP: one still on the bridge has no
+    // token to reset, and pressing it must not switch it.
+    reset()
+    place(bridgeConfig(), at: cursor.wiring.path)
+    check(
+      "a client wired with the bridge refuses Reset",
+      (try? ClientWiring.resetToken(cursor)) == nil)
+    check("and stays on the bridge", allBridge(servers(of: cursor)))
+    check("with no token minted", vault.holders.isEmpty)
   }
 
   static func projectScopeNeverGetsAToken() {

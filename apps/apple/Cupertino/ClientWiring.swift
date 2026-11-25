@@ -631,6 +631,8 @@ enum ClientWiring {
     case collision(client: String, keys: [String])
     /// Switch to HTTP on a client that keeps the bridge.
     case bridgeOnly(client: String)
+    /// Reset token on a client whose entries are not HTTP: it holds no token.
+    case notOnHTTP(client: String)
 
     var errorDescription: String? {
       switch self {
@@ -641,6 +643,8 @@ enum ClientWiring {
           "\(list) in \(name)'s config \(verb) not written by Cupertino. Nothing was changed."
       case .bridgeOnly(let name):
         return "\(name) is wired with the bridge only. Nothing was changed."
+      case .notOnHTTP(let name):
+        return "\(name) is not wired over HTTP, so it has no token to reset. Nothing was changed."
       }
     }
   }
@@ -723,6 +727,51 @@ enum ClientWiring {
       "switched \(client.displayName) to HTTP at \(client.wiring.path.path)")
     openAtLogin(for: client)
     return outcome
+  }
+
+  /// Signs a client out and back in: its token is revoked, and its HTTP
+  /// entries are rewritten with a fresh one, through the write Switch to HTTP
+  /// makes. A bare revoke would not stay done: the next automatic rewire
+  /// finds the entries stale and mints the client a token again. Unwire is
+  /// what signs one out for good.
+  ///
+  /// Only for a client whose entries are HTTP; one still on the bridge has no
+  /// token, and pressing this must not switch it. Claude Code's folder blocks
+  /// carry the same token, so each one holding an HTTP entry of ours is
+  /// rewritten after it, as its card's Update would; a folder left with the
+  /// old token would stop working with nothing to say so but a stale card.
+  ///
+  /// The refusals all come before the revoke, so a refused Reset changes
+  /// nothing. A write that fails after it leaves the client signed out with
+  /// the old token in its file, which reads as stale and is one Update away.
+  @discardableResult
+  static func resetToken(_ client: Client) throws -> ClientWiringMerge.WriteOutcome {
+    guard client.transport == .http,
+      let servers = try read(client)?.servers,
+      ClientWiringMerge.transport(of: servers) == .http
+    else { throw WriteError.notOnHTTP(client: client.displayName) }
+    let taken = collisions(of: client)
+    guard taken.isEmpty else {
+      throw WriteError.collision(client: client.displayName, keys: taken)
+    }
+    try tokens.revoke(client.id)
+    let outcome = try write(client, over: .http)
+    hostLog(
+      "cupertino", .info,
+      "reset \(client.displayName)'s HTTP token at \(client.wiring.path.path)")
+    if hasLocalScope(client) {
+      for folder in foldersHoldingToken() { try configureLocal(folder) }
+    }
+    return outcome
+  }
+
+  /// The Claude Code folders whose block holds an HTTP entry of ours.
+  private static func foldersHoldingToken() -> [URL] {
+    guard let root = try? ClientWiringMerge.readJSON(claudeCodeConfig),
+      let projects = root["projects"] as? [String: Any]
+    else { return [] }
+    return projects.filter { ClientWiringMerge.holdsToken($0.value) }.keys.sorted()
+      .map { URL(fileURLWithPath: $0) }
   }
 
   /// Every surface switched on, over `transport`, with the legacy and
