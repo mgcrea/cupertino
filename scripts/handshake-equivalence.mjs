@@ -142,6 +142,12 @@ const stepsFor = (variant, era) => {
 
 class CheckFailure extends Error {}
 
+// The one error answer expected: voice-memos registers no prompts, so it does
+// not advertise the prompts capability and `prompts/list` there is an
+// unadvertised method. Every other error answer fails the check.
+const isExpectedError = (surface, method, error) =>
+  surface === "voice-memos" && method === "prompts/list" && error?.code === -32601;
+
 const label = (surface, writes, era, method) =>
   `${surface} ${writes ? "writes-on" : "writes-off"} ${era}${method ? ` ${method}` : ""}`;
 
@@ -211,7 +217,7 @@ const runVariant = async (surface, script, env, writes, era, variant) => {
         jsonrpc: "2.0",
         id,
         method: step.method,
-        params: variant.keys(step.params),
+        params: step.params,
       };
       child.stdin.write(`${JSON.stringify(variant.keys(request))}\n`);
       let line;
@@ -223,6 +229,13 @@ const runVariant = async (surface, script, env, writes, era, variant) => {
         clearTimeout(timer);
       }
       const suffix = `"id":${idText}}`;
+      const msg = JSON.parse(line);
+      // An error answer passes only where it is expected, so a server that
+      // refuses the envelope, fails to start its tools, or loses a method
+      // cannot pass by answering every variant with the same error.
+      if ("error" in msg && !isExpectedError(surface, step.method, msg.error)) {
+        throw fail(step.method, `unexpected error answer:\n  ${line.slice(0, 300)}`);
+      }
       if (line.endsWith(suffix)) {
         out.push({
           method: step.method,
@@ -236,7 +249,6 @@ const runVariant = async (surface, script, env, writes, era, variant) => {
       // Nothing is served from the cache, so nothing can be under-keyed; it is
       // still compared, and reported, because it costs a spawn. Any other shape
       // is a failure.
-      const msg = JSON.parse(line);
       const head = `{"jsonrpc":"2.0","id":${idText},"error":`;
       if (!("error" in msg) || "result" in msg || !line.startsWith(head)) {
         throw fail(
