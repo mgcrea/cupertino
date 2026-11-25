@@ -51,20 +51,10 @@ nonisolated final class HTTPListener: @unchecked Sendable {
   /// request. Settable for the checks only.
   nonisolated(unsafe) static var idleLimit: TimeInterval = 1800
 
-  /// The defaults key the port is kept under, for the Settings pane.
-  static let portKey = "httpPort"
-  #if DEBUG
-    static let defaultPort = 8831
-  #else
-    static let defaultPort = 8830
-  #endif
-
   /// The port the app listens on: the user's setting, or the build's
-  /// default. The one place the default lives; wiring and Settings read it here.
-  static var configuredPort: Int {
-    let stored = UserDefaults.standard.integer(forKey: portKey)
-    return (1...65535).contains(stored) ? stored : defaultPort
-  }
+  /// default. The default and the defaults key live in `HTTPPort`, which
+  /// wiring reads too.
+  static var configuredPort: Int { HTTPPort.configured }
 
   /// Every session may hold a GET stream for its life, so a Mac with 19
   /// Claude Code sessions wired to 14 surfaces holds 266 idle connections.

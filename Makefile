@@ -748,6 +748,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/HTTPGate.swift \
 		apps/apple/Cupertino/HTTPWire.swift \
 		apps/apple/Cupertino/HTTPListener.swift \
+		apps/apple/Cupertino/HTTPPort.swift \
 		apps/apple/Cupertino/HTTPSessionRouter.swift \
 		apps/apple/Cupertino/HTTPTokens.swift \
 		apps/apple/Cupertino/CallCapture.swift \
