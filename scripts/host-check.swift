@@ -183,6 +183,24 @@ final class Client {
     return ids
   }
 
+  /// The ids of the replies up to and including the one for `last`, waited
+  /// for up to `seconds`, then of whatever else arrives within `drain`.
+  ///
+  /// Returns as soon as `last` is answered, so a generous deadline costs
+  /// nothing when the server is quick and covers a cold node start on a loaded
+  /// machine. The drain is what shows a duplicate: one more id after `last`.
+  func ids(until last: Int, within seconds: Double = 5, drain: Double = 0) -> [Int] {
+    var ids: [Int] = []
+    let deadline = Date().addingTimeInterval(seconds)
+    while case .line(let text) = next(within: deadline.timeIntervalSinceNow) {
+      let msg = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any]
+      let id = msg?["id"] as? Int ?? -1
+      ids.append(id)
+      if id == last { break }
+    }
+    return drain > 0 ? ids + self.ids(within: drain) : ids
+  }
+
   /// The next line, or why there is none within `seconds`.
   func next(within seconds: Double) -> Read {
     let deadline = Date().addingTimeInterval(seconds)
@@ -803,10 +821,10 @@ struct HostCheck {
       token += 1
       var ids: [Int] = []
       client.send(Frames.initialize)
-      ids += client.ids(within: 0.3)
+      ids += client.ids(until: 1)
       client.send(Frames.initialized)
       client.send(Frames.list(token: token))
-      ids += client.ids(within: 0.3)
+      ids += client.ids(until: 2)
       return ids
     }
     /// A session's whole opening and one call, then hung up and its stub gone.
@@ -814,24 +832,34 @@ struct HostCheck {
       guard let client = Client(handshake: wired) else { return }
       _ = open(client)
       client.send(Frames.call())
-      _ = client.result(for: 3, within: 3)
+      _ = client.result(for: 3, within: 5)
       client.hangUp()
       Thread.sleep(forTimeInterval: 0.2)
     }
 
-    // The switch off is today's behaviour: a server at connect, before any frame.
-    UserDefaults.standard.register(defaults: ["deferServerSpawn": false])
+    // The switch off is today's behaviour: a server at connect, before any
+    // frame. On a warm cache, where the deferral would answer `initialize`
+    // itself and start nothing, so only the switch can make a server read it,
+    // and only the undeferred path logs `server started`.
     HandshakeCache.shared.reset()
+    warm()
+    UserDefaults.standard.register(defaults: ["deferServerSpawn": false])
     if let client = Client(handshake: wired) {
       let known = Stub.pids()
       client.send(Frames.initialize)
-      let answered = client.result(for: 1, within: 3) != nil
+      let answered = client.result(for: 1, within: 5) != nil
+      let pid = Stub.newPid(besides: known, within: 5)
       check(
-        "with the deferral off a session's server reads its first frame",
-        answered && Stub.newPid(besides: known, within: 1) != nil)
+        "with the deferral off a warm session's server reads its first frame",
+        answered && pid != nil)
+      check(
+        "and it was started at connect, not deferred",
+        pid.map { pid in hostLogLines().contains { $0.hasPrefix("server started (pid \(pid))") } }
+          == true)
       client.hangUp()
     } else {
-      check("with the deferral off a session's server reads its first frame (no connect)", false)
+      check(
+        "with the deferral off a warm session's server reads its first frame (no connect)", false)
     }
     UserDefaults.standard.register(defaults: ["deferServerSpawn": true])
     Thread.sleep(forTimeInterval: 0.2)
@@ -841,8 +869,8 @@ struct HostCheck {
       let known = Stub.pids()
       let ids = open(client)
       client.send(Frames.call())
-      let all = ids + client.ids(within: 1)
-      let pid = Stub.newPid(besides: known, within: 1)
+      let all = ids + client.ids(until: 3, drain: 0.3)
+      let pid = Stub.newPid(besides: known, within: 5)
       check(
         "first session spawns and answers",
         all == [1, 2, 3] && pid != nil && Stub.pids().subtracting(known).count == 1)
@@ -860,9 +888,9 @@ struct HostCheck {
       check("second session starts nothing before a call", ids == [1, 2] && quiet)
       let call = Frames.call()
       client.send(call)
-      let after = client.ids(within: 1)
-      let pid = Stub.newPid(besides: known, within: 1)
-      let read = pid.map { Stub.lines(of: $0, count: 4, within: 1) }
+      let after = client.ids(until: 3, drain: 0.3)
+      let pid = Stub.newPid(besides: known, within: 5)
+      let read = pid.map { Stub.lines(of: $0, count: 4, within: 5) }
       check(
         "its call starts one, which reads the whole session in order",
         read == [Frames.initialize, Frames.initialized, Frames.list(token: token), call])
@@ -881,7 +909,7 @@ struct HostCheck {
     if let client = Client(handshake: wired) {
       let known = Stub.pids()
       client.send(Frames.initialize)
-      let answered = client.result(for: 1, within: 1) != nil
+      let answered = client.result(for: 1, within: 5) != nil
       client.send(Frames.initialized)
       client.hangUp()
       Thread.sleep(forTimeInterval: 0.5)
@@ -901,11 +929,11 @@ struct HostCheck {
       client.send(String(decoding: bytes[..<half], as: UTF8.self), newline: false)
       Thread.sleep(forTimeInterval: 0.1)
       client.send(String(decoding: bytes[half...], as: UTF8.self))
-      let answered = client.result(for: 3, within: 2) != nil
-      let pid = Stub.newPid(besides: known, within: 1)
+      let answered = client.result(for: 3, within: 5) != nil
+      let pid = Stub.newPid(besides: known, within: 5)
       check(
         "split trigger frame reaches the server whole",
-        answered && pid.map { Stub.lines(of: $0, count: 4, within: 1).last } == call)
+        answered && pid.map { Stub.lines(of: $0, count: 4, within: 5).last } == call)
       client.hangUp()
       Thread.sleep(forTimeInterval: 0.2)
     } else {
@@ -923,9 +951,9 @@ struct HostCheck {
           + String(decoding: third[..<20], as: UTF8.self), newline: false)
       Thread.sleep(forTimeInterval: 0.1)
       client.send(String(decoding: third[20...], as: UTF8.self))
-      let after = client.ids(within: 1)
-      let pid = Stub.newPid(besides: known, within: 1)
-      let read = pid.map { Stub.lines(of: $0, count: 6, within: 1).suffix(3) }
+      let after = client.ids(until: 5, drain: 0.3)
+      let pid = Stub.newPid(besides: known, within: 5)
+      let read = pid.map { Stub.lines(of: $0, count: 6, within: 5).suffix(3) }
       check(
         "frames behind the trigger reach the server once, in order",
         read.map(Array.init) == [Frames.call(), Frames.call(4), Frames.call(5)]
@@ -939,14 +967,14 @@ struct HostCheck {
     if let client = Client(handshake: wired) {
       let known = Stub.pids()
       client.send(Frames.initialize)
-      let answered = client.result(for: 1, within: 1) != nil
+      let answered = client.result(for: 1, within: 5) != nil
       let big = Frames.call(7, text: String(repeating: "x", count: 200 * 1024))
       client.send(big)
-      let reply = client.result(for: 7, within: 3)
-      let pid = Stub.newPid(besides: known, within: 1)
+      let reply = client.result(for: 7, within: 5)
+      let pid = Stub.newPid(besides: known, within: 5)
       check(
         "oversized first frame arrives whole",
-        answered && reply != nil && pid.map { Stub.lines(of: $0, count: 2, within: 1).last } == big)
+        answered && reply != nil && pid.map { Stub.lines(of: $0, count: 2, within: 5).last } == big)
       client.hangUp()
       Thread.sleep(forTimeInterval: 0.2)
     } else {
@@ -959,7 +987,7 @@ struct HostCheck {
     if let client = Client(handshake: wired) {
       let ids = open(client)
       client.send(Frames.call())
-      let after = client.ids(within: 1)
+      let after = client.ids(until: 3, drain: 0.3)
       check(
         "skewed replay disables the cache",
         ids + after == [1, 2, 3] && HandshakeCache.shared.isDisabled(surface: "mail"))
