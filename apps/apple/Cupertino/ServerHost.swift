@@ -22,6 +22,30 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// before serving anything; nil in the app.
   nonisolated(unsafe) static var locateOverride: ((Surface) throws -> ServerBinaries)?
 
+  /// The port and token store the HTTP listener starts with, in place of
+  /// `HTTPListener.configuredPort` and `HTTPTokens.shared`. `host-check` only:
+  /// it must never bind 8830 or 8831 or read the real Keychain. nil in the app.
+  nonisolated(unsafe) static var httpOverride: (port: Int, tokens: HTTPTokens)?
+
+  /// The loopback HTTP listener, and why it is not listening if it is not.
+  ///
+  /// Apart from `Listener` on purpose: the unix socket is what every bridge,
+  /// the Chat pane and the store lane reach, and an HTTP port somebody else
+  /// holds must not take any of that down. A failure here is logged and kept,
+  /// and the socket goes on serving.
+  private struct HTTPState {
+    var listener: HTTPListener?
+    var startupError: String?
+  }
+  private let http = OSAllocatedUnfairLock(uncheckedState: HTTPState())
+
+  /// The running HTTP listener, nil while it is not listening.
+  var httpListener: HTTPListener? { http.withLock { $0.listener } }
+
+  /// Why the HTTP listener is not listening, if it tried and failed. Kept for
+  /// the window, as `startupError` is.
+  var httpStartupError: String? { http.withLock { $0.startupError } }
+
   /// Held for the lifetime of the process. `flock` releases on close, and on
   /// death — which is the whole reason it can replace the unlink dance below.
   /// Main thread only: `start` and `stop` are its only readers and writers.
@@ -202,6 +226,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
       listener.withLock { $0.startupError = error.localizedDescription }
       throw error
     }
+    // After the socket, and only once it is ours: a second copy that lost the
+    // host lock must not take the port either.
+    startHTTP()
 
     // One observer for every switch, rather than a call from each toggle. The
     // toggles are `@AppStorage` views spread over several panes, and the bug this closes
@@ -397,7 +424,50 @@ nonisolated final class ServerHost: @unchecked Sendable {
     startSocketWatch()
   }
 
+  /// Starts the loopback HTTP listener. A port somebody else holds is logged
+  /// and kept in `httpStartupError`; the unix socket is unaffected.
+  private func startHTTP() {
+    let (port, tokens) = Self.httpOverride ?? (HTTPListener.configuredPort, HTTPTokens.shared)
+    let listener = HTTPListener(port: port, tokens: tokens, host: self)
+    do {
+      try listener.start()
+      http.withLock {
+        $0.listener = listener
+        $0.startupError = nil
+      }
+    } catch {
+      let detail =
+        "HTTP endpoint not listening on 127.0.0.1:\(port): \(error.localizedDescription). "
+        + "Clients wired over a bridge are unaffected."
+      hostLog("cupertino", .error, detail)
+      http.withLock {
+        $0.listener = nil
+        $0.startupError = detail
+      }
+    }
+  }
+
+  /// Ends every HTTP session and stops listening, before the unix socket goes,
+  /// so no HTTP session is admitted on the way down.
+  private func stopHTTP() {
+    let listener = http.withLock { state -> HTTPListener? in
+      defer { state.listener = nil }
+      return state.listener
+    }
+    listener?.stop()
+  }
+
+  /// Serves one internal connection exactly as an accepted socket is served:
+  /// `fd` is one end of a socketpair the HTTP listener holds the other end
+  /// of, and it goes through the same handshake, admission, licence gate,
+  /// deferral and teardown. `serve` owns `fd` from here and closes it once.
+  func serveInternal(_ fd: Int32) {
+    closeOnExec(fd)
+    onDedicatedThread("cupertino.session") { self.serve(fd) }
+  }
+
   func stop() {
+    stopHTTP()
     if let defaultsObserver {
       NotificationCenter.default.removeObserver(defaultsObserver)
       self.defaultsObserver = nil
@@ -457,6 +527,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// a number somebody made up, which is worse. In-process sessions need no
   /// signal: they are threads of this process and end with it.
   func terminateChildren() {
+    // An HTTP session's internal stream is shut down, as a socket hang-up
+    // would be: its node child gets the end of its stdin, or its in-process
+    // session tears down. `stop` normally ended them already.
+    httpListener?.endSessions(where: { _ in true })
     for (_, surface) in closeDeferred({ _, _ in true }) {
       hostLog(surface, .info, "session closed before its server started, for the quit")
     }

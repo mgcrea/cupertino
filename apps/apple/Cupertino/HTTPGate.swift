@@ -7,16 +7,25 @@ import Foundation
 /// sends `HOST` must be judged the same as one that sends `host`.
 nonisolated struct HTTPHead: Equatable {
   let method: String
-  /// The request target as it went over the wire, query string included.
+  /// The request target. `HTTPHeadParser` drops the query string, as the
+  /// kit's parser does; the gate drops one again if it is handed one.
   let path: String
   /// Keyed by lowercased name.
   let headers: [String: String]
 
+  /// Two spellings of one name (`Host` and `host`) are joined with `,`, as
+  /// the parser joins a field sent twice, so neither copy is picked over the
+  /// other. Joined in sorted order of the spelling, so the result does not
+  /// depend on a dictionary's order.
   init(method: String, path: String, headers: [String: String]) {
     self.method = method
     self.path = path
     var lowered: [String: String] = [:]
-    for (name, value) in headers { lowered[name.lowercased()] = value }
+    for name in headers.keys.sorted() {
+      guard let value = headers[name] else { continue }
+      let key = name.lowercased()
+      lowered[key] = lowered[key].map { "\($0),\(value)" } ?? value
+    }
     self.headers = lowered
   }
 

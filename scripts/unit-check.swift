@@ -2263,6 +2263,128 @@ struct UnitCheck {
       check("the discover refusal is 404 until a client is measured", DiscoverRefusal.status == 404)
     }
 
+    // ─── HTTPHeadParser ───
+    print("\nHTTPHeadParser: a request head, and where its body starts, before the body")
+    do {
+      func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
+      func parsed(_ text: String) -> (head: HTTPHead, bodyStart: Int)? {
+        if case .head(let head, let start) = HTTPHeadParser.parse(bytes(text)) {
+          return (head, start)
+        }
+        return nil
+      }
+      func malformed(_ text: String) -> Bool {
+        if case .malformed = HTTPHeadParser.parse(bytes(text)) { return true }
+        return false
+      }
+      let simple =
+        "POST /s/mail?x=1 HTTP/1.1\r\nHost: 127.0.0.1:8830\r\nContent-Length: 2\r\n\r\n{}"
+      let one = parsed(simple)
+      check(
+        "a head parses, with its body's offset and no body read",
+        one?.head.method == "POST" && one?.head.path == "/s/mail"
+          && one?.head.header("host") == "127.0.0.1:8830"
+          && one?.bodyStart == simple.utf8.count - 2)
+      check(
+        "a head before its body has arrived is already whole",
+        parsed("POST /s/mail HTTP/1.1\r\nContent-Length: 10000000\r\n\r\n")?.bodyStart == 51)
+      check(
+        "an unfinished head is incomplete",
+        HTTPHeadParser.parse(bytes("POST /s/mail HTTP/1.1\r\nHost: 1")) == .incomplete
+          && HTTPHeadParser.parse([]) == .incomplete)
+      check(
+        "names are lowercased, names and values trimmed, the method uppercased",
+        parsed("post /s/mail HTTP/1.1\r\n  X-Thing  :  a b  \r\n\r\n").map {
+          $0.head.method == "POST" && $0.head.headers == ["x-thing": "a b"]
+        } == true)
+      let twice = parsed(
+        "GET /s/mail HTTP/1.1\r\nHost: 127.0.0.1:8830\r\nhost: evil:80\r\n"
+          + "Authorization: Bearer a\r\nAUTHORIZATION: Bearer b\r\n\r\n")
+      check(
+        "a field sent twice is joined with a bare comma, in order, never one copy picked",
+        twice?.head.header("host") == "127.0.0.1:8830,evil:80"
+          && twice?.head.header("authorization") == "Bearer a,Bearer b")
+      let gate = HTTPGate(port: 8830, verify: { $0 == "a" ? "claude-code" : nil })
+      check(
+        "so the gate refuses a doubled Host and a doubled token",
+        twice.map { gate.check($0.head) }
+          == .refuse(status: 400, reason: "Host is not 127.0.0.1:8830")
+          && parsed(
+            "GET /s/mail HTTP/1.1\r\nHost: 127.0.0.1:8830\r\nAuthorization: Bearer a\r\n"
+              + "Authorization: Bearer a\r\n\r\n"
+          ).map { gate.check($0.head) } == .refuse(status: 401, reason: "token not recognised"))
+      check(
+        "a malformed request line, header line or empty name is refused",
+        malformed("GARBAGE\r\n\r\n") && malformed("GET /s/mail HTTP/1.1\r\nno colon\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\n: x\r\n\r\n"))
+      check(
+        "a bare LF, CR or NUL inside a line is refused",
+        malformed("GET /s/mail HTTP/1.1\r\nHost: 127.0.0.1:8830\nX: y\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nX: a\rb\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nX: a\u{0}\r\n\r\n"))
+      check(
+        "a head that is not UTF-8 is refused",
+        HTTPHeadParser.parse(bytes("GET / HTTP/1.1\r\nX: ") + [0xFF, 0xFE] + bytes("\r\n\r\n"))
+          == .malformed("the head is not UTF-8"))
+      let filler = String(repeating: "a", count: HTTPHeadParser.maxHeadBytes)
+      check(
+        "a head over 16 KB is too large, finished or not",
+        HTTPHeadParser.parse(bytes("GET / HTTP/1.1\r\nX: \(filler)")) == .tooLarge
+          && HTTPHeadParser.parse(bytes("GET / HTTP/1.1\r\nX: \(filler)\r\n\r\n")) == .tooLarge)
+      func length(_ value: String?) -> Result<Int, HTTPHeadParser.ContentLengthError>? {
+        HTTPHeadParser.contentLength(
+          HTTPHead(method: "POST", path: "/", headers: value.map { ["content-length": $0] } ?? [:]))
+      }
+      check(
+        "Content-Length is one decimal number, or refused",
+        length(nil) == nil && length("0") == .success(0) && length("4194304") == .success(4_194_304)
+          && length("10,10") == .failure(.init()) && length("-1") == .failure(.init())
+          && length("1e3") == .failure(.init()) && length("") == .failure(.init())
+          && length(String(repeating: "9", count: 40)) == .failure(.init()))
+      check(
+        "HTTPHead joins two spellings of one name rather than keeping one",
+        HTTPHead(method: "GET", path: "/", headers: ["Host": "a", "host": "b"]).header("host")
+          == "a,b")
+    }
+
+    print("\nHTTPConnectionBudget and HTTPWire: the connection ceiling and the bytes written")
+    do {
+      let budget = HTTPConnectionBudget(limit: 2)
+      let taken = [budget.acquire(), budget.acquire(), budget.acquire()]
+      budget.release()
+      check(
+        "the budget refuses past its limit and frees a slot on release",
+        taken == [true, true, false] && budget.acquire() && budget.current == 2)
+      budget.release()
+      budget.release()
+      budget.release()
+      check("a release past zero stays at zero", budget.current == 0)
+
+      let event = String(decoding: HTTPWire.event(Data(#"{"id":1}"#.utf8)), as: UTF8.self)
+      check(
+        "an SSE event is one chunk holding event: message and one data line",
+        event == "1f\r\nevent: message\ndata: {\"id\":1}\n\n\r\n")
+      check(
+        "the last chunk ends the body",
+        String(decoding: HTTPWire.lastChunk, as: UTF8.self) == "0\r\n\r\n")
+      let stream = String(
+        decoding: HTTPWire.streamHead(sessionID: "abc", close: false), as: UTF8.self)
+      check(
+        "a stream is chunked SSE, carrying the session id, and stays open",
+        stream.hasPrefix("HTTP/1.1 200 OK\r\n")
+          && stream.contains("Content-Type: text/event-stream\r\n")
+          && stream.contains("Transfer-Encoding: chunked\r\n")
+          && stream.contains("Mcp-Session-Id: abc\r\n") && !stream.contains("Connection:")
+          && stream.hasSuffix("\r\n\r\n"))
+      let refusal = String(
+        decoding: HTTPWire.refusal(404, "no such session", close: true), as: UTF8.self)
+      check(
+        "a refusal has a length, a JSON-RPC error body, and closes when asked",
+        refusal.hasPrefix("HTTP/1.1 404 Not Found\r\n") && refusal.contains("Connection: close\r\n")
+          && refusal.contains("Content-Length: ")
+          && refusal.contains(#""message":"no such session""#))
+    }
+
     // ─── HTTPTokens ───
     print("\nHTTPTokens: one bearer token per wired client")
     do {

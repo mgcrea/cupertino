@@ -669,6 +669,7 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/DeferredSpawn.swift \
 		apps/apple/Cupertino/HandshakeCache.swift \
 		apps/apple/Cupertino/HTTPGate.swift \
+		apps/apple/Cupertino/HTTPWire.swift \
 		apps/apple/Cupertino/HTTPSessionRouter.swift \
 		apps/apple/Cupertino/HTTPTokens.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/unit-check.swift
@@ -720,6 +721,11 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@# check defines a stand-in ScreenServer with a call slow enough to cancel,
 	@# so the shared in-process loop can be driven without a hook in the app.
 	@# screen-check and dispatch-check compile the real one.
+	@#
+	@# The HTTP listener is driven too, on a scratch port (HOST_CHECK_HTTP_PORT,
+	@# 18830 by default; the check refuses 8830 and 8831) with its tokens held
+	@# in memory, so it never meets an installed copy's port or the Keychain.
+	@# HOST_CHECK_SOURCES is where its one-listener source check reads.
 	@mkdir -p apps/apple/.build
 	@sed 's/FileManager\.default\.homeDirectoryForCurrentUser/HostCheckHome.url/' \
 		apps/apple/Cupertino/BridgeProtocol.swift > apps/apple/.build/host-check-BridgeProtocol.swift
@@ -740,6 +746,8 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/DeferredSpawn.swift \
 		apps/apple/Cupertino/HandshakeCache.swift \
 		apps/apple/Cupertino/HTTPGate.swift \
+		apps/apple/Cupertino/HTTPWire.swift \
+		apps/apple/Cupertino/HTTPListener.swift \
 		apps/apple/Cupertino/HTTPSessionRouter.swift \
 		apps/apple/Cupertino/HTTPTokens.swift \
 		apps/apple/Cupertino/CallCapture.swift \
@@ -783,6 +791,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@# it would pass on exactly the machines that never ran it.
 	@command -v node >/dev/null 2>&1 || { echo "  FAIL host-check needs node on PATH, for scripts/fixtures/stub-mcp-server.mjs" >&2; exit 1; }
 	@HOST_CHECK_NODE="$$(command -v node)" HOST_CHECK_STUB="$(CURDIR)/scripts/fixtures/stub-mcp-server.mjs" \
+		HOST_CHECK_SOURCES="$(CURDIR)/apps/apple/Cupertino" \
 		apps/apple/.build/host-check
 
 handshake-check: ## Prove cached handshake answers do not depend on what the cache key leaves out

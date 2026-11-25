@@ -249,6 +249,17 @@ final class Client {
   }
 }
 
+/// A `TokenVault` in memory: host-check never reads or writes the Keychain.
+final class MemoryTokenVault: TokenVault, @unchecked Sendable {
+  private let lock = NSLock()
+  private var items: [String: String]
+  init(_ items: [String: String]) { self.items = items }
+  func read(_ client: String) throws -> String? { lock.withLock { items[client] } }
+  func write(_ client: String, _ token: String) throws { lock.withLock { items[client] = token } }
+  func delete(_ client: String) throws { _ = lock.withLock { items.removeValue(forKey: client) } }
+  func all() throws -> [String: String] { lock.withLock { items } }
+}
+
 /// The stub MCP server `run` starts in place of a real one, and what it saw.
 ///
 /// `ServerHost.locateOverride` points mail at it. Its environment is the one
@@ -537,6 +548,18 @@ struct HostCheck {
     check(
       "the socket is in a scratch directory, not the real one",
       BridgeProtocol.socketPath.hasPrefix(scratch.path))
+
+    // The HTTP listener on a scratch port with its tokens in memory, set before
+    // the host starts it. Never 8830 or 8831, which an installed copy may hold,
+    // and never the Keychain.
+    let httpPort =
+      ProcessInfo.processInfo.environment["HOST_CHECK_HTTP_PORT"].flatMap { Int($0) } ?? 18830
+    guard ![8830, 8831].contains(httpPort), (1024...65535).contains(httpPort) else {
+      print("  FAIL HOST_CHECK_HTTP_PORT \(httpPort) is a real Cupertino port or out of range")
+      exit(1)
+    }
+    let httpTokens = HTTPTokens(vault: MemoryTokenVault(["claude-code": "t1"]))
+    ServerHost.httpOverride = (port: httpPort, tokens: httpTokens)
 
     // ─── it comes up ────────────────────────────────────────────────────────
 
