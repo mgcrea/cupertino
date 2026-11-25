@@ -2394,6 +2394,34 @@ struct UnitCheck {
           && refusal.contains(#""message":"no such session""#))
     }
 
+    // ─── HTTPRefusalLog ───
+    print("\nHTTPRefusalLog: a flood of one refusal is one line, then a count")
+    do {
+      var log = HTTPRefusalLog()
+      let start = Date(timeIntervalSince1970: 1_000_000)
+      func at(_ seconds: TimeInterval) -> Date { start.addingTimeInterval(seconds) }
+      let token = "HTTP refused POST with 401: token not recognised"
+      let origin = "HTTP refused POST with 403: Origin present; no browser may call"
+      check("the first refusal is logged at once", log.note(token, at: at(0)) == [token])
+      check(
+        "the same one again within 10 s is held",
+        log.note(token, at: at(1)).isEmpty && log.note(token, at: at(2)).isEmpty
+          && log.note(token, at: at(9.9)).isEmpty)
+      check("a different refusal is its own line", log.note(origin, at: at(3)) == [origin])
+      check("nothing is due before the window ends", log.due(at: at(9.99)).isEmpty)
+      check(
+        "when it ends, one line counts the rest, and a window with none says nothing",
+        log.due(at: at(13)) == ["\(token) …and 3 more"])
+      check("after it, the refusal is logged at once again", log.note(token, at: at(14)) == [token])
+      _ = log.note(token, at: at(15))
+      check(
+        "a refusal past a window nobody closed carries its count with it",
+        log.note(token, at: at(30)) == ["\(token) …and 1 more", token])
+      check(
+        "and a line that never repeated is never summarised",
+        log.due(at: at(100)).isEmpty)
+    }
+
     // ─── HTTPTokens ───
     print("\nHTTPTokens: one bearer token per wired client")
     do {

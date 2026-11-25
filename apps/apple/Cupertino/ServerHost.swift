@@ -793,6 +793,21 @@ nonisolated final class ServerHost: @unchecked Sendable {
       return
     }
 
+    // Over HTTP the line is the listener's own, `<surface> client=<id>`, and
+    // the peer of a socketpair is this very process, so the pid checks below
+    // would pass `self` and judge a lend against this app. Defence in depth:
+    // the branches the unix socket alone may reach are refused outright here.
+    if transport == "http",
+      parts[1] == BridgeProtocol.storeLane
+        || (parts.count == 3 && !parts[2].hasPrefix(BridgeProtocol.clientPrefix))
+    {
+      hostLog(
+        "cupertino", .error,
+        "refused an internal HTTP session: self, for= and the store lane are socket-only")
+      reply(client, "err self, for= and the store lane are not served over HTTP")
+      return
+    }
+
     // ─── the store lane ──────────────────────────────────────────────────────
     //
     // `cupertino/1 store for=voice-memos` — the node server this app spawned for

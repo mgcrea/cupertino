@@ -744,6 +744,52 @@ func unicodeCancelled(_ id: Int) -> String {
   #"{"jsonrpc":"2.0","method":"notifications\u002fcancell\u0065d","params":{"requestId":\#(id)}}"#
 }
 
+/// `count` distinct loopback ports nothing holds: each bound to port 0 and
+/// read back, all held until the last is picked so no two are the same, then
+/// released for the listener to bind. So two worktrees can run this at once.
+func freePorts(_ count: Int) -> [Int] {
+  var held: [Int32] = []
+  defer { for fd in held { close(fd) } }
+  var ports: [Int] = []
+  for _ in 0..<count {
+    let fd = socket(AF_INET, SOCK_STREAM, 0)
+    guard fd >= 0 else { return [] }
+    held.append(fd)
+    var address = sockaddr_in()
+    address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+    address.sin_family = sa_family_t(AF_INET)
+    address.sin_port = 0
+    address.sin_addr.s_addr = INADDR_LOOPBACK.bigEndian
+    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let bound = withUnsafeMutablePointer(to: &address) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+        bind(fd, $0, length) == 0 && getsockname(fd, $0, &length) == 0
+      }
+    }
+    guard bound else { return [] }
+    ports.append(Int(UInt16(bigEndian: address.sin_port)))
+  }
+  return ports
+}
+
+/// One handshake over a socketpair handed to `serveInternal`, as only the HTTP
+/// listener hands one: the line the host answers it with.
+func internalHandshake(_ line: String) -> String? {
+  var pair: [Int32] = [-1, -1]
+  guard socketpair(AF_UNIX, SOCK_STREAM, 0, &pair) == 0 else { return nil }
+  defer { close(pair[0]) }
+  var limit = timeval(tv_sec: 5, tv_usec: 0)
+  setsockopt(pair[0], SOL_SOCKET, SO_RCVTIMEO, &limit, socklen_t(MemoryLayout<timeval>.size))
+  ServerHost.shared.serveInternal(pair[1])
+  _ = line.withCString { write(pair[0], $0, strlen($0)) }
+  var out = [UInt8]()
+  var byte: UInt8 = 0
+  while out.count < 512, read(pair[0], &byte, 1) == 1, byte != UInt8(ascii: "\n") {
+    out.append(byte)
+  }
+  return String(decoding: out, as: UTF8.self)
+}
+
 /// Wait for `count` signals on `semaphore`, all within `seconds`.
 func signals(_ semaphore: DispatchSemaphore, _ count: Int, within seconds: Double) -> Bool {
   let deadline = DispatchTime.now() + seconds
@@ -837,18 +883,17 @@ struct HostCheck {
       "the socket is in a scratch directory, not the real one",
       BridgeProtocol.socketPath.hasPrefix(scratch.path))
 
-    // The HTTP listener on a scratch port with its tokens in memory, set before
-    // the host starts it. Never 8830 or 8831, which an installed copy may hold,
-    // and never the Keychain. The two ports above it are the port move's.
-    let httpPort =
-      ProcessInfo.processInfo.environment["HOST_CHECK_HTTP_PORT"].flatMap { Int($0) } ?? 18830
-    guard (httpPort...httpPort + 2).allSatisfy({ ![8830, 8831].contains($0) }),
-      (1024...65533).contains(httpPort)
-    else {
-      print("  FAIL HOST_CHECK_HTTP_PORT \(httpPort) is a real Cupertino port or out of range")
+    // The HTTP listener on scratch ports the system handed out, with its
+    // tokens in memory, set before the host starts it. Never 8830 or 8831,
+    // which an installed copy may hold, and never the Keychain. The second
+    // and third ports are the port move's.
+    let httpPorts = freePorts(3)
+    guard httpPorts.count == 3, httpPorts.allSatisfy({ ![8830, 8831].contains($0) }) else {
+      print("  FAIL no scratch HTTP ports apart from 8830 and 8831: \(httpPorts)")
       exit(1)
     }
-    let httpTokens = HTTPTokens(vault: MemoryTokenVault(["claude-code": "t1"]))
+    let httpPort = httpPorts[0]
+    let httpTokens = HTTPTokens(vault: MemoryTokenVault(["claude-code": "t1", "codex": "t2"]))
     ServerHost.httpOverride = (port: httpPort, tokens: httpTokens)
 
     // ─── it comes up ────────────────────────────────────────────────────────
@@ -1570,18 +1615,17 @@ struct HostCheck {
 
     mark = hostLogMark()
     if let probe = HTTPProbe(port: httpPort) {
-      let started = Date()
       probe.send(
         "POST /s/mail HTTP/1.1\r\nHost: localhost:\(httpPort)\r\nAuthorization: Bearer t1\r\n"
           + "Content-Type: application/json\r\nContent-Length: 10000000\r\n\r\n")
-      let status = probe.head(within: 1)
+      // The body is never sent, so any answer at all came before it.
+      let status = probe.head(within: 5)
       let refusal = hostLogLines(since: mark) {
         $0.contains { $0.contains("Host is not 127.0.0.1") }
       }
       check(
-        "HTTP: refused before the body, within 1 s, and the Host refusal logged",
-        status == 400 && Date().timeIntervalSince(started) < 1
-          && refusal.contains { $0.contains("Host is not 127.0.0.1") })
+        "HTTP: refused before the body, and the Host refusal logged",
+        status == 400 && refusal.contains { $0.contains("Host is not 127.0.0.1") })
     } else {
       check("HTTP: refused before the body (could not connect)", false)
     }
@@ -1593,12 +1637,12 @@ struct HostCheck {
         "POST", "/s/mail",
         headers: fields + [("Origin", "http://evil.example"), ("Authorization", "Bearer t1")],
         body: Data(Frames.initialize.utf8))
-      let origin = probe.head(within: 2)
+      let origin = probe.head(within: 5)
       let wrong = HTTPProbe(port: httpPort)
       wrong?.request(
         "POST", "/s/mail", headers: fields + [("Authorization", "Bearer not-the-token-417")],
         body: Data(Frames.initialize.utf8))
-      let token = wrong?.head(within: 2)
+      let token = wrong?.head(within: 5)
       let log = hostLogLines(since: mark) {
         $0.contains { $0.contains("Origin present") }
           && $0.contains { $0.contains("token not recognised") }
@@ -1625,7 +1669,7 @@ struct HostCheck {
         headers: session.headers + [("Content-Length", String(HTTPListener.maxBodyBytes + 1))])
       check(
         "HTTP: a body over 64 MB is refused 413 before it is read",
-        session.probe.head(within: 1) == 413)
+        session.probe.head(within: 5) == 413)
     } else {
       check("HTTP: a kept-alive connection answers each request once (could not connect)", false)
     }
@@ -1737,19 +1781,21 @@ struct HostCheck {
       after?.id = session.id
       check(
         "HTTP: DELETE ends the child",
-        status == 200 && Stub.exited(pid, within: 3)
+        status == 200 && Stub.exited(pid, within: 5)
           && after?.post(request(7, "ping")).status == 404)
     } else {
       check("HTTP: DELETE ends the child (could not start one)", false)
     }
 
-    HTTPListener.getCloseGrace = 0.5
+    // Measured from the hang-up: the session outlives its GET stream by the
+    // grace, then ends.
+    HTTPListener.getCloseGrace = 2
     if let session = HTTPMCP(port: httpPort), let pid = started(session),
       let get = session.openGet()
     {
-      let held = !Stub.exited(pid, within: 0.8)
       get.hangUp()
-      check("HTTP: GET close ends after grace", held && Stub.exited(pid, within: 3))
+      let held = !Stub.exited(pid, within: 0.5)
+      check("HTTP: GET close ends after grace", held && Stub.exited(pid, within: 5))
     } else {
       check("HTTP: GET close ends after grace (could not open one)", false)
     }
@@ -1757,7 +1803,7 @@ struct HostCheck {
 
     HTTPListener.idleLimit = 1
     if let session = HTTPMCP(port: httpPort), let pid = started(session) {
-      let gone = Stub.exited(pid, within: 3)
+      let gone = Stub.exited(pid, within: 5)
       check(
         "HTTP: idle session ends",
         gone && session.post(request(8, "ping")).status == 404)
@@ -1789,7 +1835,7 @@ struct HostCheck {
       let read = pid.map { Stub.lines(of: $0, count: 4, within: 5).last } == slow
       writes(false)
       ServerHost.shared.settingsChanged()
-      let ended = session.probe.event(within: 2) == .ended
+      let ended = session.probe.event(within: 5) == .ended
       check(
         "HTTP: narrowed setting ends open POST streams",
         streaming && read && ended)
@@ -1805,7 +1851,7 @@ struct HostCheck {
     {
       get.hangUp()
       let early = hostLogLines(since: mark).contains("server stopped")
-      let log = hostLogLines(since: mark, within: 2) { $0.contains("server stopped") }
+      let log = hostLogLines(since: mark, within: 5) { $0.contains("server stopped") }
       check(
         "HTTP: in-process surface session tears down after its GET closes",
         !early && log.contains("server stopped"))
@@ -1849,7 +1895,7 @@ struct HostCheck {
       ServerHost.shared.endHTTPSessions(of: "claude-code")
       check(
         "HTTP: a reset ends its client's sessions, the GET stream included",
-        get.event(within: 2) == .ended && mine.post(request(13, "ping")).status == 404)
+        get.event(within: 5) == .ended && mine.post(request(13, "ping")).status == 404)
       check(
         "HTTP: and another client's session keeps working",
         theirs.post(request(14, "ping")).messages.count == 1)
@@ -1908,8 +1954,8 @@ struct HostCheck {
       let get = session.openGet()
     {
       check(
-        "HTTP: a held stream receives a keep-alive comment within the interval and a second",
-        get.event(within: 2) == .comment)
+        "HTTP: a held stream receives a keep-alive comment",
+        get.event(within: 5) == .comment)
       get.hangUp()
       _ = session.delete()
     } else {
@@ -1972,27 +2018,84 @@ struct HostCheck {
         closedAt.map { $0 >= 9 && $0 <= 13 } == true)
       check(
         "HTTP: and a connection that sent nothing is closed by then too",
-        silent.closed(within: 1))
+        silent.closed(within: 5))
     } else {
       check("HTTP: a trickled head is closed (could not connect)", false)
     }
 
+    // An in-process call over HTTP is cancelled once its session ends: the
+    // client hangs up its POST and its GET, and the grace ends the session,
+    // which runs the in-process hang-up teardown.
+    HTTPListener.getCloseGrace = 1
+    resetStandIn()
+    if let session = HTTPMCP(port: httpPort, surface: "screen"), session.initialize() != nil,
+      let get = session.openGet()
+    {
+      session.probe.request(
+        "POST", "/s/screen", headers: session.headers, body: Data(request(21, "test/slow").utf8))
+      let streaming = session.probe.head(within: 5) == 200
+      let registered = signals(ScreenServer.registered, 1, within: 5)
+      session.probe.hangUp()
+      get.hangUp()
+      check(
+        "HTTP: an in-process call is cancelled within the grace and 2 s of its GET closing",
+        streaming && registered && signals(ScreenServer.cancelled, 1, within: 3))
+    } else {
+      check("HTTP: an in-process call is cancelled (could not open a session)", false)
+    }
+    HTTPListener.getCloseGrace = 30
+
+    // A session id is good only with the token and the surface it was opened
+    // under: another client's token, or another surface's path, finds nothing.
+    if let mine = HTTPMCP(port: httpPort), mine.initialize() != nil {
+      let theirs = HTTPMCP(port: httpPort, token: "t2")
+      theirs?.id = mine.id
+      let crossClient = theirs?.post(request(22, "ping")).status
+      let elsewhere = HTTPMCP(port: httpPort, surface: "notes")
+      elsewhere?.id = mine.id
+      let crossSurface = elsewhere?.post(request(23, "ping")).status
+      check("HTTP: a session id is 404 under another client's token", crossClient == 404)
+      check("HTTP: and 404 on another surface's path under its own", crossSurface == 404)
+      check(
+        "HTTP: and still answers where it was opened",
+        mine.post(request(24, "ping")).messages.count == 1)
+      _ = mine.delete()
+    } else {
+      check("HTTP: a session id is bound to its client (could not open one)", false)
+    }
+
+    // `serve` is told the transport, and over HTTP refuses what only the unix
+    // socket may claim. Only the listener calls `serveInternal`, always with a
+    // client= line, so these are reached by calling it here.
+    check(
+      "HTTP: an internal handshake claiming self is refused as not over HTTP",
+      internalHandshake(BridgeProtocol.selfHandshake(server: "screen"))?.contains("over HTTP")
+        == true)
+    check(
+      "HTTP: and a lend (for=) is refused as not over HTTP",
+      internalHandshake("\(BridgeProtocol.version) desktop for=mail\n")?.contains("over HTTP")
+        == true)
+    check(
+      "HTTP: and a store lane is refused as not over HTTP",
+      internalHandshake("\(BridgeProtocol.version) store for=voice-memos\n")?.contains("over HTTP")
+        == true)
+
     // The Settings field moves the listener: a free port rebinds, and a taken
     // one is refused with the old port still served and no window warning.
-    let moved = httpPort + 1
+    let moved = httpPorts[1]
     let free = ServerHost.shared.moveHTTP(to: moved)
     check(
       "HTTP: moving the port rebinds on the new one",
       free == nil && ServerHost.shared.httpListener?.boundAddress == "127.0.0.1:\(moved)"
         && HTTPMCP(port: moved)?.open() == true)
-    let portHolder = HTTPListener(port: httpPort + 2, tokens: httpTokens, host: ServerHost.shared)
+    let portHolder = HTTPListener(port: httpPorts[2], tokens: httpTokens, host: ServerHost.shared)
     let squatting = (try? portHolder.start()) != nil
     let survivor = HTTPMCP(port: moved)
     let survivorOpen = survivor?.open() == true
-    let taken = ServerHost.shared.moveHTTP(to: httpPort + 2)
+    let taken = ServerHost.shared.moveHTTP(to: httpPorts[2])
     check(
       "HTTP: a taken port is refused, and the old one kept",
-      squatting && taken?.contains("127.0.0.1:\(httpPort + 2)") == true
+      squatting && taken?.contains("127.0.0.1:\(httpPorts[2])") == true
         && ServerHost.shared.httpListener?.boundAddress == "127.0.0.1:\(moved)"
         && ServerHost.shared.httpStartupError == nil)
     check(

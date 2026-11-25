@@ -722,8 +722,9 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@# so the shared in-process loop can be driven without a hook in the app.
 	@# screen-check and dispatch-check compile the real one.
 	@#
-	@# The HTTP listener is driven too, on a scratch port (HOST_CHECK_HTTP_PORT,
-	@# 18830 by default; the check refuses 8830 and 8831) with its tokens held
+	@# The HTTP listener is driven too, on scratch ports the system hands out
+	@# (bound to 0 and read back, so two worktrees can run this at once; the
+	@# check refuses 8830 and 8831) with its tokens held
 	@# in memory, so it never meets an installed copy's port or the Keychain.
 	@# HOST_CHECK_SOURCES is where its one-listener source check reads.
 	@mkdir -p apps/apple/.build

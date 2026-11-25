@@ -98,6 +98,7 @@ nonisolated final class HTTPListener: @unchecked Sendable {
   private let gate: HTTPGate
   private let budget = HTTPConnectionBudget(limit: HTTPListener.connectionLimit)
   private let streamIDs = OSAllocatedUnfairLock(initialState: 0)
+  private let refusals = OSAllocatedUnfairLock(uncheckedState: HTTPRefusalLog())
 
   private struct State {
     var fd: Int32 = -1
@@ -207,6 +208,22 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     }
   }
 
+  /// One refusal line, through the coalescer: a flood of one refusal is one
+  /// line now and one count when its window ends.
+  fileprivate func logRefusal(_ line: String) {
+    let lines = refusals.withLock { $0.note(line, at: Date()) }
+    for text in lines { hostLog("cupertino", .error, text) }
+    guard lines.last == line else { return }
+    DispatchQueue.global(qos: .utility).asyncAfter(
+      deadline: .now() + HTTPRefusalLog.window + 0.1
+    ) { [weak self] in
+      guard let self else { return }
+      for text in self.refusals.withLock({ $0.due(at: Date()) }) {
+        hostLog("cupertino", .error, text)
+      }
+    }
+  }
+
   private func nextStreamID() -> Int {
     streamIDs.withLock {
       $0 += 1
@@ -306,7 +323,7 @@ nonisolated final class HTTPListener: @unchecked Sendable {
       fd, &buffer, idleMs: admitted ? Self.keepAliveIdleMs : Self.ioTimeoutMs)
     {
       buffer.removeFirst(bodyStart)
-      let exchange = Exchange(fd: fd, head: head)
+      let exchange = Exchange(fd: fd, head: head) { [weak self] in self?.logRefusal($0) }
       let goesOn = handle(exchange, &buffer)
       admitted = admitted || exchange.admitted
       guard goesOn else { return }
@@ -325,11 +342,11 @@ nonisolated final class HTTPListener: @unchecked Sendable {
         case .head(let head, let bodyStart):
           return (head, bodyStart)
         case .tooLarge:
-          hostLog("cupertino", .error, "HTTP refused: a request head over 16 KB")
+          logRefusal("HTTP refused: a request head over 16 KB")
           _ = writeAll(fd, HTTPWire.refusal(431, "request head over 16 KB", close: true))
           return nil
         case .malformed(let reason):
-          hostLog("cupertino", .error, "HTTP refused: \(reason)")
+          logRefusal("HTTP refused: \(reason)")
           _ = writeAll(fd, HTTPWire.refusal(400, reason, close: true))
           return nil
         case .incomplete:
@@ -377,10 +394,13 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     var bodyUnread: Bool
     /// The gate admitted it: its token named a client.
     var admitted = false
+    /// Where a refusal line goes: the listener's coalescer.
+    let log: (String) -> Void
 
-    init(fd: Int32, head: HTTPHead) {
+    init(fd: Int32, head: HTTPHead, log: @escaping (String) -> Void) {
       self.fd = fd
       self.head = head
+      self.log = log
       closeAfter = head.header("connection")?.lowercased().contains("close") == true
       bodyUnread =
         head.header("transfer-encoding") != nil
@@ -400,7 +420,7 @@ nonisolated final class HTTPListener: @unchecked Sendable {
     /// Answers a refusal, logs it by reason (never a token), and says whether
     /// the connection carries on.
     func refuse(_ status: Int, _ reason: String, extra: [(String, String)] = []) -> Bool {
-      hostLog("cupertino", .error, "HTTP refused \(loggedMethod) with \(status): \(reason)")
+      log("HTTP refused \(loggedMethod) with \(status): \(reason)")
       let close = closes
       _ = writeAll(fd, HTTPWire.refusal(status, reason, close: close, extra: extra))
       return !close

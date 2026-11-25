@@ -229,3 +229,50 @@ nonisolated enum HTTPWire {
   /// held stream with nothing to say still writes.
   static let keepAlive = chunk(Data(": \n\n".utf8))
 }
+
+/// Identical refusal lines, coalesced: the first is logged at once, the same
+/// line again within `window` is only counted, and the count is logged as one
+/// line when the window ends. A page in a browser can make a refused request
+/// per `<img>`, and each used to be a line of its own.
+///
+/// Pure: the caller hands in the time, logs what `note` and `due` return, and
+/// calls `due` once a window it opened has ended.
+nonisolated struct HTTPRefusalLog {
+  static let window: TimeInterval = 10
+
+  private struct Held {
+    let since: Date
+    var more = 0
+  }
+  private var held: [String: Held] = [:]
+
+  /// The lines to log now for one refusal: the line itself when it opens a
+  /// window, nothing while one is open, and a window that ended unclosed
+  /// gives its count first.
+  mutating func note(_ line: String, at now: Date) -> [String] {
+    if let open = held[line] {
+      if now.timeIntervalSince(open.since) < Self.window {
+        held[line]?.more += 1
+        return []
+      }
+      held[line] = Held(since: now)
+      return (open.more > 0 ? [Self.summary(line, open.more)] : []) + [line]
+    }
+    held[line] = Held(since: now)
+    return [line]
+  }
+
+  /// The counts of every window that has ended, one line each, and those
+  /// windows closed. A window nothing repeated in closes silently.
+  mutating func due(at now: Date) -> [String] {
+    var out: [String] = []
+    for (line, open) in held.sorted(by: { $0.key < $1.key })
+    where now.timeIntervalSince(open.since) >= Self.window {
+      held[line] = nil
+      if open.more > 0 { out.append(Self.summary(line, open.more)) }
+    }
+    return out
+  }
+
+  static func summary(_ line: String, _ more: Int) -> String { "\(line) …and \(more) more" }
+}
