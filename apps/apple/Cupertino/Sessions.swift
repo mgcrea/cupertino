@@ -27,6 +27,10 @@ final class Sessions {
     /// `clientInfo.name` is the only name available.
     var client: String?
     var calls: Int
+    /// How the client reached the host: `"socket"` through a bridge on the
+    /// unix socket, `"http"` through the loopback listener. Set at the entry
+    /// point, because past it both are the same descriptor to `serve`.
+    let transport: String
   }
 
   /// Main-actor hops are pinned to one priority on purpose.
@@ -40,9 +44,11 @@ final class Sessions {
 
   private(set) var live: [Session] = []
 
-  func opened(id: UUID, surface: String, pid: Int32?) {
+  func opened(id: UUID, surface: String, pid: Int32?, transport: String) {
     live.append(
-      Session(id: id, surface: surface, pid: pid, startedAt: Date(), client: nil, calls: 0))
+      Session(
+        id: id, surface: surface, pid: pid, startedAt: Date(), client: nil, calls: 0,
+        transport: transport))
   }
 
   /// A session opened with no pid has started its server. The same row, so
@@ -58,11 +64,14 @@ final class Sessions {
   /// and `counted` as the handshake and the traffic arrive — because that is
   /// the order the wire delivers them in. A fixture has no wire, and threading
   /// it through the same three steps would only be ceremony.
-  func openDemo(surface: String, client: String, pid: Int32, calls: Int, startedAt: Date) {
+  func openDemo(
+    surface: String, client: String, pid: Int32, calls: Int, startedAt: Date,
+    transport: String = "socket"
+  ) {
     live.append(
       Session(
         id: UUID(), surface: surface, pid: pid, startedAt: startedAt, client: client,
-        calls: calls))
+        calls: calls, transport: transport))
   }
 
   func closed(id: UUID) {

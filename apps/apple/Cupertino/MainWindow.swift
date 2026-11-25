@@ -606,6 +606,8 @@ struct MainView: View {
         .lineLimit(1)
         .truncationMode(.middle)
         .frame(maxWidth: .infinity, alignment: .leading)
+      Text(session.transport)
+        .foregroundStyle(.secondary)
       Text(session.pid.map { "pid \($0)" } ?? "not started")
         .foregroundStyle(.secondary)
         .monospacedDigit()

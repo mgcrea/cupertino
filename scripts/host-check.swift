@@ -1428,8 +1428,8 @@ struct HostCheck {
       let rows = polled(
         { mailRows().filter { !rowsBefore.contains($0.id) } }, until: { !$0.isEmpty })
       check(
-        "a deferred session has its Activity row, with no pid yet",
-        rows.count == 1 && rows.first?.pid == nil)
+        "a deferred session has its Activity row, with no pid yet, over the socket",
+        rows.count == 1 && rows.first?.pid == nil && rows.first?.transport == "socket")
       let known = Stub.pids()
       client.send(Frames.call())
       _ = client.ids(until: 3)
@@ -1647,6 +1647,21 @@ struct HostCheck {
           && !hostLogLines(since: mark).contains(where: isServerStart))
     } else {
       check("HTTP: no child before a call (could not connect)", false)
+    }
+
+    // The Activity row says which way the session came in: an HTTP session is
+    // fed to `serve` through a socketpair, and only the entry point knows it.
+    RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+    let httpRowsBefore = Set(mailRows().map(\.id))
+    if let session = HTTPMCP(port: httpPort), session.open() {
+      let rows = polled(
+        { mailRows().filter { !httpRowsBefore.contains($0.id) } }, until: { !$0.isEmpty })
+      check(
+        "http session shows transport http",
+        rows.count == 1 && rows.first?.transport == "http")
+      _ = session.delete()
+    } else {
+      check("http session shows transport http (could not open one)", false)
     }
 
     /// An open session whose child has started, and that child's pid.

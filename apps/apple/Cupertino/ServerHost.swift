@@ -463,7 +463,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// deferral and teardown. `serve` owns `fd` from here and closes it once.
   func serveInternal(_ fd: Int32) {
     closeOnExec(fd)
-    onDedicatedThread("cupertino.session") { self.serve(fd) }
+    onDedicatedThread("cupertino.session") { self.serve(fd, transport: "http") }
   }
 
   func stop() {
@@ -651,14 +651,16 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // from ever seeing EOF.
       closeOnExec(client)
       onDedicatedThread("cupertino.session") { [weak self] in
-        self?.serve(client)
+        self?.serve(client, transport: "socket")
       }
     }
   }
 
   // MARK: - One connection
 
-  private func serve(_ client: Int32) {
+  /// `transport` is how the client came in, `"socket"` or `"http"`, for the
+  /// Activity row: past this point the two are the same kind of descriptor.
+  private func serve(_ client: Int32, transport: String) {
     defer { close(client) }
 
     // The bridge protects ITSELF with the same deadline on the same phase. This
@@ -981,7 +983,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // arrives by exactly the path `--server=mail` does.
     if surface.runtime == .swift {
       reply(client, BridgeProtocol.ok)
-      serveInProcess(surface: surface, client: client, onTrial: onTrial, lentTo: lentTo)
+      serveInProcess(
+        surface: surface, client: client, onTrial: onTrial, lentTo: lentTo, transport: transport)
       return
     }
 
@@ -998,7 +1001,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     reply(client, BridgeProtocol.ok)
     run(
       surface: surface, binaries: binaries, client: client, onTrial: onTrial,
-      isSelf: isSelf, wiredClient: wiredClient)
+      isSelf: isSelf, wiredClient: wiredClient, transport: transport)
   }
 
   /// What the licence gate answers for one connection.
@@ -1208,7 +1211,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// two different things, which is why they are two parameters rather than
   /// one. Everything read per request below reads the governing one.
   private func serveInProcess(
-    surface: Surface, client: Int32, onTrial: Bool, lentTo: Surface? = nil
+    surface: Surface, client: Int32, onTrial: Bool, lentTo: Surface? = nil, transport: String
   ) {
     let authority = lentTo ?? surface
     // The reach a borrower gets, fixed for the life of the connection because
@@ -1224,7 +1227,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // reads as the gate having failed. The log line below names what was lent,
     // so nothing is hidden by attributing it this way.
     Task(priority: Sessions.priority) { @MainActor in
-      Sessions.shared.opened(id: session, surface: authority.id, pid: pid)
+      Sessions.shared.opened(id: session, surface: authority.id, pid: pid, transport: transport)
     }
     if onTrial { trialClients.withLock { $0[session] = (authority.id, client) } }
     defer {
@@ -1477,7 +1480,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// docs/superpowers/specs/2026-11-25-deferred-server-spawn-design.md.
   private func run(
     surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool, isSelf: Bool,
-    wiredClient: String?
+    wiredClient: String?, transport: String
   ) {
     let spawn = spawnEnvironment(surface: surface, isSelf: isSelf, wiredClient: wiredClient)
     hostLog(surface.id, .info, "allowWrites=\(spawn.config.allowWrites)")
@@ -1497,7 +1500,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
       startServer(
         surface: surface, binaries: binaries, env: spawn.env, config: spawn.config,
         client: client, onTrial: onTrial, session: session, observer: observer,
-        handoff: handoff)
+        handoff: handoff, transport: transport)
     }
 
     guard HandshakeCache.isOn(binaries) else {
@@ -1509,7 +1512,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // Connected, so in the Activity window now, with no pid until a call
     // starts a server.
     Task(priority: Sessions.priority) { @MainActor in
-      Sessions.shared.opened(id: session, surface: surface.id, pid: nil)
+      Sessions.shared.opened(id: session, surface: surface.id, pid: nil, transport: transport)
     }
     deferredSessions.withLock {
       $0[session] = DeferredEntry(
@@ -1652,7 +1655,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// preamble first, and both pumps run the reply filter until it retires.
   private func startServer(
     surface: Surface, binaries: ServerBinaries, env: [String: String], config: SpawnConfig,
-    client: Int32, onTrial: Bool, session: UUID, observer: RequestObserver, handoff: Handoff?
+    client: Int32, onTrial: Bool, session: UUID, observer: RequestObserver, handoff: Handoff?,
+    transport: String
   ) {
     let process = Process()
     process.executableURL = binaries.node
@@ -1702,7 +1706,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let wasDeferred = handoff != nil
     Task(priority: Sessions.priority) { @MainActor in
       if !wasDeferred {
-        Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
+        Sessions.shared.opened(id: session, surface: surface.id, pid: pid, transport: transport)
       } else {
         Sessions.shared.started(id: session, pid: pid)
       }
