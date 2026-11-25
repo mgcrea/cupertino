@@ -2116,6 +2116,83 @@ struct UnitCheck {
           && spent.trigger?.method == "tools/call")
     }
 
+    // ─── HTTPGate ───
+    print("\nHTTPGate: what a loopback request must carry before its body is read")
+    do {
+      let gate = HTTPGate(port: 8830, verify: { $0 == "t1" ? "claude-code" : nil })
+      func head(
+        method: String = "POST", path: String = "/s/mail",
+        host: String? = "127.0.0.1:8830", origin: String? = nil,
+        authorization: String? = "Bearer t1"
+      ) -> HTTPHead {
+        var headers: [String: String] = [:]
+        if let host { headers["Host"] = host }
+        if let origin { headers["Origin"] = origin }
+        if let authorization { headers["Authorization"] = authorization }
+        return HTTPHead(method: method, path: path, headers: headers)
+      }
+      func status(_ verdict: GateVerdict) -> Int? {
+        if case .refuse(let status, _) = verdict { return status }
+        return nil
+      }
+      func reason(_ verdict: GateVerdict) -> String {
+        if case .refuse(_, let reason) = verdict { return reason }
+        return ""
+      }
+
+      check(
+        "admits a good request",
+        gate.check(head()) == .admit(surface: "mail", client: "claude-code"))
+
+      let wrongHost = gate.check(head(host: "localhost:8830", authorization: "Bearer nope"))
+      check(
+        "wrong host is 400 first",
+        status(wrongHost) == 400 && reason(wrongHost).contains("Host")
+          && !reason(wrongHost).contains("token"))
+      check(
+        "a host without the port, or on ::1, is 400",
+        status(gate.check(head(host: "127.0.0.1"))) == 400
+          && status(gate.check(head(host: "[::1]:8830"))) == 400
+          && status(gate.check(head(host: nil))) == 400)
+
+      check(
+        "any origin is 403",
+        status(gate.check(head(origin: "http://127.0.0.1:8830"))) == 403)
+
+      check("bad token is 401", status(gate.check(head(authorization: "Bearer nope"))) == 401)
+      check("missing token is 401", status(gate.check(head(authorization: nil))) == 401)
+      check(
+        "Bearer matches in any case, with one space",
+        gate.check(head(authorization: "bearer t1"))
+          == .admit(surface: "mail", client: "claude-code")
+          && status(gate.check(head(authorization: "Bearer  t1"))) == 401
+          && status(gate.check(head(authorization: "Basic t1"))) == 401)
+
+      check("unknown surface is 404", status(gate.check(head(path: "/s/nope"))) == 404)
+      check(
+        "other path is 404",
+        status(gate.check(head(path: "/mcp"))) == 404
+          && status(gate.check(head(path: "/s/"))) == 404
+          && status(gate.check(head(path: "/s/mail/"))) == 404
+          && status(gate.check(head(path: "/s/mail/x"))) == 404)
+      check(
+        "a query string is not part of the path",
+        gate.check(head(path: "/s/mail?x=1")) == .admit(surface: "mail", client: "claude-code"))
+
+      let refusals = [
+        gate.check(head(host: "localhost:8830", authorization: "Bearer secret-token-text")),
+        gate.check(head(origin: "http://evil", authorization: "Bearer secret-token-text")),
+        gate.check(head(authorization: "Bearer secret-token-text")),
+        gate.check(head(path: "/s/nope", authorization: "Bearer t1")),
+      ]
+      check(
+        "reason never carries the token",
+        refusals.allSatisfy { v in
+          status(v) != nil && !reason(v).contains("secret-token-text") && !reason(v).contains("t1")
+        })
+      check("the discover refusal is 404 until a client is measured", DiscoverRefusal.status == 404)
+    }
+
     print("\n\(checks - failures)/\(checks) passed")
     if failures > 0 {
       print("\(failures) failed")
