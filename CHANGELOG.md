@@ -6,13 +6,17 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.43.0`,
-`notes-v1.43.0`, `reminders-v1.43.0`, `core-v1.43.0` for the npm packages, and `app-v1.43.0` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.44.0`,
+`notes-v1.44.0`, `reminders-v1.44.0`, `core-v1.44.0` for the npm packages, and `app-v1.44.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
 
-## [Unreleased]
+## [1.44.0] - 2026-11-26
+
+**Clients reach Cupertino over HTTP, with no bridge.** Wired fresh or switched in Settings, Claude
+Code, Codex, Cursor and VS Code talk to the app directly, each with its own token. And a session
+starts a server only when it first calls one.
 
 ### Added
 
@@ -37,6 +41,18 @@ summary.
 - **Claude Code's allowlist is read for HTTP entries too.** An HTTP entry is judged by its URL
   against `serverUrl` patterns, as Claude Code judges a remote server, and the card offers the exact
   URL to add.
+
+### Changed
+
+- **A server starts only when a session first needs it.** Every session used to start one node
+  process per surface (Mail, Notes, Reminders and six more) the moment its client connected,
+  whether or not it ever called one, at about 18 MB each. Cupertino now answers the handshake and
+  the tool, prompt and resource lists itself, from what an identical server already replied, and
+  starts the server at the session's first real call, which takes about 70 to 95 ms longer. A
+  session that only connects and lists costs no process at all. Right after Cupertino launches
+  nothing is recorded yet, so the first sessions still start their servers.
+  `defaults write io.mgcrea.cupertino deferServerSpawn -bool false` turns it off for new
+  connections.
 
 ## [1.43.0] - 2026-11-20
 
@@ -3746,7 +3762,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.43.0...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.44.0...HEAD
+[1.44.0]: https://github.com/mgcrea/cupertino/compare/app-v1.43.0...app-v1.44.0
 [1.43.0]: https://github.com/mgcrea/cupertino/compare/app-v1.42.0...app-v1.43.0
 [1.42.0]: https://github.com/mgcrea/cupertino/compare/app-v1.41.0...app-v1.42.0
 [1.41.0]: https://github.com/mgcrea/cupertino/compare/app-v1.40.0...app-v1.41.0
