@@ -80,7 +80,15 @@ nonisolated final class HTTPListener: @unchecked Sendable {
 
   /// The `MCP-Protocol-Version` values a session request may carry. One left
   /// out is taken as 2025-03-26, as the 2025-06-18 transport says.
-  static let protocolVersions: Set<String> = ["2025-03-26", "2025-06-18", "2025-11-25"]
+  ///
+  /// A client sends back whatever the session negotiated, so every revision
+  /// one of our own servers answers `initialize` with belongs here.
+  /// `InProcessRPC.protocolVersion` is what Desktop, Screen, Shell, Simulator
+  /// and Sound negotiate; 1.44.0 left it out, and each of the five refused
+  /// every request after its handshake.
+  static let protocolVersions: Set<String> = [
+    InProcessRPC.protocolVersion, "2025-03-26", "2025-06-18", "2025-11-25",
+  ]
 
   enum ListenError: LocalizedError {
     case socket(String)
@@ -476,8 +484,7 @@ nonisolated final class HTTPListener: @unchecked Sendable {
       if let version = head.header("mcp-protocol-version"),
         !Self.protocolVersions.contains(version)
       {
-        return exchange.refuse(
-          400, "MCP-Protocol-Version is not 2025-03-26, 2025-06-18 or 2025-11-25")
+        return exchange.refuse(400, "MCP-Protocol-Version is not one this endpoint speaks")
       }
       session = found
     }

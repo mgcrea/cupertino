@@ -1929,6 +1929,10 @@ struct HostCheck {
       let bare = session.post(request(15, "ping"))
       session.version = "2025-11-25"
       let newest = session.post(request(16, "ping"))
+      // What the in-process surfaces negotiate, so what their clients send
+      // back: 1.44.0 refused it, and all five died after the handshake.
+      session.version = InProcessRPC.protocolVersion
+      let inProcess = session.post(request(18, "ping"))
       session.version = "1999-01-01"
       let bogus = session.post(request(17, "ping")).status
       let log = hostLogLines(since: mark) {
@@ -1938,6 +1942,9 @@ struct HostCheck {
         "HTTP: a request with no MCP-Protocol-Version is served",
         bare.status == 200 && bare.messages.count == 1)
       check("HTTP: a known MCP-Protocol-Version is served", newest.messages.count == 1)
+      check(
+        "HTTP: \(InProcessRPC.protocolVersion), what the in-process surfaces negotiate, is served",
+        inProcess.status == 200 && inProcess.messages.count == 1)
       check(
         "HTTP: an unknown MCP-Protocol-Version is refused 400 and logged",
         bogus == 400 && log.contains { $0.contains("400") && $0.contains("MCP-Protocol-Version") })
