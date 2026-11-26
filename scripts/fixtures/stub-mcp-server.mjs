@@ -13,6 +13,9 @@
 // STUB_SKEW  a method answered with a different result, to make a replay
 //            disagree with what the host recorded.
 //
+// A `tools/call` whose arguments carry `delayMs` is answered that many
+// milliseconds late, so a check can hold a request open.
+//
 // Exits on stdin EOF, as a real server does.
 
 import { appendFileSync } from "node:fs";
@@ -67,7 +70,10 @@ lines.on("line", (line) => {
     return;
   }
   const answer = message.method === skew ? { ...result, skewed: true } : result;
-  send({ result: answer, jsonrpc: "2.0", id: message.id });
+  const delay = message.method === "tools/call" ? message.params?.arguments?.delayMs : undefined;
+  const reply = () => send({ result: answer, jsonrpc: "2.0", id: message.id });
+  if (typeof delay === "number") setTimeout(reply, delay);
+  else reply();
 });
 
 lines.on("close", () => process.exit(0));

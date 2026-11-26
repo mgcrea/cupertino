@@ -668,6 +668,10 @@ unit: ## Assert what a recorded call carries and that the audit chain holds, wit
 		apps/apple/Cupertino/McpFrame.swift \
 		apps/apple/Cupertino/DeferredSpawn.swift \
 		apps/apple/Cupertino/HandshakeCache.swift \
+		apps/apple/Cupertino/HTTPGate.swift \
+		apps/apple/Cupertino/HTTPWire.swift \
+		apps/apple/Cupertino/HTTPSessionRouter.swift \
+		apps/apple/Cupertino/HTTPTokens.swift \
 		apps/apple/Cupertino/ChildTermination.swift scripts/unit-check.swift
 	@apps/apple/.build/unit-check
 
@@ -717,6 +721,12 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@# check defines a stand-in ScreenServer with a call slow enough to cancel,
 	@# so the shared in-process loop can be driven without a hook in the app.
 	@# screen-check and dispatch-check compile the real one.
+	@#
+	@# The HTTP listener is driven too, on scratch ports the system hands out
+	@# (bound to 0 and read back, so two worktrees can run this at once; the
+	@# check refuses 8830 and 8831) with its tokens held
+	@# in memory, so it never meets an installed copy's port or the Keychain.
+	@# HOST_CHECK_SOURCES is where its one-listener source check reads.
 	@mkdir -p apps/apple/.build
 	@sed 's/FileManager\.default\.homeDirectoryForCurrentUser/HostCheckHome.url/' \
 		apps/apple/Cupertino/BridgeProtocol.swift > apps/apple/.build/host-check-BridgeProtocol.swift
@@ -736,6 +746,12 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 		apps/apple/Cupertino/McpFrame.swift \
 		apps/apple/Cupertino/DeferredSpawn.swift \
 		apps/apple/Cupertino/HandshakeCache.swift \
+		apps/apple/Cupertino/HTTPGate.swift \
+		apps/apple/Cupertino/HTTPWire.swift \
+		apps/apple/Cupertino/HTTPListener.swift \
+		apps/apple/Cupertino/HTTPPort.swift \
+		apps/apple/Cupertino/HTTPSessionRouter.swift \
+		apps/apple/Cupertino/HTTPTokens.swift \
 		apps/apple/Cupertino/CallCapture.swift \
 		apps/apple/Cupertino/SafariCaptures.swift \
 		apps/apple/Cupertino/InProcessRPC.swift \
@@ -777,6 +793,7 @@ host-check: ## Drive the host's socket, handshake and teardown, with no app
 	@# it would pass on exactly the machines that never ran it.
 	@command -v node >/dev/null 2>&1 || { echo "  FAIL host-check needs node on PATH, for scripts/fixtures/stub-mcp-server.mjs" >&2; exit 1; }
 	@HOST_CHECK_NODE="$$(command -v node)" HOST_CHECK_STUB="$(CURDIR)/scripts/fixtures/stub-mcp-server.mjs" \
+		HOST_CHECK_SOURCES="$(CURDIR)/apps/apple/Cupertino" \
 		apps/apple/.build/host-check
 
 handshake-check: ## Prove cached handshake answers do not depend on what the cache key leaves out
@@ -837,11 +854,21 @@ license-check: ## Assert the app's licence check reads a key however it was past
 	@apps/apple/.build/license-check
 
 wiring-check: ## Assert the config merge leaves other people's files alone
+	@# ClientWiring.swift is compiled too, against the stand-ins in
+	@# wiring-check-app.swift: its client paths hang off a scratch home and its
+	@# tokens are held in memory, so the check never meets a real client config,
+	@# a preference, a login item or the Keychain.
 	@mkdir -p apps/apple/.build
 	@swiftc -O -o apps/apple/.build/wiring-check \
 		apps/apple/Cupertino/ClientWiringMerge.swift \
 		apps/apple/Cupertino/ClientWiringTOML.swift \
 		apps/apple/Cupertino/ClientAllowlist.swift \
+		apps/apple/Cupertino/ClientWiring.swift \
+		apps/apple/Cupertino/Surfaces.swift \
+		apps/apple/Cupertino/HTTPTokens.swift \
+		apps/apple/Cupertino/HTTPPort.swift \
+		scripts/wiring-check-app.swift \
+		scripts/wiring-check-http.swift \
 		scripts/wiring-check.swift
 	@apps/apple/.build/wiring-check
 

@@ -581,6 +581,43 @@ nonisolated enum Changelog {
   /// `nil` in any tagged build: CI asserts the CHANGELOG's head section is the
   /// tag's version, so there is no `[Unreleased]` left to emit by then. The
   /// pane shows it in debug builds only, where it is true of what is running.
-  static let unreleased: Release? = nil
+  // swift-format-ignore
+  private static let unreleasedRelease: Release = Release(
+    version: "Unreleased",
+    date: "",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Clients can reach Cupertino over HTTP, with no bridge process.",
+            body: [
+              "The app now serves every surface at `http://127.0.0.1:8830/s/<surface>` (8831 for a Debug build), on this Mac only. Claude Code, Cursor, VS Code and Codex are wired that way when you configure them fresh, each with a token of its own kept in Cupertino's Keychain and written into its config, which is then readable by you alone (mode 0600, backup included). A client already wired keeps the bridge and says \"Wired the old way\" with a Switch to HTTP button; nothing is rewritten without you pressing it. An HTTP client cannot start Cupertino the way the bridge does, so wiring one turns on Launch at login. Claude Desktop, LM Studio and Windsurf stay on the bridge, and so does a repository's `.mcp.json`, which is meant to be committed and never carries a token.",
+            ]),
+          Entry(
+            ordinal: 1,
+            headline: "The port and each client's token are in Settings.",
+            body: [
+              "Settings › General › HTTP endpoint sets the port, from 1024 to 65535. A port another app holds is refused and the old one kept. After a change, HTTP clients are rewritten to the new port at Cupertino's next launch or the next time a surface is switched, or at once by Update in each one's pane. An HTTP client's pane has Reset token, which issues a new token and rewrites its entries with it: \"A new token is written; the old one no longer works.\" Remove Cupertino's entries still signs a client out for good.",
+            ]),
+          Entry(
+            ordinal: 2,
+            headline: "Activity says how each session came in.",
+            body: [
+              "The Activity window and each surface's pane show `socket` or `http` beside the session's pid.",
+            ]),
+          Entry(
+            ordinal: 3,
+            headline: "Claude Code's allowlist is read for HTTP entries too.",
+            body: [
+              "An HTTP entry is judged by its URL against `serverUrl` patterns, as Claude Code judges a remote server, and the card offers the exact URL to add.",
+            ]),
+        ]),
+    ])
+
+  // swift-format-ignore
+  static let unreleased: Release? = unreleasedRelease
   // </generated:changelog>
 }

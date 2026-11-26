@@ -645,6 +645,8 @@ struct SurfaceDetail: View {
             .lineLimit(1)
             .truncationMode(.middle)
           Spacer()
+          Text(session.transport)
+            .foregroundStyle(.secondary)
           Text(session.pid.map { "pid \($0)" } ?? "not started")
             .foregroundStyle(.secondary).monospacedDigit()
         }

@@ -73,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Every launch, not once behind a flag: a pass that found a surface off
     // cannot add it, and the next launch after it is switched on can. A config
     // already current is read and left alone, so repeating costs a read.
+    ClientWiring.endSessions = { ServerHost.shared.endHTTPSessions(of: $0) }
+    ClientWiring.httpNotServing = { ServerHost.shared.httpStartupError }
     ClientWiring.rewireAll(because: "launch")
     ClientWiring.watchSurfaceSwitches()
     promptForLicenseIfNeeded()
@@ -332,6 +334,9 @@ final class StatusModel {
   /// The socket never came up. Nothing works in this state, and until now it
   /// was only ever written to stderr.
   private(set) var hostError: String?
+  /// The HTTP endpoint is not listening, most often because another process
+  /// holds its port. Bridges still work, so this is a warning, not `hostError`.
+  private(set) var httpError: String?
 
   init() { refresh() }
 
@@ -344,6 +349,7 @@ final class StatusModel {
     guard !DemoSeed.isEnabled else {
       location = .current
       hostError = nil
+      httpError = nil
       diskAccess = DemoSeed.diskAccess
       accessibility = DemoSeed.accessibility
       systemEvents = DemoSeed.automation
@@ -370,6 +376,7 @@ final class StatusModel {
     }
     location = .current
     hostError = ServerHost.shared.startupError
+    httpError = ServerHost.shared.httpStartupError
     diskAccess = Permissions.diskAccess()
     // A lookup, not an IPC — safe here, unlike the Automation probes below.
     accessibility = Permissions.accessibility()
@@ -1110,6 +1117,15 @@ struct ConnectionsSection: View {
 
     VStack(alignment: .leading, spacing: 6) {
       Text("Connections").font(.subheadline).bold()
+
+      // Above the rows rather than in place of them: the socket still serves,
+      // so bridge clients go on connecting while the port is taken.
+      if model.hostError == nil, let error = model.httpError {
+        Label(error, systemImage: "exclamationmark.triangle")
+          .foregroundStyle(.orange)
+          .font(.caption)
+          .fixedSize(horizontal: false, vertical: true)
+      }
 
       if let error = model.hostError {
         Label(error, systemImage: "exclamationmark.triangle.fill")

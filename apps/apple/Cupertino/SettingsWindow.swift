@@ -269,6 +269,14 @@ struct GeneralPane: View {
   @State private var loginNeedsApproval = LoginItem.requiresApproval
   @State private var loginError: String?
   @AppStorage(SurfaceSettings.appLazyToolsKey) private var lazyTools = false
+  /// Written only once the listener is bound there, by `applyPort`: the stored
+  /// port is what client entries are judged against, so it must never name a
+  /// port nobody serves.
+  @AppStorage(HTTPPort.key) private var httpPort = HTTPPort.defaultPort
+  /// What is typed, which reaches `httpPort` only through `applyPort`.
+  @State private var portDraft: Int?
+  /// Why the last port change was refused.
+  @State private var portError: String?
 
   var body: some View {
     Form {
@@ -359,6 +367,52 @@ struct GeneralPane: View {
 
       Section {
         LabeledContent {
+          HStack {
+            TextField("Port", value: $portDraft, format: .number.grouping(.never))
+              .labelsHidden()
+              .frame(width: 90)
+              .onSubmit(applyPort)
+            // Applied on Return or here, never per keystroke: each apply
+            // restarts the listener, and typing 8840 passes through 8, 88
+            // and 884 on the way.
+            if let portDraft, portDraft != servedPort {
+              Button("Apply", action: applyPort)
+            }
+          }
+          .disabled(DemoSeed.isEnabled)
+          .onAppear { portDraft = servedPort }
+        } label: {
+          Text("Port")
+          Text(
+            "Clients wired over HTTP reach Cupertino at 127.0.0.1 on this port, from 1024 to "
+              + "65535. Nothing outside this Mac can connect."
+          )
+        }
+      } header: {
+        Text("HTTP endpoint")
+      } footer: {
+        // As the window shows a port it could not bind at launch.
+        if let portError {
+          Label(portError, systemImage: "exclamationmark.triangle")
+            .foregroundStyle(.orange)
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+          Text(
+            "Changing it restarts the listener and ends the HTTP sessions open now. "
+              // The promise only where it is kept: a Debug build, a copy
+              // outside Applications, a capture and `autoWireClients NO` never
+              // rewrite on their own.
+              + (ClientWiring.rewiresAutomatically
+                ? "Cupertino rewrites the entries of clients wired over HTTP with the new port "
+                  + "as soon as it is listening there."
+                : "Clients wired over HTTP then read as out of date until you press Update in "
+                  + "each one's pane; nothing is rewritten for you.")
+          )
+        }
+      }
+
+      Section {
+        LabeledContent {
           if model.location.warning != nil {
             Button("Reveal in Finder") { model.location.revealInFinder() }
           }
@@ -383,6 +437,42 @@ struct GeneralPane: View {
   private func readLoginItem() {
     launchAtLogin = LoginItem.isEnabled
     loginNeedsApproval = LoginItem.requiresApproval
+  }
+
+  /// The port HTTP entries are written with: the stored one, read through
+  /// `HTTPPort` so an unset or invalid value shows the build's default. A
+  /// capture shows the fixture's.
+  private var servedPort: Int {
+    _ = httpPort  // observed, so a write elsewhere redraws the field
+    return DemoSeed.isEnabled ? DemoSeed.httpPort : HTTPPort.configured
+  }
+
+  /// Moves the listener to the typed port, and stores it only once it is
+  /// bound there. A port that cannot be bound leaves the old one served and
+  /// stored, and says why.
+  private func applyPort() {
+    guard let typed = portDraft, (1024...65535).contains(typed) else {
+      portError = "Choose a port from 1024 to 65535. Cupertino is still on \(servedPort)."
+      portDraft = servedPort
+      return
+    }
+    guard typed != servedPort else {
+      portError = nil
+      return
+    }
+    if let error = ServerHost.shared.moveHTTP(to: typed) {
+      portError = error
+      portDraft = servedPort
+    } else {
+      httpPort = typed
+      portError = nil
+      // After the store, so the entries are written with the new port. Only
+      // where the automatic rewire runs at all: elsewhere Update does it.
+      if ClientWiring.rewiresAutomatically { ClientWiring.rewireAll(because: "port") }
+    }
+    // The clients' status follows the stored port: HTTP entries naming the
+    // old one now read as stale.
+    model.refresh()
   }
 }
 
@@ -782,7 +872,7 @@ enum StatusStyle {
   static func clientTint(_ status: ClientWiring.Status) -> Color {
     switch status {
     case .configured: .green
-    case .incomplete, .extra: .orange
+    case .incomplete, .extra, .oldTransport, .notServing: .orange
     case .stale, .unreadable: .red
     // Grey covers two different absences on purpose. Neither is a fault, and
     // neither is something this app can fix without being asked.

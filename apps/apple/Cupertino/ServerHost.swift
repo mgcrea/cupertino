@@ -22,6 +22,33 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// before serving anything; nil in the app.
   nonisolated(unsafe) static var locateOverride: ((Surface) throws -> ServerBinaries)?
 
+  /// The port and token store the HTTP listener starts with, in place of
+  /// `HTTPListener.configuredPort` and `HTTPTokens.shared`. `host-check` only:
+  /// it must never bind 8830 or 8831 or read the real Keychain. nil in the app.
+  nonisolated(unsafe) static var httpOverride: (port: Int, tokens: HTTPTokens)?
+
+  /// The loopback HTTP listener, and why it is not listening if it is not.
+  ///
+  /// Apart from `Listener` on purpose: the unix socket is what every bridge,
+  /// the Chat pane and the store lane reach, and an HTTP port somebody else
+  /// holds must not take any of that down. A failure here is logged and kept,
+  /// and the socket goes on serving.
+  private struct HTTPState {
+    var listener: HTTPListener?
+    /// The port the listener was last started on, so a move that fails can
+    /// put it back.
+    var port: Int?
+    var startupError: String?
+  }
+  private let http = OSAllocatedUnfairLock(uncheckedState: HTTPState())
+
+  /// The running HTTP listener, nil while it is not listening.
+  var httpListener: HTTPListener? { http.withLock { $0.listener } }
+
+  /// Why the HTTP listener is not listening, if it tried and failed. Kept for
+  /// the window, as `startupError` is.
+  var httpStartupError: String? { http.withLock { $0.startupError } }
+
   /// Held for the lifetime of the process. `flock` releases on close, and on
   /// death — which is the whole reason it can replace the unlink dance below.
   /// Main thread only: `start` and `stop` are its only readers and writers.
@@ -194,6 +221,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // value, so EPIPE arrives as a failed write on the one connection that
     // deserves it. This must be set before the first connection is served.
     _ = signal(SIGPIPE, SIG_IGN)
+    Self.raiseDescriptorLimit()
 
     do {
       try openSocket()
@@ -202,6 +230,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
       listener.withLock { $0.startupError = error.localizedDescription }
       throw error
     }
+    // After the socket, and only once it is ours: a second copy that lost the
+    // host lock must not take the port either.
+    startHTTP()
 
     // One observer for every switch, rather than a call from each toggle. The
     // toggles are `@AppStorage` views spread over several panes, and the bug this closes
@@ -218,6 +249,34 @@ nonisolated final class ServerHost: @unchecked Sendable {
       defaultsObserver = NotificationCenter.default.addObserver(
         forName: UserDefaults.didChangeNotification, object: nil, queue: nil
       ) { [weak self] _ in self?.settingsChanged() }
+    }
+  }
+
+  /// Raises the soft descriptor limit to 8192, or the hard limit if that is
+  /// lower. An app starts at 256, and each HTTP session costs its connection,
+  /// two socketpair ends, a wake pipe per held stream and, past its first
+  /// call, a child's pipes: the 266 sessions of one busy Mac would run out.
+  /// Logged either way, so a refusal is diagnosable.
+  private static func raiseDescriptorLimit() {
+    var limit = rlimit()
+    guard getrlimit(RLIMIT_NOFILE, &limit) == 0 else {
+      hostLog("cupertino", .error, "descriptor limit unread: \(String(cString: strerror(errno)))")
+      return
+    }
+    let wanted = min(limit.rlim_max, 8192)
+    guard limit.rlim_cur < wanted else {
+      hostLog("cupertino", .info, "descriptor limit \(limit.rlim_cur), at least 8192 already")
+      return
+    }
+    let was = limit.rlim_cur
+    limit.rlim_cur = wanted
+    if setrlimit(RLIMIT_NOFILE, &limit) == 0 {
+      hostLog("cupertino", .info, "descriptor limit raised from \(was) to \(wanted)")
+    } else {
+      hostLog(
+        "cupertino", .error,
+        "descriptor limit left at \(was), not raised to \(wanted): "
+          + String(cString: strerror(errno)))
     }
   }
 
@@ -397,7 +456,102 @@ nonisolated final class ServerHost: @unchecked Sendable {
     startSocketWatch()
   }
 
+  /// Starts the loopback HTTP listener, on `port` or the configured one. A
+  /// port somebody else holds is logged and kept in `httpStartupError`, and
+  /// the bind's own reason is returned; the unix socket is unaffected.
+  @discardableResult
+  private func startHTTP(port: Int? = nil) -> String? {
+    let (configured, tokens) =
+      Self.httpOverride ?? (HTTPListener.configuredPort, HTTPTokens.shared)
+    let port = port ?? configured
+    let listener = HTTPListener(port: port, tokens: tokens, host: self)
+    do {
+      try listener.start()
+      http.withLock {
+        $0.listener = listener
+        $0.port = port
+        $0.startupError = nil
+      }
+      return nil
+    } catch {
+      let detail =
+        "HTTP endpoint not listening on 127.0.0.1:\(port): \(error.localizedDescription). "
+        + "Clients wired over a bridge are unaffected."
+      hostLog("cupertino", .error, detail)
+      http.withLock {
+        $0.listener = nil
+        $0.startupError = detail
+      }
+      return error.localizedDescription
+    }
+  }
+
+  /// Ends every HTTP session `client`'s token opened, as a hang-up would,
+  /// for Reset token. The revoke already refuses its next request; this is
+  /// what closes a GET stream that would otherwise go on delivering.
+  func endHTTPSessions(of client: String) {
+    httpListener?.endSessions(where: { $0.client == client })
+  }
+
+  /// Moves the HTTP listener to `port`, for the Settings field: a listener is
+  /// bound there first, and only once it is does the old one stop, ending the
+  /// HTTP sessions open on it as a restart ends them. A port that cannot be
+  /// bound changes nothing at all, no session ends, and the reason is
+  /// returned; the caller writes the setting only on nil, so the stored port
+  /// always names the one being served.
+  ///
+  /// It never touches a client config itself: the Settings field asks
+  /// `ClientWiring.rewireAll` afterwards, where that runs, and elsewhere
+  /// entries naming the old port read as stale until Update rewrites them.
+  func moveHTTP(to port: Int) -> String? {
+    let tokens = Self.httpOverride?.tokens ?? HTTPTokens.shared
+    let next = HTTPListener(port: port, tokens: tokens, host: self)
+    do {
+      try next.start()
+    } catch {
+      let (serving, previous) = http.withLock { ($0.listener != nil, $0.port) }
+      let refused = "Could not listen on 127.0.0.1:\(port): \(error.localizedDescription)."
+      hostLog("cupertino", .info, "HTTP endpoint not moved. " + refused)
+      // The refusal is the pane's to show, not the window's: nothing is
+      // wrong with what is being served.
+      guard serving, let previous else {
+        return refused + " The HTTP endpoint is still not listening; see the main window."
+      }
+      return refused + " Cupertino is still on \(previous)."
+    }
+    let old = http.withLock { state -> HTTPListener? in
+      defer {
+        state.listener = next
+        state.port = port
+        state.startupError = nil
+      }
+      return state.listener
+    }
+    old?.stop()
+    return nil
+  }
+
+  /// Ends every HTTP session and stops listening, before the unix socket goes,
+  /// so no HTTP session is admitted on the way down.
+  private func stopHTTP() {
+    let listener = http.withLock { state -> HTTPListener? in
+      defer { state.listener = nil }
+      return state.listener
+    }
+    listener?.stop()
+  }
+
+  /// Serves one internal connection exactly as an accepted socket is served:
+  /// `fd` is one end of a socketpair the HTTP listener holds the other end
+  /// of, and it goes through the same handshake, admission, licence gate,
+  /// deferral and teardown. `serve` owns `fd` from here and closes it once.
+  func serveInternal(_ fd: Int32) {
+    closeOnExec(fd)
+    onDedicatedThread("cupertino.session") { self.serve(fd, transport: "http") }
+  }
+
   func stop() {
+    stopHTTP()
     if let defaultsObserver {
       NotificationCenter.default.removeObserver(defaultsObserver)
       self.defaultsObserver = nil
@@ -457,6 +611,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// a number somebody made up, which is worse. In-process sessions need no
   /// signal: they are threads of this process and end with it.
   func terminateChildren() {
+    // An HTTP session's internal stream is shut down, as a socket hang-up
+    // would be: its node child gets the end of its stdin, or its in-process
+    // session tears down. `stop` normally ended them already.
+    httpListener?.endSessions(where: { _ in true })
     for (_, surface) in closeDeferred({ _, _ in true }) {
       hostLog(surface, .info, "session closed before its server started, for the quit")
     }
@@ -540,6 +698,9 @@ nonisolated final class ServerHost: @unchecked Sendable {
     hostLog("cupertino", .error, detail)
     taken.watch?.cancel()
     close(taken.fd)
+    // The HTTP port too: whichever copy evicted this one serves HTTP as well,
+    // and two copies each answering half the clients is the state this stops.
+    stopHTTP()
   }
 
   /// Accept forever, and treat "forever" literally.
@@ -577,14 +738,16 @@ nonisolated final class ServerHost: @unchecked Sendable {
       // from ever seeing EOF.
       closeOnExec(client)
       onDedicatedThread("cupertino.session") { [weak self] in
-        self?.serve(client)
+        self?.serve(client, transport: "socket")
       }
     }
   }
 
   // MARK: - One connection
 
-  private func serve(_ client: Int32) {
+  /// `transport` is how the client came in, `"socket"` or `"http"`, for the
+  /// Activity row: past this point the two are the same kind of descriptor.
+  private func serve(_ client: Int32, transport: String) {
     defer { close(client) }
 
     // The bridge protects ITSELF with the same deadline on the same phase. This
@@ -627,6 +790,21 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let parts = line.split(separator: " ").map(String.init)
     guard parts.count == 2 || parts.count == 3, parts[0] == BridgeProtocol.version else {
       reply(client, "err unsupported protocol '\(line)'")
+      return
+    }
+
+    // Over HTTP the line is the listener's own, `<surface> client=<id>`, and
+    // the peer of a socketpair is this very process, so the pid checks below
+    // would pass `self` and judge a lend against this app. Defence in depth:
+    // the branches the unix socket alone may reach are refused outright here.
+    if transport == "http",
+      parts[1] == BridgeProtocol.storeLane
+        || (parts.count == 3 && !parts[2].hasPrefix(BridgeProtocol.clientPrefix))
+    {
+      hostLog(
+        "cupertino", .error,
+        "refused an internal HTTP session: self, for= and the store lane are socket-only")
+      reply(client, "err self, for= and the store lane are not served over HTTP")
       return
     }
 
@@ -907,7 +1085,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // arrives by exactly the path `--server=mail` does.
     if surface.runtime == .swift {
       reply(client, BridgeProtocol.ok)
-      serveInProcess(surface: surface, client: client, onTrial: onTrial, lentTo: lentTo)
+      serveInProcess(
+        surface: surface, client: client, onTrial: onTrial, lentTo: lentTo, transport: transport)
       return
     }
 
@@ -924,7 +1103,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     reply(client, BridgeProtocol.ok)
     run(
       surface: surface, binaries: binaries, client: client, onTrial: onTrial,
-      isSelf: isSelf, wiredClient: wiredClient)
+      isSelf: isSelf, wiredClient: wiredClient, transport: transport)
   }
 
   /// What the licence gate answers for one connection.
@@ -1134,7 +1313,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// two different things, which is why they are two parameters rather than
   /// one. Everything read per request below reads the governing one.
   private func serveInProcess(
-    surface: Surface, client: Int32, onTrial: Bool, lentTo: Surface? = nil
+    surface: Surface, client: Int32, onTrial: Bool, lentTo: Surface? = nil, transport: String
   ) {
     let authority = lentTo ?? surface
     // The reach a borrower gets, fixed for the life of the connection because
@@ -1150,7 +1329,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // reads as the gate having failed. The log line below names what was lent,
     // so nothing is hidden by attributing it this way.
     Task(priority: Sessions.priority) { @MainActor in
-      Sessions.shared.opened(id: session, surface: authority.id, pid: pid)
+      Sessions.shared.opened(id: session, surface: authority.id, pid: pid, transport: transport)
     }
     if onTrial { trialClients.withLock { $0[session] = (authority.id, client) } }
     defer {
@@ -1403,7 +1582,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// docs/superpowers/specs/2026-11-25-deferred-server-spawn-design.md.
   private func run(
     surface: Surface, binaries: ServerBinaries, client: Int32, onTrial: Bool, isSelf: Bool,
-    wiredClient: String?
+    wiredClient: String?, transport: String
   ) {
     let spawn = spawnEnvironment(surface: surface, isSelf: isSelf, wiredClient: wiredClient)
     hostLog(surface.id, .info, "allowWrites=\(spawn.config.allowWrites)")
@@ -1423,7 +1602,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
       startServer(
         surface: surface, binaries: binaries, env: spawn.env, config: spawn.config,
         client: client, onTrial: onTrial, session: session, observer: observer,
-        handoff: handoff)
+        handoff: handoff, transport: transport)
     }
 
     guard HandshakeCache.isOn(binaries) else {
@@ -1435,7 +1614,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     // Connected, so in the Activity window now, with no pid until a call
     // starts a server.
     Task(priority: Sessions.priority) { @MainActor in
-      Sessions.shared.opened(id: session, surface: surface.id, pid: nil)
+      Sessions.shared.opened(id: session, surface: surface.id, pid: nil, transport: transport)
     }
     deferredSessions.withLock {
       $0[session] = DeferredEntry(
@@ -1578,7 +1757,8 @@ nonisolated final class ServerHost: @unchecked Sendable {
   /// preamble first, and both pumps run the reply filter until it retires.
   private func startServer(
     surface: Surface, binaries: ServerBinaries, env: [String: String], config: SpawnConfig,
-    client: Int32, onTrial: Bool, session: UUID, observer: RequestObserver, handoff: Handoff?
+    client: Int32, onTrial: Bool, session: UUID, observer: RequestObserver, handoff: Handoff?,
+    transport: String
   ) {
     let process = Process()
     process.executableURL = binaries.node
@@ -1628,7 +1808,7 @@ nonisolated final class ServerHost: @unchecked Sendable {
     let wasDeferred = handoff != nil
     Task(priority: Sessions.priority) { @MainActor in
       if !wasDeferred {
-        Sessions.shared.opened(id: session, surface: surface.id, pid: pid)
+        Sessions.shared.opened(id: session, surface: surface.id, pid: pid, transport: transport)
       } else {
         Sessions.shared.started(id: session, pid: pid)
       }

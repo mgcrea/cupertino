@@ -15,6 +15,61 @@ import Foundation
 /// payload growing without bound in a store that keeps a thousand of them.
 ///
 /// Run with `make unit`.
+/// A `TokenVault` in memory, so the token checks never touch the login Keychain.
+///
+/// `allFailures` makes the next that many `all()` calls throw, as the
+/// Keychain's does when it refuses a listing; `readFails` makes `read` throw.
+final class MemoryTokenVault: TokenVault, @unchecked Sendable {
+  struct Refused: Error {}
+  private let lock = NSLock()
+  private var items: [String: String] = [:]
+  var allFailures = 0
+  var readFails = false
+
+  func read(_ client: String) throws -> String? {
+    try lock.withLock {
+      if readFails { throw Refused() }
+      return items[client]
+    }
+  }
+  func write(_ client: String, _ token: String) throws { lock.withLock { items[client] = token } }
+  func delete(_ client: String) throws { _ = lock.withLock { items.removeValue(forKey: client) } }
+  /// How many times `all()` was called.
+  var listings = 0
+  func all() throws -> [String: String] {
+    try lock.withLock {
+      listings += 1
+      if allFailures > 0 {
+        allFailures -= 1
+        throw Refused()
+      }
+      return items
+    }
+  }
+}
+
+/// A clock the token checks move by hand.
+final class ManualClock: @unchecked Sendable {
+  private let lock = NSLock()
+  private var now: TimeInterval = 1000
+  var read: @Sendable () -> TimeInterval { { [self] in lock.withLock { now } } }
+  func advance(_ seconds: TimeInterval) { lock.withLock { now += seconds } }
+}
+
+/// The log lines after `mark`, once the main actor has appended what was posted.
+func logLines(after mark: String) -> [String] {
+  let end = "unit-check end \(UUID().uuidString)"
+  hostLog("unit-check", .info, end, mirror: false)
+  let deadline = Date().addingTimeInterval(2)
+  var lines: [String] = []
+  repeat {
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    lines = MainActor.assumeIsolated { LogStore.shared.entries.map(\.text) }
+  } while !lines.contains(end) && Date() < deadline
+  guard let start = lines.lastIndex(of: mark) else { return [] }
+  return Array(lines[(start + 1)...].prefix { $0 != end })
+}
+
 @main
 struct UnitCheck {
   static var failures = 0
@@ -2114,6 +2169,592 @@ struct UnitCheck {
         "a session that said spawn says it again and keeps its transcript",
         spent.client(initLine) == .spawn && spent.replay() == spentReplay
           && spent.trigger?.method == "tools/call")
+    }
+
+    // ─── HTTPGate ───
+    print("\nHTTPGate: what a loopback request must carry before its body is read")
+    do {
+      let gate = HTTPGate(port: 8830, verify: { $0 == "t1" ? "claude-code" : nil })
+      func head(
+        method: String = "POST", path: String = "/s/mail",
+        host: String? = "127.0.0.1:8830", origin: String? = nil,
+        authorization: String? = "Bearer t1"
+      ) -> HTTPHead {
+        var headers: [String: String] = [:]
+        if let host { headers["Host"] = host }
+        if let origin { headers["Origin"] = origin }
+        if let authorization { headers["Authorization"] = authorization }
+        return HTTPHead(method: method, path: path, headers: headers)
+      }
+      func status(_ verdict: GateVerdict) -> Int? {
+        if case .refuse(let status, _) = verdict { return status }
+        return nil
+      }
+      func reason(_ verdict: GateVerdict) -> String {
+        if case .refuse(_, let reason) = verdict { return reason }
+        return ""
+      }
+
+      check(
+        "admits a good request",
+        gate.check(head()) == .admit(surface: "mail", client: "claude-code"))
+
+      let wrongHost = gate.check(head(host: "localhost:8830", authorization: "Bearer nope"))
+      check(
+        "wrong host is 400 first",
+        status(wrongHost) == 400 && reason(wrongHost).contains("Host")
+          && !reason(wrongHost).contains("token"))
+      check(
+        "a host without the port, or on ::1, is 400",
+        status(gate.check(head(host: "127.0.0.1"))) == 400
+          && status(gate.check(head(host: "[::1]:8830"))) == 400
+          && status(gate.check(head(host: nil))) == 400)
+
+      check(
+        "any origin is 403",
+        status(gate.check(head(origin: "http://127.0.0.1:8830"))) == 403)
+
+      check("bad token is 401", status(gate.check(head(authorization: "Bearer nope"))) == 401)
+      check("missing token is 401", status(gate.check(head(authorization: nil))) == 401)
+      check(
+        "Bearer matches in any case, with one space",
+        gate.check(head(authorization: "bearer t1"))
+          == .admit(surface: "mail", client: "claude-code")
+          && status(gate.check(head(authorization: "Bearer  t1"))) == 401
+          && status(gate.check(head(authorization: "Basic t1"))) == 401)
+
+      check("unknown surface is 404", status(gate.check(head(path: "/s/nope"))) == 404)
+      check(
+        "other path is 404",
+        status(gate.check(head(path: "/mcp"))) == 404
+          && status(gate.check(head(path: "/s/"))) == 404
+          && status(gate.check(head(path: "/s/mail/"))) == 404
+          && status(gate.check(head(path: "/s/mail/x"))) == 404)
+      check(
+        "a query string is not part of the path",
+        gate.check(head(path: "/s/mail?x=1")) == .admit(surface: "mail", client: "claude-code"))
+
+      // Each step of the order is pinned by a request that fails two checks:
+      // only the earlier one may answer.
+      check(
+        "Host is checked before Origin",
+        status(gate.check(head(host: "localhost:8830", origin: "http://evil"))) == 400)
+      check(
+        "Origin is checked before the token",
+        status(gate.check(head(origin: "http://evil", authorization: "Bearer nope"))) == 403
+          && status(gate.check(head(origin: "http://evil", authorization: nil))) == 403)
+      check(
+        "the token is checked before the path, so no caller without one can list surfaces",
+        status(gate.check(head(path: "/s/nope", authorization: "Bearer nope"))) == 401
+          && status(gate.check(head(path: "/mcp", authorization: nil))) == 401)
+
+      let refusals: [(GateVerdict, Int)] = [
+        (gate.check(head(host: "localhost:8830", authorization: "Bearer secret-token-text")), 400),
+        (gate.check(head(origin: "http://evil", authorization: "Bearer secret-token-text")), 403),
+        (gate.check(head(authorization: "Bearer secret-token-text")), 401),
+        (gate.check(head(path: "/s/nope", authorization: "Bearer t1")), 404),
+      ]
+      check(
+        "reason never carries the token",
+        refusals.allSatisfy { v, expected in
+          status(v) == expected && !reason(v).contains("secret-token-text")
+            && !reason(v).contains("t1")
+        })
+      check("the discover refusal is 404 until a client is measured", DiscoverRefusal.status == 404)
+    }
+
+    // ─── HTTPHeadParser ───
+    print("\nHTTPHeadParser: a request head, and where its body starts, before the body")
+    do {
+      func bytes(_ text: String) -> [UInt8] { Array(text.utf8) }
+      func parsed(_ text: String) -> (head: HTTPHead, bodyStart: Int)? {
+        if case .head(let head, let start) = HTTPHeadParser.parse(bytes(text)) {
+          return (head, start)
+        }
+        return nil
+      }
+      func malformed(_ text: String) -> Bool {
+        if case .malformed = HTTPHeadParser.parse(bytes(text)) { return true }
+        return false
+      }
+      let simple =
+        "POST /s/mail?x=1 HTTP/1.1\r\nHost: 127.0.0.1:8830\r\nContent-Length: 2\r\n\r\n{}"
+      let one = parsed(simple)
+      check(
+        "a head parses, with its body's offset and no body read",
+        one?.head.method == "POST" && one?.head.path == "/s/mail"
+          && one?.head.header("host") == "127.0.0.1:8830"
+          && one?.bodyStart == simple.utf8.count - 2)
+      check(
+        "a head before its body has arrived is already whole",
+        parsed("POST /s/mail HTTP/1.1\r\nContent-Length: 10000000\r\n\r\n")?.bodyStart == 51)
+      check(
+        "an unfinished head is incomplete",
+        HTTPHeadParser.parse(bytes("POST /s/mail HTTP/1.1\r\nHost: 1")) == .incomplete
+          && HTTPHeadParser.parse([]) == .incomplete)
+      check(
+        "names are lowercased, values trimmed, the method uppercased",
+        parsed("post /s/mail HTTP/1.1\r\nX-Thing:  a b  \r\n\r\n").map {
+          $0.head.method == "POST" && $0.head.headers == ["x-thing": "a b"]
+        } == true)
+      check(
+        "whitespace between a header's name and its colon is refused",
+        malformed("GET /s/mail HTTP/1.1\r\nHost : 127.0.0.1:8830\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nHost\t: 127.0.0.1:8830\r\n\r\n"))
+      check(
+        "a line folded onto the one before it (obs-fold) is refused",
+        malformed("GET /s/mail HTTP/1.1\r\nX-Thing: a\r\n b\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nX-Thing: a\r\n\tb\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\n  X-Thing: a\r\n\r\n"))
+      let twice = parsed(
+        "GET /s/mail HTTP/1.1\r\nHost: 127.0.0.1:8830\r\nhost: evil:80\r\n"
+          + "Authorization: Bearer a\r\nAUTHORIZATION: Bearer b\r\n\r\n")
+      check(
+        "a field sent twice is joined with a bare comma, in order, never one copy picked",
+        twice?.head.header("host") == "127.0.0.1:8830,evil:80"
+          && twice?.head.header("authorization") == "Bearer a,Bearer b")
+      let gate = HTTPGate(port: 8830, verify: { $0 == "a" ? "claude-code" : nil })
+      check(
+        "so the gate refuses a doubled Host and a doubled token",
+        twice.map { gate.check($0.head) }
+          == .refuse(status: 400, reason: "Host is not 127.0.0.1:8830")
+          && parsed(
+            "GET /s/mail HTTP/1.1\r\nHost: 127.0.0.1:8830\r\nAuthorization: Bearer a\r\n"
+              + "Authorization: Bearer a\r\n\r\n"
+          ).map { gate.check($0.head) } == .refuse(status: 401, reason: "token not recognised"))
+      check(
+        "a malformed request line, header line or empty name is refused",
+        malformed("GARBAGE\r\n\r\n") && malformed("GET /s/mail HTTP/1.1\r\nno colon\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\n: x\r\n\r\n"))
+      check(
+        "a bare LF, CR or NUL inside a line is refused",
+        malformed("GET /s/mail HTTP/1.1\r\nHost: 127.0.0.1:8830\nX: y\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nX: a\rb\r\n\r\n")
+          && malformed("GET /s/mail HTTP/1.1\r\nX: a\u{0}\r\n\r\n"))
+      check(
+        "a head that is not UTF-8 is refused",
+        HTTPHeadParser.parse(bytes("GET / HTTP/1.1\r\nX: ") + [0xFF, 0xFE] + bytes("\r\n\r\n"))
+          == .malformed("the head is not UTF-8"))
+      let filler = String(repeating: "a", count: HTTPHeadParser.maxHeadBytes)
+      check(
+        "a head over 16 KB is too large, finished or not",
+        HTTPHeadParser.parse(bytes("GET / HTTP/1.1\r\nX: \(filler)")) == .tooLarge
+          && HTTPHeadParser.parse(bytes("GET / HTTP/1.1\r\nX: \(filler)\r\n\r\n")) == .tooLarge)
+      func length(_ value: String?) -> Result<Int, HTTPHeadParser.ContentLengthError>? {
+        HTTPHeadParser.contentLength(
+          HTTPHead(method: "POST", path: "/", headers: value.map { ["content-length": $0] } ?? [:]))
+      }
+      check(
+        "Content-Length is one decimal number, or refused",
+        length(nil) == nil && length("0") == .success(0) && length("4194304") == .success(4_194_304)
+          && length("10,10") == .failure(.init()) && length("-1") == .failure(.init())
+          && length("1e3") == .failure(.init()) && length("") == .failure(.init())
+          && length(String(repeating: "9", count: 40)) == .failure(.init()))
+      check(
+        "HTTPHead joins two spellings of one name rather than keeping one",
+        HTTPHead(method: "GET", path: "/", headers: ["Host": "a", "host": "b"]).header("host")
+          == "a,b")
+    }
+
+    print("\nHTTPConnectionBudget and HTTPWire: the connection ceiling and the bytes written")
+    do {
+      let budget = HTTPConnectionBudget(limit: 2)
+      let taken = [budget.acquire(), budget.acquire(), budget.acquire()]
+      budget.release()
+      check(
+        "the budget refuses past its limit and frees a slot on release",
+        taken == [true, true, false] && budget.acquire() && budget.current == 2)
+      budget.release()
+      budget.release()
+      budget.release()
+      check("a release past zero stays at zero", budget.current == 0)
+
+      let event = String(decoding: HTTPWire.event(Data(#"{"id":1}"#.utf8)), as: UTF8.self)
+      check(
+        "an SSE event is one chunk holding event: message and one data line",
+        event == "1f\r\nevent: message\ndata: {\"id\":1}\n\n\r\n")
+      check(
+        "the last chunk ends the body",
+        String(decoding: HTTPWire.lastChunk, as: UTF8.self) == "0\r\n\r\n")
+      let stream = String(
+        decoding: HTTPWire.streamHead(sessionID: "abc", close: false), as: UTF8.self)
+      check(
+        "a stream is chunked SSE, carrying the session id, and stays open",
+        stream.hasPrefix("HTTP/1.1 200 OK\r\n")
+          && stream.contains("Content-Type: text/event-stream\r\n")
+          && stream.contains("Transfer-Encoding: chunked\r\n")
+          && stream.contains("Mcp-Session-Id: abc\r\n") && !stream.contains("Connection:")
+          && stream.hasSuffix("\r\n\r\n"))
+      let refusal = String(
+        decoding: HTTPWire.refusal(404, "no such session", close: true), as: UTF8.self)
+      check(
+        "a refusal has a length, a JSON-RPC error body, and closes when asked",
+        refusal.hasPrefix("HTTP/1.1 404 Not Found\r\n") && refusal.contains("Connection: close\r\n")
+          && refusal.contains("Content-Length: ")
+          && refusal.contains(#""message":"no such session""#))
+    }
+
+    // ─── HTTPRefusalLog ───
+    print("\nHTTPRefusalLog: a flood of one refusal is one line, then a count")
+    do {
+      var log = HTTPRefusalLog()
+      let start = Date(timeIntervalSince1970: 1_000_000)
+      func at(_ seconds: TimeInterval) -> Date { start.addingTimeInterval(seconds) }
+      let token = "HTTP refused POST with 401: token not recognised"
+      let origin = "HTTP refused POST with 403: Origin present; no browser may call"
+      check("the first refusal is logged at once", log.note(token, at: at(0)) == [token])
+      check(
+        "the same one again within 10 s is held",
+        log.note(token, at: at(1)).isEmpty && log.note(token, at: at(2)).isEmpty
+          && log.note(token, at: at(9.9)).isEmpty)
+      check("a different refusal is its own line", log.note(origin, at: at(3)) == [origin])
+      check("nothing is due before the window ends", log.due(at: at(9.99)).isEmpty)
+      check(
+        "when it ends, one line counts the rest, and a window with none says nothing",
+        log.due(at: at(13)) == ["\(token) …and 3 more"])
+      check("after it, the refusal is logged at once again", log.note(token, at: at(14)) == [token])
+      _ = log.note(token, at: at(15))
+      check(
+        "a refusal past a window nobody closed carries its count with it",
+        log.note(token, at: at(30)) == ["\(token) …and 1 more", token])
+      check(
+        "and a line that never repeated is never summarised",
+        log.due(at: at(100)).isEmpty)
+    }
+
+    // ─── HTTPTokens ───
+    print("\nHTTPTokens: one bearer token per wired client")
+    do {
+      let tokens = HTTPTokens(vault: MemoryTokenVault())
+      let first = try tokens.token(for: "cursor")
+      let again = try tokens.token(for: "cursor")
+      let hex = Set("0123456789abcdef")
+      check(
+        "mints 64 hex once",
+        first == again && first.count == 64 && first.allSatisfy { hex.contains($0) })
+      let codex = try tokens.token(for: "codex")
+      check("distinct per client", codex != first)
+      check(
+        "maps back",
+        tokens.client(for: first) == "cursor" && tokens.client(for: codex) == "codex"
+          && tokens.client(for: String(repeating: "0", count: 64)) == nil
+          && tokens.client(for: "nope") == nil && tokens.client(for: "") == nil)
+      try tokens.revoke("cursor")
+      check(
+        "revoke signs out one",
+        tokens.client(for: first) == nil && tokens.client(for: codex) == "codex")
+      let reminted = try tokens.token(for: "cursor")
+      check(
+        "re-mint after revoke differs",
+        reminted != first && tokens.client(for: reminted) == "cursor")
+
+      let vault = MemoryTokenVault()
+      try vault.write("vscode", String(repeating: "a", count: 64))
+      let loaded = HTTPTokens(vault: vault)
+      check(
+        "a token already in the vault is found without minting",
+        loaded.client(for: String(repeating: "a", count: 64)) == "vscode"
+          && (try? loaded.token(for: "vscode")) == String(repeating: "a", count: 64))
+
+      let stored = String(repeating: "b", count: 64)
+      let flaky = MemoryTokenVault()
+      try flaky.write("codex", stored)
+      flaky.allFailures = 1
+      let clock = ManualClock()
+      let relaunched = HTTPTokens(vault: flaky, now: clock.read)
+      let refused = relaunched.client(for: stored)
+      let listings = flaky.listings
+      clock.advance(4.9)
+      let early = relaunched.client(for: stored)
+      check(
+        "after a failed listing, nothing asks the vault again within 5 s",
+        refused == nil && early == nil && flaky.listings == listings)
+      clock.advance(0.2)
+      check(
+        "a listing that failed is tried again past 5 s, so a relaunch still knows every token",
+        relaunched.client(for: stored) == "codex" && flaky.listings == listings + 1)
+
+      let eager = MemoryTokenVault()
+      try eager.write("cursor", stored)
+      let preloaded = HTTPTokens(vault: eager)
+      preloaded.preload()
+      let afterPreload = eager.listings
+      check(
+        "preload lists the vault once, so the first request does not",
+        afterPreload == 1 && preloaded.client(for: stored) == "cursor"
+          && eager.listings == afterPreload)
+
+      let failing = MemoryTokenVault()
+      failing.allFailures = 1
+      let mark = "unit-check tokens \(UUID().uuidString)"
+      hostLog("unit-check", .info, mark, mirror: false)
+      HTTPTokens(vault: failing, now: ManualClock().read).preload()
+      let logged = logLines(after: mark)
+      check(
+        "a failed listing logs one line, naming no token",
+        logged.filter { $0.contains("HTTP tokens") }.count == 1
+          && !logged.contains { $0.contains(stored) })
+
+      let unreadable = MemoryTokenVault()
+      try unreadable.write("cursor", stored)
+      unreadable.readFails = true
+      unreadable.allFailures = 1
+      let guarded = HTTPTokens(vault: unreadable)
+      let minted = try? guarded.token(for: "cursor")
+      unreadable.readFails = false
+      check(
+        "a token that could not be read is not minted over",
+        minted == nil && (try? unreadable.read("cursor")) == stored)
+
+      check(
+        "each build keeps its own tokens",
+        KeychainTokenVault.service == "\(BridgeProtocol.appIdentifier).http-token")
+      // `make unit` compiles without DEBUG, so this is the release build's name,
+      // spelled out: the one the spec gives and the one shipped configs rely on.
+      check(
+        "the release Keychain service is io.mgcrea.cupertino.http-token",
+        KeychainTokenVault.service == "io.mgcrea.cupertino.http-token")
+    } catch {
+      check("HTTPTokens threw: \(error)", false)
+    }
+
+    // ─── HTTPSessionRouter ───
+    print("\nHTTPSessionRouter: POSTs to the child's lines, and the child's lines back")
+    do {
+      func data(_ text: String) -> Data { Data(text.utf8) }
+      func object(_ line: Data) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: line) as? [String: Any]
+      }
+      let initialize = data(
+        #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#
+      )
+      let initialized = data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#)
+      func request(_ id: Int, _ method: String = "tools/list", token: String? = nil) -> Data {
+        let meta = token.map { #","params":{"_meta":{"progressToken":\#($0)}}"# } ?? ""
+        return data(#"{"jsonrpc":"2.0","id":\#(id),"method":"\#(method)"\#(meta)}"#)
+      }
+      func response(_ id: Int) -> Data { data(#"{"jsonrpc":"2.0","id":\#(id),"result":{}}"#) }
+      func progress(_ token: String) -> Data {
+        data(
+          #"{"jsonrpc":"2.0","method":"notifications/progress","params":{"progressToken":\#(token),"progress":1}}"#
+        )
+      }
+      func status(_ outcome: PostOutcome) -> Int? {
+        if case .invalid(let status, _) = outcome { return status }
+        return nil
+      }
+
+      check("initialize opens a session", HTTPSessionGate.preSession(initialize) == .initialize)
+
+      let discover = HTTPSessionGate.preSession(
+        data(#"{"jsonrpc":"2.0","id":4,"method":"server/discover"}"#))
+      var discoverOK = false
+      if case .discoverRefused(let code, let body) = discover, code == DiscoverRefusal.status,
+        let answer = object(body), let error = answer["error"] as? [String: Any]
+      {
+        discoverOK =
+          (error["code"] as? Int) == -32601 && (answer["id"] as? Int) == 4
+          && (answer["jsonrpc"] as? String) == "2.0" && answer["result"] == nil
+      }
+      check("discover is refused", discoverOK)
+
+      check(
+        "junk before a session is 400",
+        HTTPSessionGate.preSession(data("not json")) == .invalid(status: 400)
+          && HTTPSessionGate.preSession(request(2)) == .invalid(status: 400)
+          && HTTPSessionGate.preSession(initialized) == .invalid(status: 400)
+          && HTTPSessionGate.preSession(data("[]")) == .invalid(status: 400))
+      check(
+        "a batch holding initialize does not open a session",
+        HTTPSessionGate.preSession(data("[" + String(decoding: initialize, as: UTF8.self) + "]"))
+          == .invalid(status: 400))
+
+      var router = HTTPSessionRouter(id: SessionID.mint())
+      let list = request(2)
+      let streamed = router.post(list, stream: 7)
+      let answered = router.fromChild(response(2))
+      check(
+        "a request streams",
+        streamed == .stream(lines: [list])
+          && answered == [.toStream(7, response(2)), .closeStream(7)]
+          && router.openPosts.isEmpty)
+
+      check(
+        "notifications are accepted",
+        router.post(initialized, stream: 8) == .accepted(lines: [initialized])
+          && router.openPosts.isEmpty)
+
+      let batch = data(
+        "[" + String(decoding: request(3), as: UTF8.self) + ","
+          + String(decoding: request(4), as: UTF8.self) + "]")
+      let batched = router.post(batch, stream: 10)
+      var batchLines: [Data] = []
+      if case .stream(let lines) = batched { batchLines = lines }
+      let third = router.fromChild(response(3))
+      let fourth = router.fromChild(response(4))
+      check(
+        "batch keeps order and waits for all",
+        batchLines.count == 2 && (object(batchLines[0])?["id"] as? Int) == 3
+          && (object(batchLines[1])?["id"] as? Int) == 4
+          && third == [.toStream(10, response(3))]
+          && fourth == [.toStream(10, response(4)), .closeStream(10)])
+
+      let slashed = data(
+        #"[{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"file:///a/b"}},{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":0}}]"#
+      )
+      let mixed = router.post(slashed, stream: 11)
+      var mixedLines: [Data] = []
+      if case .stream(let lines) = mixed { mixedLines = lines }
+      check(
+        "a mixed batch streams, and its notification goes to the child too",
+        mixedLines.count == 2 && (object(mixedLines[0])?["id"] as? Int) == 5
+          && (object(mixedLines[1])?["method"] as? String) == "notifications/cancelled"
+          && String(decoding: mixedLines[0], as: UTF8.self).contains("file:///a/b")
+          && !mixedLines.contains { $0.contains(UInt8(ascii: "\n")) }
+          && router.openPosts == [11])
+      _ = router.fromChild(response(5))
+
+      check(
+        "an empty batch is 400",
+        status(router.post(data("[]"), stream: 12)) == 400 && router.openPosts.isEmpty)
+
+      let pretty = data(
+        "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"tools/list\"\n}\r\n")
+      var prettyLines: [Data] = []
+      if case .stream(let lines) = router.post(pretty, stream: 13) { prettyLines = lines }
+      check(
+        "a body written over several lines reaches the child as one",
+        prettyLines.count == 1 && !prettyLines[0].contains(UInt8(ascii: "\n"))
+          && (object(prettyLines[0])?["id"] as? Int) == 6)
+      check(
+        "a single body keeps its bytes, without its trailing newline",
+        router.post(data(String(decoding: initialized, as: UTF8.self) + "\r\n"), stream: 14)
+          == .accepted(lines: [initialized]))
+      router.closeStream(13)
+
+      let call = request(20, "tools/call", token: #""p1""#)
+      _ = router.post(call, stream: 9)
+      let followed = router.fromChild(progress(#""p1""#))
+      check("progress follows its request", followed == [.toStream(9, progress(#""p1""#))])
+
+      _ = router.post(request(21, "tools/call", token: "7"), stream: 15)
+      let bare = router.fromChild(progress(#""7""#))
+      let numeric = router.fromChild(progress("7"))
+      check(
+        "a string token and an integer token stay apart",
+        bare == [.dropped] && numeric == [.toStream(15, progress("7"))])
+
+      // Each release is proven by reusing the id on a new stream: a token
+      // left mapped to the old id would send a stray progress there.
+      _ = router.fromChild(response(20))
+      _ = router.post(request(20), stream: 24)
+      check(
+        "a progress token is released with its response",
+        router.fromChild(progress(#""p1""#)) == [.dropped])
+      router.closeStream(24)
+      router.closeStream(15)
+
+      _ = router.post(request(21), stream: 25)
+      check(
+        "a closed stream releases its progress token",
+        router.fromChild(progress("7")) == [.dropped])
+      router.closeStream(25)
+
+      router.openGet(stream: 1)
+      _ = router.post(request(22, "tools/call", token: "true"), stream: 16)
+      _ = router.post(request(23, "tools/call", token: "1.5"), stream: 17)
+      check(
+        "a token that is neither a string nor an integer is not routed",
+        router.fromChild(progress("true")) == [.toStream(1, progress("true"))]
+          && router.fromChild(progress("1.5")) == [.toStream(1, progress("1.5"))])
+      router.closeStream(16)
+      router.closeStream(17)
+
+      let updated = data(
+        #"{"jsonrpc":"2.0","method":"notifications/resources/updated","params":{"uri":"x"}}"#)
+      check(
+        "unrouted notification goes to GET",
+        router.hasGet && router.fromChild(updated) == [.toStream(1, updated)])
+
+      let sampling = data(#"{"jsonrpc":"2.0","id":30,"method":"sampling/createMessage"}"#)
+      _ = router.post(request(30), stream: 18)
+      check(
+        "server request goes to GET",
+        router.fromChild(sampling) == [.toStream(1, sampling)] && router.openPosts == [18])
+      _ = router.fromChild(response(30))
+
+      router.closeStream(1)
+      let afterGet = router.post(request(31), stream: 19)
+      check(
+        "unrouted notification is dropped",
+        !router.hasGet && router.fromChild(updated) == [.dropped]
+          && afterGet == .stream(lines: [request(31)])
+          && router.fromChild(response(31)) == [.toStream(19, response(31)), .closeStream(19)])
+
+      _ = router.post(request(40), stream: 20)
+      let duplicate = router.post(request(40), stream: 21)
+      let inBatch = router.post(
+        data(
+          "[" + String(decoding: request(41), as: UTF8.self) + ","
+            + String(decoding: request(41), as: UTF8.self) + "]"), stream: 22)
+      check(
+        "duplicate pending id is 400",
+        status(duplicate) == 400 && status(inBatch) == 400 && router.openPosts == [20])
+      check(
+        "a refused batch leaves nothing pending",
+        router.fromChild(response(41)) == [.dropped])
+
+      check(
+        "a non-JSON or non-JSON-RPC body is 400",
+        status(router.post(data("{nope"), stream: 23)) == 400
+          && status(router.post(data(#"{"jsonrpc":"2.0"}"#), stream: 23)) == 400
+          && status(router.post(data("[1]"), stream: 23)) == 400
+          && status(router.post(data("7"), stream: 23)) == 400
+          && router.openPosts == [20])
+
+      var first = HTTPSessionRouter(id: SessionID.mint())
+      var second = HTTPSessionRouter(id: SessionID.mint())
+      _ = first.post(request(2), stream: 7)
+      _ = second.post(request(2), stream: 8)
+      check(
+        "same ids in two sessions stay apart",
+        first.fromChild(response(2)) == [.toStream(7, response(2)), .closeStream(7)]
+          && second.openPosts == [8]
+          && second.fromChild(response(2)) == [.toStream(8, response(2)), .closeStream(8)])
+
+      var closing = HTTPSessionRouter(id: SessionID.mint())
+      _ = closing.post(request(2), stream: 7)
+      closing.closeStream(7)
+      let lateDropped = closing.fromChild(response(2))
+      closing.openGet(stream: 1)
+      _ = closing.post(request(2), stream: 7)
+      closing.closeStream(7)
+      let lateToGet = closing.fromChild(response(2))
+      check(
+        "closing a stream forgets its ids, and a late response is dropped, GET or not",
+        closing.openPosts.isEmpty && lateDropped == [.dropped] && lateToGet == [.dropped])
+
+      var twice = HTTPSessionRouter(id: SessionID.mint())
+      twice.openGet(stream: 1)
+      _ = twice.post(request(50), stream: 7)
+      let firstAnswer = twice.fromChild(response(50))
+      check(
+        "a duplicate response is dropped, never sent on the GET stream",
+        firstAnswer == [.toStream(7, response(50)), .closeStream(7)]
+          && twice.fromChild(response(50)) == [.dropped])
+
+      let minted = SessionID.mint()
+      let hex = Set("0123456789abcdef")
+      check(
+        "session ids",
+        minted.count == 32 && minted.allSatisfy { hex.contains($0) }
+          && SessionID.mint() != minted && SessionID.isWellFormed(minted)
+          && !SessionID.isWellFormed(minted.uppercased())
+          && !SessionID.isWellFormed(String(minted.dropLast()))
+          && !SessionID.isWellFormed(minted + "0")
+          && !SessionID.isWellFormed(String(repeating: "g", count: 32))
+          && !SessionID.isWellFormed(""))
+      check("a router keeps its session id", HTTPSessionRouter(id: minted).id == minted)
     }
 
     print("\n\(checks - failures)/\(checks) passed")

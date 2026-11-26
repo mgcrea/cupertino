@@ -12,6 +12,32 @@ signed macOS app. GitHub release notes are generated from commits; this file is 
 summary.
 <!-- </generated:version> -->
 
+## [Unreleased]
+
+### Added
+
+- **Clients can reach Cupertino over HTTP, with no bridge process.** The app now serves every
+  surface at `http://127.0.0.1:8830/s/<surface>` (8831 for a Debug build), on this Mac only.
+  Claude Code, Cursor, VS Code and Codex are wired that way when you configure them fresh, each
+  with a token of its own kept in Cupertino's Keychain and written into its config, which is then
+  readable by you alone (mode 0600, backup included). A client already wired keeps the bridge and
+  says "Wired the old way" with a Switch to HTTP button; nothing is rewritten without you pressing
+  it. An HTTP client cannot start Cupertino the way the bridge does, so wiring one turns on Launch
+  at login. Claude Desktop, LM Studio and Windsurf stay on the bridge, and so does a repository's
+  `.mcp.json`, which is meant to be committed and never carries a token.
+- **The port and each client's token are in Settings.** Settings › General › HTTP endpoint sets
+  the port, from 1024 to 65535. A port another app holds is refused and the old one kept. After a
+  change, HTTP clients are rewritten to the new port at Cupertino's next launch or the next time a
+  surface is switched, or at once by Update in each one's pane. An HTTP
+  client's pane has Reset token, which issues a new token and rewrites its entries with it: "A new
+  token is written; the old one no longer works." Remove Cupertino's entries still signs a client
+  out for good.
+- **Activity says how each session came in.** The Activity window and each surface's pane show
+  `socket` or `http` beside the session's pid.
+- **Claude Code's allowlist is read for HTTP entries too.** An HTTP entry is judged by its URL
+  against `serverUrl` patterns, as Claude Code judges a remote server, and the card offers the exact
+  URL to add.
+
 ## [1.43.0] - 2026-11-20
 
 **See what Safari's tab is doing.** Click Cupertino's icon in Safari's toolbar: it says whether the
