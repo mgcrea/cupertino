@@ -220,7 +220,25 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_44_0, v1_43_0, v1_42_0, v1_41_0, v1_40_0]
+  static let releases: [Release] = [v1_44_1, v1_44_0, v1_43_0, v1_42_0, v1_41_0]
+
+  // swift-format-ignore
+  private static let v1_44_1: Release = Release(
+    version: "1.44.1",
+    date: "2026-11-26",
+    sections: [
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "The five surfaces the app serves itself work over HTTP.",
+            body: [
+              "Desktop, Screen, Shell, Simulator and Sound agree on an earlier MCP revision than the other surfaces, and a client sends that revision back with every request. 1.44.0's HTTP endpoint refused it, so Claude Code, Codex, Cursor and VS Code, once switched to HTTP, showed those five as failed to connect. Clients on the bridge were never affected. After updating, reconnect them (`/mcp` in Claude Code) or restart the client.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_44_0: Release = Release(
@@ -359,41 +377,6 @@ nonisolated enum Changelog {
             headline: "A launch that opens no driving channel names the cause.",
             body: [
               "An unconfirmed copy, or a sandboxed app's container that Cupertino may not read without Full Disk Access, is said to be that, rather than a build without SupportKitDriving. A copy the launch would quit again is checked once more, just before it is asked to quit.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_40_0: Release = Release(
-    version: "1.40.0",
-    date: "2026-11-16",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Drive one copy of an app by its pid.",
-            body: [
-              "Every Desktop verb that takes `bundleId` also takes `pid`, so a worktree's Debug build can be driven beside the one from the main checkout, which shares its bundle id. With several copies running, a bundle id alone is refused rather than guessed, and the refusal lists each copy's pid, its path and whether it has a driving channel. `apple_desktop_list_apps` gives each app's path. `apple_desktop_launch` with `path` and `channel: true` starts a copy beside one already running and answers its `pid`, and quits it again if it opens no channel. A handle always reaches the copy it was read from. A pid whose application is out of reach is refused without saying what runs as it.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Scroll, orbit and pan in our own Debug builds.",
-            body: [
-              "Through a driving channel, `apple_desktop_scroll` scrolls the view under a point by lines or by pixels, and `apple_desktop_drag` takes the middle button, modifiers held throughout and pacing, which is how a canvas or a 3D view moves. `apple_desktop_hover` takes `from`, so its moves carry their movement. All of them need swift-support-kit 1.25.0's channel, and to any other app they are refused with the reason rather than dropped.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "The driving channel no longer mixes up two connections or two Cupertinos.",
-            body: [
-              "A command is appended in one write, only one from each Cupertino is in flight per app, its sequence numbers start from a random base, and the app's answers are read from where the last read ended rather than whole every 10 ms.",
             ]),
         ]),
     ])
