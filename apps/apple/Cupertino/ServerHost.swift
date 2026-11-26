@@ -1975,8 +1975,10 @@ nonisolated final class ServerHost: @unchecked Sendable {
         let n = buffer.withUnsafeMutableBufferPointer { read(source, $0.baseAddress, $0.count) }
         if n < 0 { if errno == EINTR { continue } else { break } }
         if n == 0 { break }
-        let read = Data(buffer[0..<n])
-        let chunk = transform?(read) ?? read
+        // Not `read`: a local of that name shadows the libc `read` called two
+        // lines up, which CI's Xcode reports as a circular reference.
+        let bytes = Data(buffer[0..<n])
+        let chunk = transform?(bytes) ?? bytes
         observe?(chunk)
         open = writeAll(sink, chunk)
       }
