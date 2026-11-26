@@ -89,11 +89,17 @@ contradicts its own pitch, and the next section is why that matters more than us
    check, and it is the single documented exception this section promised in advance — Sparkle
    landed in 1.1.0, so the claim is reworded here rather than quietly dropped.
 
-   Everything else still holds. There is no `URLSession` and no HTTP anywhere in
+   Everything else still holds. There is no `URLSession`, no name lookup and no TLS anywhere in
    `apps/apple/Cupertino` or `apps/apple/CupertinoBridge`; the licence is still verified offline;
-   nothing phones home. The one socket in our own code is `socket(AF_UNIX, SOCK_STREAM, 0)` in
-   `ServerHost.swift` — a filesystem entry, mode-restricted to the one user, carrying stdio between
-   the app and its own servers.
+   nothing phones home. Our own code uses two kinds of socket, and neither reaches past this Mac.
+   `socket(AF_UNIX, SOCK_STREAM, 0)` in `ServerHost.swift` is a filesystem entry, mode-restricted
+   to the one user: the app listens on it, and the bridge and the app's own Chat pane connect to
+   it, carrying stdio between clients and the app's servers. Since 1.44.0, `HTTPListener.swift`
+   also listens on `127.0.0.1`, so that MCP clients on this Mac can reach the app over HTTP, each
+   with a token of its own. That address accepts connections from this Mac alone, and the listener
+   never dials out. It reads back the address the kernel bound and refuses to listen unless it is
+   the loopback one, and `scripts/audit-network.sh` requires that guard and keeps every other file
+   from naming an internet address family at all.
 
    What the update check does: reads `https://cupertino.mgcrea.io/appcast.xml`, and sends no
    identifier with the request — not the licence key, not a machine id. It is **off in the shipped
@@ -153,7 +159,8 @@ $ scripts/audit-network.sh /Applications/Cupertino.app
 
   ok    SUEnableAutomaticChecks             false
   ok    SUFeedURL                           https://cupertino.mgcrea.io/appcast.xml
-  ok    sockets                             AF_UNIX only
+  ok    sockets                             AF_UNIX only, bar the loopback listener
+  ok    loopback listener                   binds 127.0.0.1 only, never dials
 ```
 
 The binary list is **discovered, not declared**. That matters more since Sparkle: a framework, an
@@ -174,8 +181,12 @@ It denies the high-level symbols — `URLSession`, CFNetwork, `Network.framework
 TLS entry points — and deliberately does **not** deny `socket` / `bind` / `connect`, because the
 AF_UNIX bridge shares those syscalls with the thing being ruled out and so they cannot be the test.
 The assertion that carries the claim is at source level instead: `AF_INET`, `PF_INET` and
-`sockaddr_in` appear nowhere in `apps/apple/`. A socket that never names an internet address family is not
-one. Build output and vendored dependencies are pruned from that grep, because reading someone
+`sockaddr_in` appear nowhere in `apps/apple/` but `HTTPListener.swift`. A socket that never names an
+internet address family is not one. That one file, since 1.44.0, is held to a single AF_INET
+socket, a single bind of the loopback address, no other way to set an address, no IPv6, nothing
+that dials or sends, and the runtime check that refuses to listen anywhere but `127.0.0.1`: a grep
+cannot prove which address reaches `bind`, so the check in the code is the proof and the audit
+proves the check is there. Build output and vendored dependencies are pruned from that grep, because reading someone
 else's code as though we had written it is not evidence about ours — Sparkle's own test harness
 contains a `sockaddr_in` web server that never ships.
 
@@ -226,7 +237,8 @@ Three things to settle before it ships:
 
 Apple Events. `send_message` and `check_for_new_mail` make **Mail.app** do network I/O on the user's
 behalf, and no sandbox on Cupertino touches that. So the defensible claim is that Cupertino opens no
-socket of its own — never that nothing leaves the machine. Say it first; a hostile reader finds it
+connection of its own beyond the update check, and listens only where this Mac alone can reach it —
+never that nothing leaves the machine. Say it first; a hostile reader finds it
 in ten seconds either way.
 
 And never cite the absence of `com.apple.security.network.client` as evidence. That entitlement

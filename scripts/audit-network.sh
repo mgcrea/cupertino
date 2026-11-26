@@ -262,7 +262,7 @@ fi
 # claim for the code we wrote: a socket that never names an internet address
 # family is not one.
 echo ""
-echo "  Sources — an internet address family appears nowhere"
+echo "  Sources — an internet address family appears only in the loopback listener"
 # Named explicitly, and existence-checked: `grep -r` over a directory that has
 # been moved away returns nothing and exits non-zero, which `|| true` would
 # launder into a pass. The check would then report "ok" having read no source at
@@ -281,13 +281,64 @@ for dir in "${SOURCES[@]}"; do
     status=1
   }
 done
-inet=$(grep -rInE "${PRUNE[@]}" 'AF_INET|PF_INET|sockaddr_in\b|sockaddr_in6' "${SOURCES[@]}" 2>/dev/null || true)
+# The one exception, and the conditions it is held to. Since 1.44.0 the app
+# serves MCP to clients on this Mac over HTTP, which needs an AF_INET socket:
+# there is no AF_UNIX transport an HTTP client will dial. That listener lives in
+# one file, and the file may name an internet address family only on these
+# terms. Listening on 127.0.0.1 accepts connections from this Mac alone; it is
+# not a connection Cupertino makes, which is what docs/licensing.md counts.
+# Every other file is held to "appears nowhere", exactly as before.
+#
+# A grep cannot prove which address reaches bind(), so the proof is at runtime:
+# HTTPListener.start() reads the bound address back with getsockname() and
+# refuses to listen unless it is the loopback one. This check requires that
+# guard to be there, and holds the file's shape to the one it was measured at:
+# one AF_INET socket, one bind, one assignment of the loopback address and no
+# other way to set one, no IPv6, and nothing that dials or sends.
+LISTENER='apps/apple/Cupertino/HTTPListener.swift'
+LISTENER_RE=$(printf '%s' "$LISTENER" | sed 's/[.]/[.]/g')
+inet=$(grep -rInE "${PRUNE[@]}" 'AF_INET|PF_INET|sockaddr_in\b|sockaddr_in6' "${SOURCES[@]}" 2>/dev/null \
+  | grep -v "^$LISTENER_RE:" || true)
 if [ -n "$inet" ]; then
-  printf '  FAIL  %s\n' "AF_INET is referenced:"
+  printf '  FAIL  %s\n' "AF_INET is referenced outside $LISTENER:"
   printf '%s\n' "$inet" | sed 's/^/          /'
   status=1
 else
-  printf '  ok    %-46s AF_UNIX only\n' "sockets"
+  printf '  ok    %-46s AF_UNIX only, bar the loopback listener\n' "sockets"
+fi
+if [ ! -f "$LISTENER" ]; then
+  # A stale exception is a failure, like a stale Sparkle allowance: the next
+  # file to take the name would inherit it unexamined.
+  printf '  FAIL  %-46s %s is gone; drop its exception\n' "loopback listener" "$LISTENER"
+  status=1
+else
+  problems=""
+  note() { problems="$problems$1"$'\n'; }
+  # Occurrences, not lines: two binds on one line are two binds.
+  count() { { grep -oE "$1" "$LISTENER" || true; } | wc -l | tr -d ' '; }
+  [ "$(count 'socket[[:space:]]*\([[:space:]]*AF_INET')" -eq 1 ] || note "not exactly one socket(AF_INET"
+  [ "$(count '\bbind[[:space:]]*\(')" -eq 1 ] || note "not exactly one bind("
+  # The one asked for and the one getsockname() fills: a third would be an
+  # address built after the guarded one.
+  [ "$(count 'sockaddr_in[[:space:]]*\([[:space:]]*\)')" -eq 2 ] || note "not exactly two sockaddr_in()"
+  [ "$(count 's_addr[[:space:]]*=[[:space:]]*INADDR_LOOPBACK\.bigEndian[[:space:]]*$')" -eq 1 ] \
+    || note "not exactly one s_addr = INADDR_LOOPBACK.bigEndian"
+  { [ "$(count '\bgetsockname[[:space:]]*\(')" -ge 1 ] \
+    && [ "$(count 'guard named == 0, actual\.sin_addr\.s_addr == INADDR_LOOPBACK\.bigEndian else')" -eq 1 ]; } \
+    || note "the getsockname() loopback guard in start() is missing"
+  # Any other way to put an address in place: a wholesale sin_addr, an in_addr
+  # initialiser, a compound assignment, a memberwise sockaddr_in.
+  other=$(grep -nE 'sin_addr[[:space:]]*=[^=]|in_addr[[:space:]]*\(|s_addr[[:space:]]*[-+*/&|^]=|sockaddr_in[[:space:]]*\([[:space:]]*sin_' "$LISTENER" || true)
+  [ -z "$other" ] || note "$other"
+  dials=$(grep -nE 'AF_INET6|PF_INET6|sockaddr_in6|INADDR_ANY|in6addr_any|\b(connectx?|sendto|sendmsg)\b' "$LISTENER" || true)
+  [ -z "$dials" ] || note "$dials"
+  if [ -n "$problems" ]; then
+    printf '  FAIL  %-46s strays from loopback-only:\n' "loopback listener"
+    printf '%s' "$problems" | sed 's/^/          /'
+    status=1
+  else
+    printf '  ok    %-46s binds 127.0.0.1 only, never dials\n' "loopback listener"
+  fi
 fi
 
 # The entitlements as SOURCE, which runs on every build, signed or not. The
@@ -333,10 +384,12 @@ echo ""
 if [ "$status" -eq 0 ]; then
   echo "  Audited $checked Mach-O files."
   if [ "$saw_sparkle" -eq 1 ]; then
-    echo "  Cupertino opens exactly one socket of its own beyond the local bridge:"
-    echo "  the update check, to cupertino.mgcrea.io, and only once you turn it on."
+    echo "  Cupertino opens exactly one connection of its own: the update check,"
+    echo "  to cupertino.mgcrea.io, and only once you turn it on. Beyond that it"
+    echo "  listens on the local bridge and on 127.0.0.1, for clients on this Mac."
   else
-    echo "  Cupertino opens no socket of its own beyond the local bridge."
+    echo "  Cupertino opens no connection of its own. It listens on the local bridge"
+    echo "  and on 127.0.0.1, for clients on this Mac."
   fi
   echo "  This says nothing about Mail.app, which sends over its own connections."
 else

@@ -93,8 +93,9 @@ anyone. It does not contact a licensing server, and never did.
 It makes exactly one network connection of any kind: the update check described
 in Section 8, which is off in the build you download and runs only if you turn it
 on. Nothing about your licence or your machine is sent with it. Apart from that
-one connection the app opens no network socket of its own, and all of this is
-checked on every build rather than asserted. See `scripts/audit-network.sh` in
+one connection the app reaches no other machine: the only network socket it opens
+itself listens on 127.0.0.1, so that programs on this Mac can reach it, and it
+never connects out. All of this is checked on every build rather than asserted. See `scripts/audit-network.sh` in
 the repository, and run it against the copy you downloaded if you would rather
 not take our word.
 

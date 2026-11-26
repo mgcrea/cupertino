@@ -153,17 +153,25 @@ nonisolated final class HTTPListener: @unchecked Sendable {
       close(fd)
       throw ListenError.socket(detail)
     }
+    // What the kernel says was bound, not what was asked for, and refused
+    // unless it is the loopback address: the guard scripts/audit-network.sh
+    // requires, so a later edit that zeroes or widens `address` fails here,
+    // before anything listens, instead of serving the network.
+    var actual = sockaddr_in()
+    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+    let named = withUnsafeMutablePointer(to: &actual) {
+      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
+    }
+    guard named == 0, actual.sin_addr.s_addr == INADDR_LOOPBACK.bigEndian else {
+      close(fd)
+      throw ListenError.socket("bound something other than 127.0.0.1; refusing to listen")
+    }
     guard listen(fd, 128) == 0 else {
       let detail = errnoText()
       close(fd)
       throw ListenError.socket("listen: \(detail)")
     }
 
-    var actual = sockaddr_in()
-    var length = socklen_t(MemoryLayout<sockaddr_in>.size)
-    _ = withUnsafeMutablePointer(to: &actual) {
-      $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { getsockname(fd, $0, &length) }
-    }
     let address127 = "127.0.0.1:\(UInt16(bigEndian: actual.sin_port))"
     state.withLock {
       $0.fd = fd
