@@ -125,8 +125,12 @@ function run(argv) {
     var windowId = null;
     try { windowId = wins[i].id(); } catch (e) {}
 
+    // A window Safari keeps without showing it (visible false, no document,
+    // seen with a second profile's window) answers tabs() with null rather
+    // than throwing. It holds no tabs (its tabs.length is 0), so it is empty,
+    // not unreadable.
     var tabs = [];
-    try { tabs = wins[i].tabs(); } catch (e) {
+    try { tabs = wins[i].tabs() || []; } catch (e) {
       tabs = [];
       unreadable.push({ windowId: windowId, tabs: null });
     }

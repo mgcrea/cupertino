@@ -271,7 +271,8 @@ function run(argv) {
     if (!w) { results.push({ id: t.id, outcome: "stale" }); continue; }
 
     var tabs = [];
-    try { tabs = w.tabs(); } catch (e) { tabs = []; }
+    // Null, not a throw, from a window Safari keeps hidden; see LIVE_TABS.
+    try { tabs = w.tabs() || []; } catch (e) { tabs = []; }
     var tab = tabs[t.index - 1];
     var url = null;
     try { url = tab ? String(tab.url()) : null; } catch (e) {}

@@ -20,7 +20,12 @@ import { CLOSE_TABS } from "../src/client/jxa/writes.js";
  */
 
 type FakeTab = { url: string | null; throws?: boolean; title?: string | null };
-type FakeWindow = { id: number; tabs: FakeTab[]; tabsThrow?: boolean };
+/**
+ * `empty` models a window Safari keeps without showing it (`visible: false`,
+ * seen with a second profile's window): JXA answers its `tabs()` and its
+ * `currentTab()` with null rather than throwing.
+ */
+type FakeWindow = { id: number; tabs: FakeTab[]; tabsThrow?: boolean; empty?: boolean };
 
 const fakeSafari = (windows: FakeWindow[], opts: { running?: boolean } = {}) => {
   const closed: string[] = [];
@@ -47,9 +52,10 @@ const fakeSafari = (windows: FakeWindow[], opts: { running?: boolean } = {}) => 
     index: () => windows.indexOf(w) + 1,
     tabs: () => {
       if (w.tabsThrow) throw new Error("Can't get tabs.");
+      if (w.empty) return null;
       return w.tabs.map((_, i) => tabSpecifier(w, i));
     },
-    currentTab: () => tabSpecifier(w, 0),
+    currentTab: () => (w.empty ? null : tabSpecifier(w, 0)),
   });
   const list = Object.assign(() => windows.map(windowSpecifier), {
     byId: (id: number) => {
@@ -144,6 +150,14 @@ describe("CLOSE_TABS, run", () => {
     expect(s.closed).toEqual(["https://only/", "https://b/"]);
   });
 
+  it("calls a target in a window that answers no tabs stale, rather than failing the call", () => {
+    const s = fakeSafari([{ id: 7, tabs: [], empty: true }]);
+    const r = run(CLOSE_TABS, s.app, {
+      targets: [{ id: "x", windowId: 7, index: 1, url: "https://a/" }],
+    });
+    expect(r.data).toEqual({ running: true, results: [{ id: "x", outcome: "stale" }] });
+  });
+
   it("touches nothing in a Safari that is not running", () => {
     const s = fakeSafari([{ id: 7, tabs: [{ url: "https://a/" }] }], { running: false });
     const r = run(CLOSE_TABS, s.app, {
@@ -178,6 +192,19 @@ describe("LIVE_TABS, run", () => {
         { windowId: 41, tabs: 1 },
         { windowId: 42, tabs: null },
       ],
+    });
+  });
+
+  it("lists the other windows' tabs when one window answers no tabs at all", () => {
+    const s = fakeSafari([
+      { id: 41, tabs: [{ url: "https://a/" }] },
+      { id: 42, tabs: [], empty: true },
+    ]);
+    const r = run(LIVE_TABS, s.app);
+    expect(r.ok).toBe(true);
+    expect(r.data).toMatchObject({
+      unreadable: [],
+      tabs: [{ windowId: 41, index: 1, url: "https://a/" }],
     });
   });
 });
