@@ -329,6 +329,16 @@ extension WiringCheck {
       "Configure on a fresh HTTP client writes HTTP",
       allHTTP(servers(of: cursor), token: token("cursor")))
 
+    // Antigravity CLI keeps its servers under `mcpServers` in
+    // `~/.gemini/config/mcp_config.json` and takes the same JSON HTTP shape.
+    let antigravity = client("antigravity")
+    _ = try? ClientWiring.configure(antigravity)
+    check(
+      "Antigravity CLI gets HTTP under mcpServers",
+      allHTTP(servers(of: antigravity), token: token("antigravity")))
+    check("with a token of its own", token("antigravity") != token("cursor"))
+    check("and a fresh config is 0600 too", mode(antigravity.wiring.path) == 0o600)
+
     // Launch at login is asked for, never required: a refusal is a log line.
     reset()
     LoginItem.failure = "Operation not permitted"
@@ -392,7 +402,7 @@ extension WiringCheck {
     for id in ["lm-studio", "windsurf"] {
       check("\(id) stays on the bridge", client(id).transport == .bridge)
     }
-    for id in ["claude-code", "vscode", "cursor", "codex"] {
+    for id in ["claude-code", "vscode", "cursor", "codex", "antigravity"] {
       check("\(id) is an HTTP client", client(id).transport == .http)
     }
   }

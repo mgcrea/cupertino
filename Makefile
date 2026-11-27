@@ -880,7 +880,8 @@ wiring-check-real: wiring-check ## Prove the merge against the real client confi
 		"$(HOME)/.lmstudio/mcp.json" \
 		"$(HOME)/.codeium/windsurf/mcp_config.json" \
 		"$(HOME)/Library/Application Support/Code/User/mcp.json" \
-		"$(HOME)/.codex/config.toml"
+		"$(HOME)/.codex/config.toml" \
+		"$(HOME)/.gemini/config/mcp_config.json"
 
 audit: app ## Assert the built app cannot reach the network
 	@scripts/audit-network.sh "$(APP)"

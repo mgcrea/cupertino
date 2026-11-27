@@ -1,11 +1,11 @@
 # Clients
 
 `docs/surfaces.md` describes what Cupertino serves and `docs/distribution.md` why it ships signed
-rather than sandboxed. This describes the other end: the seven MCP clients Cupertino knows how to
+rather than sandboxed. This describes the other end: the eight MCP clients Cupertino knows how to
 wire, how each one's config is written rather than pasted, and what the client pane can and cannot
 tell you about a file it does not own.
 
-## The seven clients
+## The eight clients
 
 | Client             | Config                                                            | Root key      | Format | Transport |
 | ------------------ | ----------------------------------------------------------------- | ------------- | ------ | --------- |
@@ -16,6 +16,7 @@ tell you about a file it does not own.
 | Windsurf           | `~/.codeium/windsurf/mcp_config.json`                             | `mcpServers`  | JSON   | bridge    |
 | Visual Studio Code | `~/Library/Application Support/Code/User/mcp.json`                | `servers`     | JSON   | HTTP      |
 | ChatGPT & Codex    | `~/.codex/config.toml`                                            | `mcp_servers` | TOML   | HTTP      |
+| Antigravity CLI    | `~/.gemini/config/mcp_config.json`                                | `mcpServers`  | JSON   | HTTP      |
 
 **Transport** is what a fresh wire writes and what _Switch to HTTP_ moves a client to. A bridge
 client is wired with a `command` that starts `cupertino-bridge`, which reaches the app over its unix
@@ -32,7 +33,7 @@ whether the app may rewrite it wholesale.
 `ClientWiring.clients` is the authority; `apps/website/src/config.ts` keeps a copy for the
 marketing page, and the two are kept in step by hand.
 
-Six are strict JSON holding nothing but data, so they are serialised from a dictionary. The seventh
+Seven are strict JSON holding nothing but data, so they are serialised from a dictionary. The eighth
 is not, and `ClientWiringTOML` is the answer: it locates the lines that hold MCP servers, replaces
 those, and quotes every other byte of the file verbatim. A wire against the real config produces a
 `diff` with one hunk in it, and that hunk is a pure addition.
@@ -51,7 +52,7 @@ Codex was refused for a real reason — it is TOML, and no serialiser can round-
 the answer was a paste for as long as nobody had written a splicer. Bastion had; see
 [the TOML client](#the-one-toml-client).
 
-The last row is one client rather than three. The ChatGPT desktop app, the Codex CLI and the Codex
+The ChatGPT & Codex row is one client rather than three. The ChatGPT desktop app, the Codex CLI and the Codex
 IDE extension all read that same file — the ChatGPT app even bundles the Codex binary, at
 `/Applications/ChatGPT.app/Contents/Resources/codex`, and names it in `CODEX_CLI_PATH`. Three rows
 would write the same keys to the same path three times, and removing any one of them would take the
@@ -63,13 +64,28 @@ Codex lane inside the same app runs local stdio servers, and ships three of its 
 `node_repl`, `computer-use` and `cua_repl`, every one a `command` pointing into
 `/Applications/ChatGPT.app`.
 
+**Antigravity CLI** (`agy`) keeps its servers in `~/.gemini/config/mcp_config.json` under
+`mcpServers`. Its own `agy mcp add` writes a remote server the Windsurf way, a `serverUrl` and
+`headers` with no `type`, but it reads `type`/`url`/`headers` too: against agy 1.5.18, a probe
+server on loopback saw `Authorization: Bearer …` on `server/discover`, `initialize` and `tools/list`
+from an entry of either shape. So it gets `.http`. Its own edits keep the entry as written:
+`agy mcp disable` adds `disabled: true` beside Cupertino's keys, which an automatic rewire then
+leaves alone. Two things it does that the other rows do not:
+
+- **It rewrites the file `0644`.** Any `agy mcp add`, `enable` or `disable` replaces the `0600` file
+  Cupertino wrote with a world-readable one, token included, and nothing puts it back until
+  Cupertino next writes it.
+- **The row is the CLI only.** The Antigravity IDE is a separate application, and nothing has yet
+  shown it reading `~/.gemini/config/mcp_config.json`, so the row has no bundle id and draws the
+  terminal glyph.
+
 **Zed** and **Goose** are absent for now rather than on principle: Zed wants a `context_servers` entry whose
 shape has moved between versions, Goose a YAML `extensions:` block, and neither has a CLI to hide
 behind. `.command` accommodates them the day somebody asks.
 
 ## The one TOML client
 
-`~/.codex/config.toml` is not like the other six. On the machine this was ported against it carries
+`~/.codex/config.toml` is not like the other seven. On the machine this was ported against it carries
 twenty-nine `[projects."…"]` tables, a `[features]` block, a `[shell_environment_policy.set]` table
 and a multi-line string full of markdown — hand-written structure and prose, with the MCP servers a
 small part of it. So there is no TOML library here, and that is the same objection that keeps VS
@@ -164,7 +180,7 @@ and naming them after the app would misdescribe them.
 ## HTTP entries
 
 Cupertino also serves every surface at `http://127.0.0.1:<port>/s/<surface>`, as Streamable HTTP.
-Claude Code, Cursor and VS Code take it in their JSON shape:
+Claude Code, Cursor, VS Code and Antigravity CLI take it in their JSON shape:
 
 ```json
 {
@@ -314,7 +330,7 @@ it never holds a token.
 ## Keeping configs current
 
 Configure used to be the only write, so a surface switched on reached no client until somebody
-visited up to seven panes, and a surface that ships switched on in an update reached none at all.
+visited up to eight panes, and a surface that ships switched on in an update reached none at all.
 Now `ClientWiring.rewireAll` runs at every launch and half a second after the set of surfaces
 switched on changes. A pass over a config that is already current only reads it, so running it
 every time costs nothing. The switches are watched through `UserDefaults` rather than hooked, so

@@ -278,9 +278,9 @@ export const HOSTS = ["Cursor", "Claude Desktop", "Visual Studio Code", "Termina
  * it. `ClientWiring.swift` is the authority on both the membership and the
  * split, and the split is not about how popular a client is.
  *
- * `automatic` is all seven, which is the point: the app merges its entries into
+ * `automatic` is all eight, which is the point: the app merges its entries into
  * the config each client already has, keeps a backup and leaves every other key
- * alone. Five keep their servers under a top-level `mcpServers`; Visual Studio
+ * alone. Six keep their servers under a top-level `mcpServers`; Visual Studio
  * Code uses `servers` in `User/mcp.json`, and Codex a spliced `[mcp_servers]`
  * block in TOML.
  *
@@ -310,12 +310,13 @@ export const WIRING = {
     "Windsurf",
     "Visual Studio Code",
     "ChatGPT & Codex",
+    "Antigravity CLI",
   ],
   command: [] as string[],
   /**
    * How many of each `MenuBar.astro` draws. It is a fixed-height mock of a
    * 320pt popover, and the real one only ever lists the clients you actually
-   * have installed — usually two or three. Drawing all seven would make the
+   * have installed — usually two or three. Drawing all eight would make the
    * mock less honest, not more.
    */
   mockRows: { automatic: 3, command: 0 },

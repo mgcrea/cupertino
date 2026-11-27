@@ -99,13 +99,13 @@ The app itself hosts five more surfaces, none of them a separate npm install:
 
 ## The app
 
-- Wires itself into seven clients automatically — Claude Code, Claude Desktop, Cursor, LM Studio,
-  Windsurf, Visual Studio Code, and ChatGPT & Codex — by merging its entries into each client's own
-  config and keeping a backup.
-- Claude Code, Codex, Cursor and VS Code reach it over HTTP on 127.0.0.1 (port 8830 by default,
-  set in Settings), each with a token of its own kept in the Keychain, so no bridge process runs per
-  surface. Claude Desktop, LM Studio, Windsurf and a repository's `.mcp.json` stay on the stdio
-  bridge. A session starts a surface's server only at its first real call.
+- Wires itself into eight clients automatically — Claude Code, Claude Desktop, Cursor, LM Studio,
+  Windsurf, Visual Studio Code, ChatGPT & Codex, and Antigravity CLI — by merging its entries into
+  each client's own config and keeping a backup.
+- Claude Code, Codex, Cursor, VS Code and Antigravity CLI reach it over HTTP on 127.0.0.1 (port
+  8830 by default, set in Settings), each with a token of its own kept in the Keychain, so no bridge
+  process runs per surface. Claude Desktop, LM Studio, Windsurf and a repository's `.mcp.json` stay
+  on the stdio bridge. A session starts a surface's server only at its first real call.
 - Load tools on demand swaps the full tool list for a small, searchable index, for the clients whose
   context a hundred-plus tool schemas would otherwise crowd out.
 - A Chat pane, so the surfaces can be tried without wiring an editor first. It answers through

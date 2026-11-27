@@ -58,7 +58,7 @@ enum ClientWiring {
   /// way to add them is a third case here rather than a snippet maintained blind.
   nonisolated enum Wiring: Hashable {
     /// A strict-JSON file we merge into. `rootKey` is the object servers live
-    /// under: `mcpServers` for five of the seven, `servers` for VS Code. A
+    /// under: `mcpServers` for six of the eight, `servers` for VS Code. A
     /// parameter rather than an assumption, because the previous version of this
     /// file hardcoded the string in two places and called the difference an enum
     /// with one case.
@@ -115,9 +115,9 @@ enum ClientWiring {
 
     var isInstalled: Bool {
       // Which editors this Mac happens to have is a fact about this Mac. Under a
-      // capture every row is shown, which is also what the Settings pane this
-      // replaced did — it filtered on a status demo mode seeded for all seven.
-      if DemoSeed.isEnabled { return true }
+      // capture `DemoSeed.clientIDs` pins the sidebar rows so adding a new client
+      // does not shift the marketing plates and goldens until they are recomposed.
+      if DemoSeed.isEnabled { return DemoSeed.clientIDs.contains(id) }
       let fm = FileManager.default
       if let bundleID,
         NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
@@ -168,8 +168,9 @@ enum ClientWiring {
   /// behind — each would be a bespoke snippet maintained blind. `.command`
   /// accommodates them the day someone asks.
   ///
-  /// **Transport.** Claude Code, VS Code, Cursor and Codex are `.http`; Claude
-  /// Desktop, LM Studio and Windsurf keep the bridge. That is Bastion's measured
+  /// **Transport.** Claude Code, VS Code, Cursor, Codex and Antigravity CLI are
+  /// `.http`; Claude Desktop, LM Studio and Windsurf keep the bridge. That is
+  /// Bastion's measured
   /// table, standing in until the spike in `scripts/spikes/http-fallback.mjs`
   /// has been run against each client: a client that does not fall back to the
   /// 2025 handshake over HTTP goes back to `.bridge`, row by row, before this
@@ -297,6 +298,29 @@ enum ClientWiring {
       // round trip through any serialiser would reformat and de-comment it.
       wiring: .toml(path: home.appendingPathComponent(".codex/config.toml")),
       transport: .http),
+    Client(
+      id: "antigravity",
+      displayName: "Antigravity CLI",
+      symbol: "terminal",
+      // A command with no app bundle. The Antigravity IDE is a separate
+      // application, and nothing yet says it reads this file.
+      bundleID: nil,
+      evidence: [
+        home.appendingPathComponent(".gemini/config"),
+        home.appendingPathComponent(".local/bin/agy"),
+        URL(fileURLWithPath: "/opt/homebrew/bin/agy"),
+        URL(fileURLWithPath: "/usr/local/bin/agy"),
+      ],
+      // What `agy mcp add` writes to, measured against agy 1.5.18. Its own
+      // remote shape is `serverUrl` + `headers`, Windsurf's, but it reads
+      // `type`/`url`/`headers` just as well: a probe server saw the bearer
+      // header on `initialize` and `tools/list` from both shapes. So it gets
+      // `.http` and no bridge, and its own edits (`agy mcp disable`) keep the
+      // entry's keys as written.
+      wiring: .json(
+        path: home.appendingPathComponent(".gemini/config/mcp_config.json"),
+        rootKey: "mcpServers"),
+      transport: .http),
   ]
 
   // MARK: - What we write
@@ -368,7 +392,7 @@ enum ClientWiring {
   }
 
   /// One HTTP entry, in the shape the JSON clients read: Claude Code, Cursor,
-  /// and VS Code under its `servers`.
+  /// Antigravity CLI, and VS Code under its `servers`.
   ///
   /// The token is a literal in the file, which is why every file holding one
   /// is kept 0600 (see `ClientWiringMerge.write`). It names the client and
@@ -875,7 +899,7 @@ enum ClientWiring {
   /// Whether this process rewrites client configs without being asked.
   ///
   /// Configure used to be the only write, so a surface switched on reached no
-  /// client until somebody visited up to seven panes, and one that ships in an
+  /// client until somebody visited up to eight panes, and one that ships in an
   /// update reached none at all. Bastion learned the same lesson with profiles.
   ///
   /// Off in every process whose bridge path is not one to hand out. A Debug
@@ -1118,7 +1142,7 @@ enum ClientWiring {
   /// written to a path that came out of here.
   static func configFile(of client: Client) -> (path: URL, rootKey: String) {
     let file = (path: client.wiring.path, rootKey: client.wiring.rootKey)
-    // The pane prints this path, and all seven of them start at the real home
+    // The pane prints this path, and all eight of them start at the real home
     // directory. See `DemoSeed.anonymised`.
     guard DemoSeed.isEnabled else { return file }
     return (DemoSeed.anonymised(file.path), file.rootKey)

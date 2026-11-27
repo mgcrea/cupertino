@@ -973,6 +973,15 @@ nonisolated enum DemoSeed {
       timedOut: false, durationMs: exit == nil ? nil : 840)
   }
 
+  /// Seven of the real list's clients, for the sidebar under a capture.
+  ///
+  /// Antigravity CLI is the one left out, deliberately: a client row changes
+  /// the sidebar length on the `settings` plate and moves the golden, so it
+  /// joins the fixture when the plates are next recomposed, not with the row.
+  nonisolated static let clientIDs: Set<String> = [
+    "claude-code", "claude-desktop", "cursor", "lm-studio", "windsurf", "vscode", "codex",
+  ]
+
   /// A client config, instead of the one on this Mac.
   ///
   /// `ClientDetail` re-reads the real file on every redraw and shows what is in

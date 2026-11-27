@@ -19,6 +19,7 @@ enum SurfaceSettings {
 /// Never a capture.
 enum DemoSeed {
   static let isEnabled = false
+  static let clientIDs: Set<String> = []
   static let bridgePath = "/Applications/Cupertino.app" + ClientWiringMerge.bridgeSuffix
   static let httpPort = 8830
   static func anonymised(_ url: URL) -> URL { url }
