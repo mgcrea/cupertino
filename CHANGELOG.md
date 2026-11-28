@@ -6,11 +6,26 @@ Notable changes to this repository. The format follows
 
 <!-- <generated:version> generated from package.json by `make version` — do not edit by hand -->
 
-Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.44.1`,
-`notes-v1.44.1`, `reminders-v1.44.1`, `core-v1.44.1` for the npm packages, and `app-v1.44.1` for the
+Releases are tagged per artifact, and a tag names what it publishes: `mail-v1.45.0`,
+`notes-v1.45.0`, `reminders-v1.45.0`, `core-v1.45.0` for the npm packages, and `app-v1.45.0` for the
 signed macOS app. GitHub release notes are generated from commits; this file is the curated
 summary.
 <!-- </generated:version> -->
+
+## [1.45.0] - 2026-11-28
+
+**Cupertino connects to Antigravity CLI.** Set up Antigravity CLI in Cupertino’s client settings to use your Apple apps from `agy`. Safari tools also handle hidden windows with no tabs.
+
+### Added
+
+- **Antigravity CLI can connect over HTTP.** Select Antigravity CLI in Cupertino’s client settings to
+  configure your enabled surfaces. The CLI connects directly to Cupertino on this Mac using its own
+  token.
+
+### Fixed
+
+- **Safari tab tools skip hidden windows with no tabs.** Listing tabs, reading a page and closing tabs
+  now work when Safari keeps an empty hidden window, including one from another profile.
 
 ## [1.44.1] - 2026-11-26
 
@@ -3776,7 +3791,8 @@ from source.
   keeps every unrelated key, leaves a recoverable backup, migrates a legacy `apple-*` entry only
   when this app wrote it, and cannot leave a truncated config or a stray temp file.
 
-[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.44.1...HEAD
+[unreleased]: https://github.com/mgcrea/cupertino/compare/app-v1.45.0...HEAD
+[1.45.0]: https://github.com/mgcrea/cupertino/compare/app-v1.44.1...app-v1.45.0
 [1.44.1]: https://github.com/mgcrea/cupertino/compare/app-v1.44.0...app-v1.44.1
 [1.44.0]: https://github.com/mgcrea/cupertino/compare/app-v1.43.0...app-v1.44.0
 [1.43.0]: https://github.com/mgcrea/cupertino/compare/app-v1.42.0...app-v1.43.0

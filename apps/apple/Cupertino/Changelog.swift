@@ -220,7 +220,36 @@ nonisolated enum Changelog {
   /// literal, and this one is releases of sections of entries of strings — the
   /// exact shape that turns into a multi-second type-check with no diagnostic.
   // swift-format-ignore
-  static let releases: [Release] = [v1_44_1, v1_44_0, v1_43_0, v1_42_0, v1_41_0]
+  static let releases: [Release] = [v1_45_0, v1_44_1, v1_44_0, v1_43_0, v1_42_0]
+
+  // swift-format-ignore
+  private static let v1_45_0: Release = Release(
+    version: "1.45.0",
+    date: "2026-11-28",
+    sections: [
+      Section(
+        name: "Added",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 0,
+            headline: "Antigravity CLI can connect over HTTP.",
+            body: [
+              "Select Antigravity CLI in Cupertino’s client settings to configure your enabled surfaces. The CLI connects directly to Cupertino on this Mac using its own token.",
+            ]),
+        ]),
+      Section(
+        name: "Fixed",
+        lead: [],
+        entries: [
+          Entry(
+            ordinal: 1,
+            headline: "Safari tab tools skip hidden windows with no tabs.",
+            body: [
+              "Listing tabs, reading a page and closing tabs now work when Safari keeps an empty hidden window, including one from another profile.",
+            ]),
+        ]),
+    ])
 
   // swift-format-ignore
   private static let v1_44_1: Release = Release(
@@ -330,53 +359,6 @@ nonisolated enum Changelog {
             headline: "Driving behind your apps says you can keep working.",
             body: [
               "A Desktop session that only reaches an app behind the one you are using, through a Debug build's driving channel or an Accessibility press, menu press, row select, value write or focus, now shows a blue card: \"Cupertino is using Filiation. Behind your apps. You can keep working.\" It used to ask you not to use the keyboard or mouse, though nothing it did could reach either. The first call that posts input to the session, brings an app forward, or types by posting keys, and the driven app coming in front, turn it into the orange hands-off card until the session ends. It never turns back. Those background calls are no longer held for a countdown or a question while you type, and the Simulator's `press` behind your apps works the same way. `apple_desktop_diagnostics` says which card is up, and the server's instructions tell agents how to keep a session blue.",
-            ]),
-        ]),
-    ])
-
-  // swift-format-ignore
-  private static let v1_41_0: Release = Release(
-    version: "1.41.0",
-    date: "2026-11-16",
-    sections: [
-      Section(
-        name: "Added",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 0,
-            headline: "Capture one copy of an app by its pid.",
-            body: [
-              "`apple_screen_capture_surface` takes `pid`, and `apple_screen_list_targets` lists each app once, with every running copy's pid and window count. While several copies run, a capture that names none is refused and lists their pids, rather than taking the larger window of whichever copy drew it.",
-            ]),
-          Entry(
-            ordinal: 1,
-            headline: "Double and triple clicks.",
-            body: [
-              "`apple_desktop_click` takes `count`, 1 to 3, with the left button: through a driving channel, and on the session lane as the click state an app reads as a double click. A `run` step's count is checked like the tool's.",
-            ]),
-        ]),
-      Section(
-        name: "Fixed",
-        lead: [],
-        entries: [
-          Entry(
-            ordinal: 2,
-            headline: "Typing into an open or save panel.",
-            body: [
-              "A field in a window its app does not draw, as a sandboxed app's open panel is, is typed into by Accessibility where typing would put it and read back (`lane: \"accessibility\"`), and return and escape are its confirm and cancel actions. Keys and driving channel commands, which reach only the app's own windows, were refused there or could land in another field.",
-            ]),
-          Entry(
-            ordinal: 3,
-            headline: "A key that quits the app says so.",
-            body: [
-              "A ⌘Q through a driving channel answers `quit: true` once the process has ended, instead of reporting that the app did not answer within 2 s.",
-            ]),
-          Entry(
-            ordinal: 4,
-            headline: "A launch that opens no driving channel names the cause.",
-            body: [
-              "An unconfirmed copy, or a sandboxed app's container that Cupertino may not read without Full Disk Access, is said to be that, rather than a build without SupportKitDriving. A copy the launch would quit again is checked once more, just before it is asked to quit.",
             ]),
         ]),
     ])
